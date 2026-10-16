@@ -75,6 +75,10 @@ T_sys + T_hist + T_ret + T_tool + T_out <= T_max
 
 <!-- source-family:SF-2026-ARXIV-2608-16630 -->
 
+对测试生成，缺失的工作集未必只是同名符号的定义，还可能是“如何构造出可以调用目标方法的对象”。一条受限Java分支先沿静态call graph取得有限深度的调用路径，再收集目标方法、依赖方法与参数类型；遇到可访问的public constructor，就把其参数依赖继续展开到fixed point，去重后交给模型。它把调用顺序与对象构造建议变成输入，而不从代码检索得分推断可执行性；静态边、public可见性和构造闭包仍可能漏掉反射、运行时分派或环境依赖。<!-- source-family:SF-2026-ARXIV-2604-22046 -->
+
+这份closure是prompt候选，不是合法路径或测试正确性的证明。[CAT的受限Java对照](https://arxiv.org/html/2604.22046v1)还依赖生成、编译执行和修复回路，去掉callchain与dependency的联合消融不能隔离每个组件；与整class或按复杂度分配次数的基线也不能只看一次总coverage就归因。路径可随深度膨胀，解析、依赖闭包、构建与全部重试都计费，coverage提升不等发现真实bug；工作集已常驻、静态解析不可靠或预算难以摊销时，保留普通源码/手工fixture、较浅路径与现有测试工具，用真实执行结果继续检查，而不让闭包自签action前置已满足。
+
 ## Context Assembly Pipeline
 
 可靠 assembly 需要显式阶段：
@@ -533,6 +537,8 @@ ranking confidence 冒充事实充分性。
 这条执行分支引入 editor/replay 调用、反馈误译和检索不充分的风险。Co-FactChecker exact-v1 的自动反馈可见 gold/rubric，真人评测只有2专家、3研究者及14 claims/3轮，不能采用普适严格改进理论。反馈不可信或需要完整审计时，append-only、原文回读与外部 verifier 继续合理，旧 verdict 消失不是正确性证据。这里编辑的是下一步生成条件，不是上一节诊断 probe 所观测的内部因果状态。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-13706:end -->
 
+不编辑 trace 时，也要把“前轮推理是否继续进入输入”与“本轮是否生成新推理”分开：只保留回答和工具结果在短任务中便宜透明，跨轮任务则可以继续携带模型已经生成的推理块，同时按当前请求选择是否再付推理计算。这不是扩大模型窗口、写入长期 Memory 或让旧推理成为事实。运行时需保留原序列、来源轮次与模型/模板身份，并分别验收 retention 与 compute 开关；错误推理会持续条件化后续回答，完整保留也增加窗口、KV 和敏感派生内容的占用。GLM-4.7 的公开说明支持这种接口分责，但整模型成绩与不同评测配置不能证明单独保留推理的收益，也不保证净省费或 cache 命中。接口不兼容、任务短或继承错误时，回到普通对话历史、原文回读与独立验收，不让关闭新推理被误当成清除旧状态。
+
 ### Context 不只选择内容，也选择何时承诺
 
 内部推理状态可以继续修订，公开输出却会立即改变用户、工具和后续 Agent 的行动，因此“想到了什么”和“何时说出来”是两个不同的控制问题。简单做法是每一步都暴露，适合低风险协作，却会把未经验证的中间状态变成不可逆承诺；一种训练侧分支是在构造监督轨迹时，用 entailment checker 过滤与私有推理不一致的公开 disclosure，再学习何时披露。现有证据只支持这种离线数据构造与策略学习，不证明部署时存在逐次执行的 entailment gate。生产系统若要在 private state 与 public commitment 之间增加运行时检查，那是由风险与可逆性推导出的工程选择，仍需独立实现和评价；高风险场景应由确定性规则拥有最终发布权。
@@ -679,6 +685,8 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 更小状态改善长程交互成本，却可能丢失细节、错误主动化或把暂时偏好固化。作者实验只支持披露任务和训练流程；意图不确定、压缩回归或主动行为风险升高时，应回退 full/recent context，并采用静默或显式确认策略。arXiv:2605.23668v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23668:end -->
 
+推测用户愿意执行哪一个动作，还须与“这个已选动作做得怎样”分开。一个纵向研究分别收集 action-selection 意图与仅对已选动作给出的 execution 判断，再比较用户自己的历史、等量其他用户历史和全部历史；只有保留两个分母，才不会把未选择误当执行失败。[受限个人历史对照](https://arxiv.org/html/2604.23815v1)支持个人上下文可能有用，却不证明生成动作内在比执行更难，也不使几个月后的意图保持不变。小型研究者人口、解释过滤的 test 子集与重叠置信区间限制自动个性化结论。历史收集、隐私治理、标签/检索与新调用均付费；偏好漂移、来源不足或涉及新副作用时，保留当前明确指令、请求澄清或静默，不让预测的选择意图取代用户授权。<!-- source-family:SF-2026-ARXIV-2604-23815 -->
+
 ### Context Compression 要保留未来更新所需的区别
 
 只以“压缩后仍能回答当前问题”作为目标，在一次性问答中合理；长期 Agent 还会收到新 observation、纠错和目标变化，当前不重要的区别可能成为下一步更新的必要条件。压缩器因此要同时提交 current-answer sufficiency 与 future-update preservation：保留可恢复引用、未决分支和会改变后续 belief/action 的 distinctions，而不是把所有当下未使用的信息合并。<!-- source-family:SF-2026-ARXIV-2609-20045 -->
@@ -692,6 +700,8 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 该方法降低 context/cost，却引入 obligation discovery、schema/type 与 solver complexity。图不完整、obligation 不可信或行动风险高时，应回退更宽 evidence set、deterministic checks 或人工审阅；少量 preserved artifacts 与 synthetic 数据不证明自动发现义务。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23815` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23815v1)§2/3.1/4.1–4.4/5必要层；2+1+2=5，selection意图与selected-only execution人口分责具体差额深入。不授生成内在更难/静态意图或history代授权，受限人口、重叠CI/标签过滤与全部费用近正文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2603-09222` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09222v1) 必要§3–5/A1–2与相关评价反侧，2+1+2=5，条件删句proxy/集合充分性与多次encoding差额深入。root作者与supplement_20260312非作者必要Source/date/逐字PRE通过；v1多encoder不回填current单encoding，真实反退、阈值退路未闭合与全链费用近文。作者及非writer均已实际顺读损失→删句→router→break-even完整邻接与本注、回对有效必要原证，POST通过；不授全图、代码/复现或DAY。
 
@@ -801,3 +811,7 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2603-29919` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29919v1)IV-A/B/Alg1–2、V-A–C/TIII–V，2+1+2=5，仅shadow模拟→real trigger子集/最多三restore/原文fallback与body-ref功能分验。保536含39fallback/排64原fail、Stage2 best<1、14%反退、同50预算.909<.921及全部制备/路由/读取/验证费，不授任意query/完整faithfulness；未核代码/复现。
 
 - `SF-2026-ARXIV-2604-09212` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.09212v1)§2.1/2.2/3.4T3/3.5T4/5与AppL，2+1+2=5具体gap深入；只采用canonical absolute speaker→deterministic per-agent view。保DS p=.460、two-agent/cap20/temp0、probe非人格真值与echo人口口径争议；不授allpartners同authority、多Agent已实测、零echo/安全。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回；未核实现/复现。
+
+- `SF-2025-ZAI-GLM47-THINKING` — Daily2025-12-23补Dec22；[官方发布日](https://docs.z.ai/release-notes/new-released)、[原官方Blog](https://z.ai/blog/glm-4.7)既有本日core与[当前Thinking Mode](https://docs.z.ai/guides/capabilities/thinking-mode)必要域分责。2+1+2=5，retention/turn compute接口差额深入；current recipe/default不倒填2025，整体bench/配置不授保留trace的独立因果、净省费或cache保证。未核运行实现/复现；Newton8实际Source/score/owner/PRE通过，root本日ROOT_REVIEW§1窄许可后作者实际保存/self-read，Newton10实际完整正文/两侧/本人note非writer POST通过，root§2已实际读回接纳并释放窄位；仅同步这些已发生事实，非日级DAY。
+
+- `SF-2026-ARXIV-2604-22046` — Daily2026-04-28补Apr27；2+1+2=5，v1§3.2～3.4/4.1/4.2.2～4.3，callchain/constructor依赖closure具体差额深入；depth≤3/Qwen3Coder30B/RTX6000Ada/10gen+3fix与同timebudget反侧，precisiondefault未具体披露，不授路径可执行/coverage即bugtruth。reader必要Source/date/实际owner/逐字PRE通过，root授本两段+本人注窄lease，reader非writer实际正文/完整两侧/本人注POST通过，root接纳释放窄lease；作者仅行政同步本注并实际读回；未核实现/复现，不授DAY。

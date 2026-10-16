@@ -683,6 +683,173 @@ DeepseekV3/R1按task time40min～5h或tokens6w/55w，V-A5trials/V-Bbest3/V-C15ru
 
 作者本checkpoint保存/读回/check后释放本日作者ownership，reader R117已保存/实际读回释放独占尾区；没有未同步本人注、持有Books锁或未报告的Books写入。暂停不删除任何材料，全部已发生改动与必要原件保留，未stage/commit/push。
 
+### A43 2026-10-15明确恢复：仅接有限普通层
+
+作者改由 `resume_apr16_author` 接续，独立复核由 `resume_apr16_review` 承担。已fresh完整读取当前AGENTS、Prompt、研究合同、Report合同、来源用法/每日/arXiv主题、ROADMAP、Books三docs与LS本日A42/R117路由。仅补Apr15BJT完整自然日；原87整行/日期/分数/小时窗/连续原§4冻结，17新增真实POST、26有限Source/3中心隔离及其余有效date/NC/Only分层复用。当前可执行层仍38个具体owner、13001/13035必要Source独核、A40两官方事件、12081/12374首公开资格、来源收口/六部分/DAY/FINAL，不把未读写外部受阻。2025由其他会话维护，本任务不处理、不修改其路由；不启动Live或Weekly，不碰staged/index/公共脚本与State。
+
+**12081 SUMMER先公开定点补核提案**：当前arXiv精确v1正文首页写AAMAS2026 May25–29；官方[会议目录](https://ifaamas.org/Proceedings/aamas2026/forms/contents.htm)具名2022–2031页，目录未给早于Apr15的正文公开日期。作者所属机构[March演讲](https://miralab.ch/wp-content/uploads/2026/03/Presentation_NT_Salon-des-Inventions_March-2026.pdf)实际仅p18两行宣布研究，无SUMMER方法/实验正文，不能以路径月份或研究预告把本稿整篇判早公开。此次定点search完整题名×ifaamas.org/unige.ch/miralab.ch，停止于官方会议目录与该演讲；非全网零遗漏证明。拟复用R29已核Apr15 arXiv公开日期，AAMAS将来正式发表不改变已可支持的正文归属；此前仅“可能会议早稿”不继续作为无材料依据的日级阻塞。待独核date处置，必要Source仍复用R62，owner尚待。
+
+**12374 Nemotron3Super先公开定点补核提案**：实际读取NVIDIA[原始发布页](https://research.nvidia.com/labs/nemotron/Nemotron-3-Super/)显示March10、已含LatentMoE/MTP/NVFP4，链接同题[51页技术报告](https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Super-Technical-Report.pdf)，当前PDF首页2026-4-3且同120B/12B、25T、1M和三机制。当前snapshot不能单凭首页日期证明该字节版April3实际公开，也不能用现在页面链接追溯每个附件的历史时刻；但March11[厂商原始发布Blog](https://blogs.nvidia.com/blog/nemotron-3-super-agentic-ai/)与发布页已确立三核心机制先公开。Apr15 arXiv稿不自动新事件；拟将同模型/三核心增量作窗外已公开，若本稿另有重要修订须具体指出差额而非按新ID重收。现已对比两份首页/abstract/引言采用命题，未看到本次提案三核心发生新变化；不为已读题摘重新全读51页或给同一发布评分。待独核同事件/资格关闭，真实March/April早报告仅归属线索、不扩本日报告窗口。
+
+### A44 四个具体owner差额的逐字单段PRE提案（未写Books）
+
+作者已实读三个Books约束与下述现有正文完整局部/相邻论证。必要Source分别复用R82、R87、R65、R69未变范围；本次只加深这些具体接口，不将标准Source自动签为Books。均拟一个机制段＋本人末注，reader实际PRE与root窄锁前不写。
+
+**12044 VISTA：唯一TRAIN-SFT / Ch29**，现350～358为P-ALIGN→SCD checkpoint选择/混gold→ORBIT按预算teacher，尚无“按历史correct-set新增coverage同时混多个teacher”及零增量可丢的条件。拟在完整SCD费用/回退段后、ORBIT段前插一段：
+
+历史教师也可以共同参与一次监督，而不是每阶段只选一个快照：先用固定 validation labels 给旧 checkpoints 排序，再按每份 correct-example set 相对已选集合新增的覆盖量，为其预测分布配权，最后与 gold cross-entropy 混合。这种增量覆盖只是在该标签人口中分配教师权重，不认证每个预测为真；只有标签、覆盖集合与旧教师相对顺序保持时，零新增覆盖才支持永久去掉一份教师。[VISTA的有限分类对照](https://arxiv.org/html/2604.12044v1)保留这份条件，不能把 raw integer count 与归一化 threshold 混成精确剪枝 recipe；Light 的所测质量仍略退，较少 checkpoints 也不等较少显存 bytes 或全训练时间。历史预测存储、validation评分、混合权重选择、训练和旧任务回归都付费；任务、标签或排序变化时重新计算覆盖，保留原固定教师、gold监督或完整候选池，不把静态分类覆盖结论外推为非静态LLM任务的无损剪枝。<!-- source-family:SF-2026-ARXIV-2604-12044 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12044` — Daily2026-04-16补Apr15；exact-v1 §3.1–3.3/Eqs2–4/Alg1、§4.1–4.7、C2–3/D2/F，2+1+2=5。仅固定历史覆盖配权teacher与条件零增量筛除；rawcount/τ口径、Light质量反退、分类到LLM未验证及全费近正文。R82必要Source/R64date有效；本段PRE、实际正文/完整邻接/本人注POST尚待，不授DAY或复现。
+
+**13029 rDPO：唯一TRAIN-DPO / Ch34**，已实读252～258 proxy多维共识与285～293 RefEval参考答案/生成器/referencepolicy分责。尚无“先满足essential再按加权margin组成pair”的字典式资格接口；拟紧在RefEval整段前插一段，不修改通用DPO目标：
+
+评价维度还可以先决定一对回答是否有资格进入训练，而不直接改写DPO梯度：对同一实例保留 essential 与 additional criteria，先检查 chosen 在必要项上达到声明的 full／partial 门槛，rejected 至少一项不合格或多项仅部分满足，再在获准人口内按加权评分差和重复使用上限选择 pairs。有可信 reference 的实例与无答案实例要保留不同的 rubric 来源；多次评分的 median 只降低部分波动，不把派生准则变成独立真值。[视觉rDPO的有限对照](https://arxiv.org/html/2604.13029v1)中，criteria用于外部数据构造，并未逐项进入梯度或执行GRPO；最大margin也不是全部切片最优，部分通用judge和知识指标仍退。多模型分歧种子、rubric聚合、候选rollouts、重复评分、SFT/DPO与reference更新全部计费，三份数据分阶段使用也不自动等于每轮fresh on-policy采样。必要项含糊、来源不可信或held-out行为退化时，保留经审校的普通pairs、原reference policy与独立评价，不让高分差替代标签真实性。<!-- source-family:SF-2026-ARXIV-2604-13029 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-13029` — Daily2026-04-16补Apr15；exact-v1 §4.1–4.3/Eq7/Rules1–5、§5.1–5.3/T1–4/§6，2+2+2=6。只essential资格→加权margin组pair与reference来源分责，不采用§3.2 MPO梯度recipe；judge/知识与random-margin反侧、阶段人口与全费近文。R87必要Source/R64date有效；本段PRE/actualPOST尚待，不授DAY或真实onpolicy因果。
+
+**12251 ArtifactWorld：唯一MULTIMODAL-GENERATIVE-PARADIGMS / Ch24**，已实读195～209空间噪声map→codec重建pseudo-time→causalcontext→观测等式交接。现有空间noise proposal没有“同一frozen主干三序列各自noiseclock且target-only loss不隔离condition梯度”接口。拟在195完整空间噪声map段后、DiT-IC段前插一段：
+
+修复多视角生成的局部伪影时，条件的噪声身份还可按序列拆开：把较可信的边界参考、待修复目标与由感知特征差派生的伪影 heatmap 分成三路，参考与 heatmap 固定 clean 时刻0、目标单独采样噪声时刻，通过共享的冻结视频主干与可训练适配路径联合消费，再只在目标切片计算训练loss。这与按像素调单一路径的扰动不同，也不由target-only loss推出条件路径无梯度、参考已是真实几何或未编辑部分必定不变。[ArtifactWorld的有限修复对照](https://arxiv.org/html/2604.12251v1)中，SLAM/深度筛选及LPIPS伪标签仍可错，数据与结构同时改变也不隔离每个模块的唯一收益；部分图像指标退步，photometric重优化不证明永久消除3D缺陷。退化数据、teacher、三路条件、双适配训练与3D重优化均付费，所测单卡时间和显存反而高于一个基线。参考或mask失真、跨视角保真不够或全费过高时，保留原观测、保守修复与独立几何检查，不把生成修复结果提升为世界状态真值。<!-- source-family:SF-2026-ARXIV-2604-12251 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12251` — Daily2026-04-16补Apr15；exact-v1 §3.2–3.3/4.1–4.4/Eqs1–5/§5.1–5.5/T1–6，2+2+2=6。三序列noiseclock/targetloss与共享梯度分责；伪几何/LPIPS标签、数据结构混杂、时间显存反側与全费近文。R65必要Source/R29date有效；本段PRE/POST尚待，不授world dynamics或复现。
+
+**12292 CoSyncDiT：唯一MULTIMODAL-GENERATIVE-PARADIGMS / Ch24**，已实读342～351 CFG共享上下文→跨流learnednull→非发声motion桥。现有三项不承载同block内声学style→lip残差→textcrossattention的消费次序。拟在347完整learnednull段后、349非发声motion桥前插一段：
+
+多个条件也可以在同一个去噪 block 内按不同接口进入，而不都拼成等权前缀：先让 noisy acoustic 状态与带mask的mel/text prior 做 self-attention，再以零初始化gate接入时间对齐的唇部特征，最后由带时间条件的cross-attention读取文本。这里的先后是模型内算子次序，不是三个独立训练阶段或人的认知定律；frame InfoNCE、hidden CTC与flow目标只是不同监督，duration相近也不认证逐帧真实同步。[CoSyncDiT的有限对照](https://arxiv.org/html/2604.12292v1)仍有WER与speaker切片退步，目标audio、同speaker另一clip与zero-shot人口不能混合排名，同一AVHubert同时参与训练与同步测量也不独立提供物理真值。各条件encoder、teacher、CTC、CFG分支、vocoder和完整生成均付费，NFE少不自动给出全链SLO。对齐、说话者身份或文本质量失配时，保留原条件生成、分路adapter与独立语音/同步检验，不用单一相似度决定所有条件已经被忠实消费。<!-- source-family:SF-2026-ARXIV-2604-12292 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12292` — Daily2026-04-16补Apr15；exact-v1 §3.1–3.5/Eqs1–6/§4.1–4.6/T1–7与A/B/C，2+2+2=6。只block内style/lip/text消费次序及代理测量分责；共享sensor、三人口、预算/数据计数及SPK/WER反側全保。R69必要Source/R29date有效；本段PRE/POST尚待，不授物理同步、全指标优越或DAY。
+
+### A45 两个具体已有覆盖提案（未独核）
+
+**12270 DreamStereo / Ch24 MULTIMODAL-GENERATIVE-PARADIGMS**：R66必要标准Source/R29date复用。作者actual79～81完整局部editing gather/sparse tokens→global background→scatter/blend及mask非语义真边界、VAE/全输入费用与componentFPS不授SLO，已承载本次采用“估计mask选择局部计算，但外部warp/depth与全链质量另验”。不声称已实现双投影/Jacobian阈值或立体视差配方；DreamStereo透明反射/large-disparity失败和DiT-only/整链人口保源。因此拟具体NC，不为不同mask生产器重复新机制。
+
+**12282 SpreadsheetAgent / Ch76 AGENT-RAG**：R66必要Source/R29date有效。作者actual121～136结构化中间表示的cell→原span/格式信息损失、consistency gate/原文回退，以及217～227 serialization身份与reader任务分验；已经承载“range/image/code派生结构供下游消费，但合法YAML/双view一致不等原表忠实”。两validator同源、最多迭代未通过不能成功和提取/查询费用分账保原源；不说已实现其双validator或YAML全部规则，拟具体已有覆盖，不双写Ch78一般执行gate。
+
+### A46 A19六项具体Books处置提案（待独核，不扩大池）
+
+以下必要Source均复用R99～105所列exact-v1、R86date/current，原分数保留。作者实际比较下述正文，非由Source通过自动Only/NC。
+
+- **12307 LPT — 拟仅报告**：本次保clean/distortion成对适配和CE/KL/额外FFN对齐的有限检测配方，不采用“跨generator泛化与鲁棒性同时无损”的新一般结论。R99实际控制显示publictest驱动定制distortion、CLIP消融与EVA最终模型/额外数据和容量变化，最强扰动/clean与baseline各有反退，不能把所测联合配方提升成可迁移的quality-resource边界。不是按局部或负面结果排除：它已按5分完整标准审阅，保有价值的检测切片与配置反证；本次尚不足改写长期训练目标/检测设计，不倒删准入。Ch66 161～171已有输入人口/扰动/真实目标分验的具体一般责任，但不把音频例当已实现LPT图像算法，因此不虚称完整recipe已有覆盖。
+- **12357 ReflectCAP — 拟已有覆盖 / AGENT-MEMORY Ch77**：actual140～155完整失败反思pending→有源验证→writer接纳/低风险直接反思仍合理，与后续内容credit分开；已承载本次采用“离线Avoid/Include是派生控制notes，在线两稿merge不取得truth，须回原图/reference验收”。caption的human-reference诊断与三个同target调用、N/K增大反退保源；不声称现书实现其各5条notes或CapArena，也不将三call简写为一次prompt。没有新不可逆memory mutation接口，具体NC而非再加论文摘要。
+- **12390 HCoT — 拟已有覆盖 / AGENT-PLANNING Ch79**：actual58～72规则—经验召回、状态相容性/提示作用条件、独立目标policy试用效用与无guidance退路，承载本次“人工预列启发式class/template只是可错执行先验；匹配、refine和fallback需按目标policy/预算检验”。1D-ARC全test类已覆盖不是开放新类发现，多模板退步与ToT/IO更强反侧保源；不说已有HCoT全部模板/形式证明。finite库消费与真实任务验收分责已有，不双写通用prompt优化。
+- **12421 VSM — 拟已有覆盖 / AGENT-TOOL-CALLING Ch78**：actual204～226完整目录检索→shortlist→schemaexposure→choice与revisable discovery frontier/预算/fallback，再与178～185窄tool vs generic接口粒度共读；有限taxonomy/node/attribute导航为derived summary消费入口，不把summary当raw、tool discovery当最终任务成功。约15%无答案/错源与longtime-series未来未测保源；具体已有覆盖为分层暴露与payload/观察分责，不声称已实现其工业taxonomy/四tool或用一般MCP标签代替机制。
+- **12477 LowResourceElicitation — 拟已有覆盖 / TRAIN-DATA Ch27**：actual252～266规则语言长度/字符过滤、retention与分布变化、classifier yield不等训练utility，以及350～361合成自洽/同源blindspot分责。已承载本次“API原始输出量→可用语言过滤量→真实native语义/下游utility”不同资格；≥20token/GlotLID/diacritic只filter，不按6/41倍产出签语言真实性。600一次调用/无nativehuman或downstream验证、低TTR反側和全校验费保源；不声称已实现其六protocol或任何语言coverage。具体NC。
+- **12372 SlidingWindow/k-shift — 拟仅报告**：R101实际增量是既有2022kshift和2024window在有限推荐负载的runtime/stride验证，不是新embedding或全foundation长窗理论。MRR/recall改善付+403.44%训练、stride省费同时质量退、Taobao未完成与全词表输出仍贵，是需要保留的具体可行性反证；但人口、维度、batch/epoch改变未建立跨模型可迁移阈值，不改写当前长期attention或embedding机制。保5分标准完成的原结果/失败，不因推荐任务或复现未完成倒删候选，也不引用预计十倍费用为实测结论。
+
+### A47 五项有限Source后的具体处置提案（待独核）
+
+作者actual下述owner完整局部，不改原分数。必要Source R106/R114～116及R86date不变时复用，只采用明确通过的有限接口，不把BEAM冲突rank或RALP字面loss方向包装成recipe。
+
+- **12487 KGReasoner — 拟已有覆盖 / TRAIN-SFT Ch29**：actual160～162分开最终答案/轨迹监督/独立行为检验，570～571区分带环境reset/replay的真实恢复与文本回退，626～645分开student真实prefix人口和teacher/选择信号。本次长期采用仅“search返回是条件历史、SFT/RL消费候选轨迹，错误轨迹对回退不恢复真实环境或赋KG事实权威”，已有具体承载。不说现书已实现其GNN重排/特殊标签或完整GRPOreward；次数reward/hardNLL与单模型命名不闭、外部对照异预算/Hit1反側保源，本文缺边噪声未解不被隐藏。
+- **12748 ECI-CoT — 拟已有覆盖 / TRAIN-SFT Ch29**：actual160～166固定QA时轨迹改写可改变行为、答案与trace各自监督/验收；350～354 teacher前缀边界与gold过滤仍不认证每步及长度效用不单调。本文235B正确trace→目标改写/PPL筛选只改变demonstration资格，不把PPL/answer正确或较低signed CHR授因果truth。误导instruction时CHR改善却accuracy退及中长trace反退保源；不说已实现其CHR或causal任务数据，原5分标准Source具体NC。
+- **12776 EvoSpark — 拟已有覆盖 / AGENT-MEMORY Ch77**：actual59～70四memory用途/生命周期与事实promotion，516～544 compactcontrol/exactarchive及mutablealias失效，1216～1233不可变revision/可变当前view、冲突/HEADrestore与transaction权限。已承载本次EEB/immutablehistory/currentRSB/lore的有限分层消费、模拟profile promotion不等外部事实、overwrite不自动事务安全；不声称现书已实现其narrative角色/位置系统，judges和weakmodel/长turn反側保源。具体NC，而不把fiction设定改写成真实environmentdynamics。
+- **12898 BEAM — 拟已有覆盖 / AGENT-TOOL-CALLING Ch78**：actual126～138完整程序compile/test/repair合理黑盒路径，partial sealing仅临时诊断，执行模拟不等运行与compile成功不等functional/security/outcome。已承载本次reader R116限定采用的“先填成完整program再真正运行、fix/calibrate之后才复用function artifact”；function名/用途或同elite分数不授独立heldout/safety。Eq1cost-min与descending/max方向冲突范围继续不采用，不自补符号/不签全GA/MCTS最优算法，也不因此说全部有限运行不存在。此有限执行接口具体NC，不新建程序memory算法章。
+- **12651 RALP — 拟仅报告**：保本次query-specific context/IRI/Manchester表示、fewshot与离散MIPRO搜索的有限KG任务协议，0.5confidence仍仅candidate。字面maxscore/CE方向、不同fewshot和表示人口、少量property/宽区间与augment反退未建立新的可迁移optimization或概率资格，不能据此更改通用prompt/逻辑truth接口。原5分标准审阅不撤准入、不因中心formula困难删池；不采用未闭loss recipe/OWLentailment或无偏置信保证，只报告具体表示/任务观察与反证，不写Books。
+
+### A48 三个真实缺口的最小逐字PRE（待独核/窄锁）
+
+作者已actual读三个Books约束、目标完整局部和相邻章节交接；Source/date采用命题与R101/R112/R108及R86不变，仍只补本日。均单段＋本人末注，不改现有公式/表格。
+
+**12377 SCRIPT / MODEL-EMBEDDING Ch12**：actual190～199普通lookup→容量瓶颈和290～326 tokenrow→hashed-ngram完整机制，并核Ch11止tokenids/Ch13起位置对称性。现有hash表容量不承载“保留PLM分词长度，在旁路按书写内部结构组合再回对齐subword”接口。拟在“从 Token Row 到 Hashed N-gram Capacity”开头完整普通lookup段后、`n-gram`定义前插：
+
+组合的容量也可以放在一个受监督的小网络，而不先为每种组合建立词表。对具有已知书写结构的语言，旁路先把字符拆成有序部件，例如韩语音节的初声、元音与可空末辅音，经序列/组合网络形成字符表示，再在原subword边界读出，以原token embedding作query融合；PLM仍消费原token数，但其输入已经改变。[SCRIPT的有限韩语对照](https://arxiv.org/html/2604.12377v1)支持比较这种结构先验与普通查表，不证明结构分解是内部语义真值或适用于所有语言。旁路尺度、subword边界和融合规则都是模型资产；强行匹配norm也可伤原分布，character粒度及部分任务反退。部件分解、GRU/卷积与融合、适配训练和原能力回归均付费，序列等长不等零额外计算，实测训练时间也更长。书写结构、边界或质量预算失配时，保留原embedding、普通tokenizer和独立适配，不让组合表示给无遗忘或跨语兼容签字。<!-- source-family:SF-2026-ARXIV-2604-12377 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12377` — Daily2026-04-16补Apr15；exact-v1 §3/Eqs1–4/§4/T1–4/Limitations与C/E.2/T7/J.1–2，2+1+2=5。结构部件旁路→原subword读出/embedding融合，非tokenizer替换；norm/粒度/任务反側、等长非免费与适配费用近文。R101Source/R86date有效，逐字PRE与真实POST尚待，不授全语言/无遗忘/复现或DAY。
+
+**12497 AdaptiveBudget / PLATFORM-EVALUATION-SYSTEM Ch66**：actual798～814 GP总体估计vsfailure探索、proposal与importance/真实estimand分责；现文不承载按human-predictor residualvariance分配human预算、allocationproxy非adaptive终局MSE。拟在该节第二段“建模、query selection...”完整段后、均匀/CEM段前插：
+
+预算还可以分配给“校正模型预测”而不只给困难题采样：固定predictor和目标人口，用较大未标注池估计预测均值，再由同人口配对human labels的残差校正；不同题目的残差方差与单位标注成本不同，可按加权方差/样本量构成allocation proxy，理想静态分配与方差平方根及成本相关，在线则以有限探索估计未知难度。这里的proxy描述分配质量，不直接等于同一批labels自适应分配后估计器的有限样本MSE或置信区间。[受限PPI/UCB对照](https://arxiv.org/html/2604.12497v1)还要求固定预测器、同人口配对、足够预算与相应有界/非退化条件；λ等系数由数据估计、目标漂移或重复respondent相关性都须另核。低异质性时均匀分配仍可更好，探索、预测池、human参考与系数重算均计费，human预算少不等全评估免费。人口、残差或校准不可信时，保留独立人工/分层审计和明确误差区间，不以oracle-gap或allocation regret为最终统计与发布安全签字。<!-- source-family:SF-2026-ARXIV-2604-12497 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12497` — Daily2026-04-16补Apr15；exact-v1 §2.1–4.3/Eqs1–2/Algs1–2与§5–6/T1–4，2+2+2=6。只配对residual校正/预算allocationproxy与真实MSE分责；不授全部regret证明/PPI++插件unbiased或CI。R112Source/R86date、有限Bernoulli反例与Gaussian/重复respondent边界保留；本段PRE/POST尚待，不授复现或DAY。
+
+**12599 HPC平台 / PLATFORM-FOUNDATIONS Ch57**：actual61～80三planes与scheduler/platform分工、相关控制权迁移完整段，并核Ch56结尾/Ch58开头。现有职责分plane没有diskless端点回收与持久VM控制状态/Slurm训练-K8s前端的不同恢复承诺。拟在“第56章的推理scheduler...”完整段后、“控制权迁移”标题前插：
+
+平台边界还可横跨两套执行域，而不必先把成熟HPC训练栈全部搬进Kubernetes：持久VM保存控制与服务配置，diskless GPU节点按需注册进集群、重启后重新enroll；训练继续交Slurm/既有fabric调优，Kubernetes提供用户入口和推理路径，由受限API/脚本交接作业。这种分工复用旧优化，却使端点可用性、控制状态和计算节点生命周期分开；控制VM持续运行，不表示维护期间GPU请求仍可用。[HPC foundation-model平台的有限运行记录](https://arxiv.org/html/2604.12599v1)仍有共享存储、弹性、身份迁移与managed fine-tuning未完成项，namespace或Git配置不自动构成成熟安全/HA。节点重新配置、RAMdisk与持久存储、权重搬运及网络接口/NCCL选择都付费，容器能加入集群也不等fabric性能已追平原生训练；多节点推理还出现timeout与精度/架构支持失败。恢复、SLO或完整费用未满足时，保留Slurm训练与显式维护窗口，隔离未成熟服务，不用统一UI或存活controlplane签发整个平台生产能力。<!-- source-family:SF-2026-ARXIV-2604-12599 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12599` — Daily2026-04-16补Apr15；exact-v1 §4.1–4.4/5.1–5.3/6.1–6.5，2+2+2=6。只2026实际运行接口/恢复成熟度，不把2025 genericarchitecture再归新；disklessGPU/持久VM、Slurm/K8s分责、NCCL/存储/多节点失败与全费近文。R108Source/R86date有效；本段PRE/POST尚待，不授部署复现/HA/安全或DAY。
+
+### A49 八项具体owner/Only提案（待独核，不按映射自动闭合）
+
+作者actual下面正文局部，必要源R99/R102/R105/R112/R115/R118与R86date复用，原分数不动。
+
+- **12321 ToxiTrace — 拟已有覆盖 / PLATFORM-EVALUATION-SYSTEM Ch66**：actual73～107五层成功与binary verdict/诊断粒度分责，明确taxonomy/每轴标签/模型judge、likelihood扰动非内部因果。已承载本次分类正确、character-span explanation及maskproxy三对象独立验收的最小长期命题。saliency→弱span→梯度塑形/contrastive是本文有限分类实现，不把导数集中/可读span认证真正decisioncause；不声称现书实现其PPT/BiCSE损失或每个span测量。R99三run/分类与span反侧、online反传费与中文限制保留，具体NC，不用topic“解释”代替实际诊断分责。
+- **12403 DualAnchorTPT — 拟已有覆盖 / MULTIMODAL-REPRESENTATION Ch23**：actual138～158完整categorytext选patch/局部一致性→supportprompt提案与消费原embedding→closed/open分类→测试队列更新/伪标签污染及静态fallback。承载本次“两路derivedanchors/高置信views仅提出prompt目标，测试prototype bank是有顺序/版本状态而非新truth”。不说实现其text6/image3、三head或sharpen.3；有限prompt适配不新增独立事实权限，误伪标签/early错误污染与全64view/反传费保源。具体NC。
+- **12440 IAD-Unify — 拟已有覆盖 / MULTIMODAL-REPRESENTATION Ch23**：actual11～32 representationcontract与modality/time/space/producer/consumer身份，124～152多readout/语义与densegrounding分验，186～204多层producer→指定consumer层/新增adapter和实际成本分责，271共享codes→生成consumer仍可能补细节而非恢复真实观测。承载本次“同一expert/native表示交理解、mask和diffusion不同consumer，联合训练/共享参数不认证三个任务独立或全部保持”。原16query/256metaquery/12层connector是本任务配置，不说现书已实现其异常三任务模型；GTmask→predmask大退和joint/generation-only反側、2.45B/全训练费保源。具体NC，只采用上述实际已有边界，不从anomaly应用域自动Only。
+- **12551 CAMFusion — 拟已有覆盖 / MULTIMODAL-REPRESENTATION Ch23**：actual124～140可训练query聚合→局部/全局readout分验、186～190跨层keys/values→learnedquery/局部pool信息损失与容量费，并回读11～32原sample/空间/calibration身份。已承载本次“已对齐同instance多view descriptor形成消费者表示，classword/未见view一致性并不授instance真值，upstreammask与最终grounding仍独验”。不说现书已有其8block融合或sameclass-negative规则；mAP/IoU与newclass反向结果、GT/predmask/Top1vs600人口和全view费用保源。具体NC。
+- **13001 XRZeroG0 — 拟已有覆盖 / MULTIMODAL-EMBODIED-VLA Ch26**：actual104～113 canonicalURDF双向映射/原动作回放、126～140冻结动作统计/跨手codec与jointlimit/pinch≠contacttruth、已验controller退路。承载本次“VRpose/action标签与目标URDF IK、抽样实机回放与真实闭环是不同验收；frame统一或运动学通过不保证全部demo动态可执行”。不说书内实现PICO采集/三view或全部semanticseg；subset不能外推、原基座已含robotdata、500+500/500+50与cost估算/全费保源。具体NC，不因新数据量写新model机制。
+- **13035 SceneCritic — 拟已有覆盖 / PLATFORM-EVALUATION-SYSTEM Ch66**：actual364～367数字孪生render/mesh不同oracle、几何导出/形状相似/用途可用四层checks，以及73～107成功层级。已承载本次“symbolic bbox/ontology与renderVLMjudge是不同测量对象，多个checks/人偏好不自动认证真实geometry”。不说已有SceneOnto79类、TrueOverlap/阈值算法或把.2m 2D SAT当meshtruth；阈值正例偏置、两次top评分非大样本variance与16人594judgment有限人口保源。具体NC，不因更强批评器新设worldstateowner。
+- **12575 StructDiff — 拟仅报告**：本次保单sourceimage randompatchDDPM、去global UNet/四kernel receptivefield、xy/foreground空间条件的有限控制与diversity/遮挡失败；既有局部卷积/空间条件被重新组合到这一单图训练recipe，尚未给出可跨图或foundationgenerator迁移的新增有效条件。坐标可改不认证strict equivariance/遮挡对象补全，Eq2方向/原foreground缺项不抄成可执行指导；所有单图训练/mask/guidance费用保留。5分标准读足，不因小数据/局部组合标签倒删；仅不把这份配置升成新的长期生成范式或普适控制保证。
+- **12719 MCStochasticDepth — 拟仅报告**：只保COCO后训三detector、保residualshortcut的MC blockmask/boxmatching与有限calibration/abstention测量取舍。作者已承认discreteq/continuousGaussian KL illposed与weightdecay surrogate，不把这一已披露近似说成整稿无效；但T1各bestPareto不同配置、MCD quality更高/部分BrierECE和AUARC反退、COCOO entropy弱变化，未建立本次可迁移Bayesianposterior或calibrated安全selector。原5分标准审阅保持，所有MC/过滤/训练费与ranking-vs-probability边界报告，不新写严格VI/UQ理论recipe。
+
+### A50 两具体NC与三具名恢复项Books提案（待独核）
+
+- **12486 DeCoNav — 拟已有覆盖 / AGENT-MULTI-AGENT Ch82**：actual1061～1076完整cognitive/environment双时钟、joint-actionbarrier、eventstate/elapsedcredit、privateworldgraph/messageproposal/observationconvergence与同步异步费用。已承载本次timestamp语义packet/共享anchors/roles、事件改派与同步仿真step不等ROS2真实异步deadline或controller安全的有限接口。本文SVB+EDR组合消融与两机器人办公室单episode不授独立部件因果；不说现书实现其TriGate、ROS或task生成流程，原6/R106/R86不变，具体NC。
+- **12668 OFA-Diff — 拟已有覆盖 / MULTIMODAL-GENERATIVE-PARADIGMS Ch24**：actual137～143卷积主干→输出N/内部K/read-write→经训练prefixbudgetfamily与artifactidentity/完整费用/低预算质量及densefallback。承载本次“共同训练的多容量候选是有身份的预算family，不是任意部署时剪已有网络；共享优化/不同预算必须按完整采样质量验收”。本篇channelimportance/28UNet19UViT与偏小网采样是有限实现，不声称现书已有其weightpruningrecipe或MAC→时间等价；每t换net/importance动态更新反退、separate后训人口与全N×费用保源。原6/R115/R86具体NC，不将相似token/channel两者混为同一实现。
+- **12081 SUMMER — 拟已有覆盖 / AGENT-MEMORY Ch77**：date R121/R29与SourceR62有效。actual971～1006 retention/admission发生在可检索池之前，1694～1700评分/写权与模态routing分责；再读33～43所保identity/metric/chronology与rawfallback。承载本次“emotion/novelty只提出写入资格、raw/caption检索选择须按真实query/支持验收，memorability评分不赋持久事实/未来utility”。不说已有emotionthreshold/zscore融合recipe；81Sora/25rating和shuffle/precedingvsstored协议、纯novelty反退/全部感知/生成费保源。原5有限具体NC，未开展真实robot个人数据。
+- **ERNIE-Image Apr15发布 — 拟仅报告**：R120 date/准入/标准Source有效，原2+2+1=5。8B generator＋Ministral3B structuredPE的可开关条件路径、数学/知识失败和PE不同指标反向是发布接口/版本配置事实，尚未公开足以改变长期训练/采样设计的配方。作者actual Ch24 1933～1942 `c_ideal`提案vs`c_user`选择/独立请求验收与额外费用；此边界已存在，但不把它说成已实现ERNIE PE或证明当前开关保障用户意图。只报告发布者原接口和有限PE反侧，不从8B/50steps/8steps或DMD+RL词语创造新算法、完整性能/当前SGLang实现日期或SLO。
+- **Seedance2.0 Apr15新report — 拟已有覆盖 / PLATFORM-EVALUATION-SYSTEM Ch66**：R120官方报告事件6分保持，不把Feb modelrelease移日。作者actual119～135 EvalSpec target/eligiblepopulation/comparisonrules，345～346编辑幅度ratio不能替代指令/保真、1063～1071 response/条件质量/无条件分母及editcompliance/untargetedpreservation两轴，承载本报告本次新增采用的taskfollowing/referencealignment/editconsistency与不同支持输入人口。T28编辑/extension负侧和Veo只自有video支持、专家/预算CI未披露保源；不声称已实现其全workflow suite、全部blindtrack或strictphysics，不以任何总体保存分批准完成编辑。具体NC，不把新benchmark名称当新长期owner。
+
+### A51 三个consumer差额单段PRE（待独核/窄锁）
+
+作者actualBooks三docs与下列完整局部/交接，必要Source R100/R111/R114与R86date/current不变，只对具体拟写接口加深，不扩所有附件。各单段＋本人末注。
+
+**12346 ST-GD / MULTIMODAL-REPRESENTATION Ch23**：actual186～209多层producer/consumer→geometrygating→相机运动读出完整局部，并核Ch22/24交接。现文没有冻结静态detector加入显式时序adapter/temporaldecoder、空间监督按真实时间段限定接口。拟在GeoSR完整费用/回退段后、几何相机运动读出段前插：
+
+把静态空间模型用于视频，也可以先保留已经训练的图像detector，只给其层内增加时空/差分适配路径，再用query相关的帧特征选择与融合交给独立temporal decoder。空间框与事件起止是不同输出，空间loss若只在标注时间段内计算，也不能因此认证段外特征或attention已经定位真实事件。[ST-GD的有限对照](https://arxiv.org/html/2604.12346v1)支持这种复用静态producer、扩展时间consumer的分支；零初始化只约束起点，不保证训练后旧能力无扰动，冻结主干也可能阻碍学习新视频pattern。可训练参数较少不代表全模型小或无需标签，部分Swin/任务切片仍弱于旧模型；冻结前向、text LoRA、适配器/decoder、时空标注和旧任务回归均付费。时间监督、query或预算失配时，保留原静态读出、独立视频模型与更完整标注，不让少量adapter或可视化attention签发时空grounding保证。<!-- source-family:SF-2026-ARXIV-2604-12346 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12346` — Daily2026-04-16补Apr15；exact-v1 §3.2–3.7/Eqs1–8、§4.1–4.6/T1–5/§5，2+1+2=5。静态detector/temporalconsumer、空间与时间监督人口分责；zeroinit非训后无遗忘、frozenpattern限制及全费/任务反側近文。R100Source/R86date有效，逐字PRE/实际POST尚待，不授实现复现或DAY。
+
+**12610 Tri-RAG / AGENT-RAG Ch76**：actual499～525 chunk过小/过大→结构overlap/parentchild→跨parser语义evidenceunit，121～138结构gate/多跳binding；现文只有parentchild策略名，没有“条件只作检索key，完整条件/证明/结论才作payload”的分责。拟在chunking节“更合理的策略结合...”完整段后、图表parser证据unit段前插：
+
+检索单元与交给reader的内容也不必完全相同。数学知识的一条有限分支将材料抽成条件、证明与结论三段，只用条件编码检索key，命中后再交付完整triplet；这样可避免证明和结论中的词主导问题匹配，却把抽取、去重与token预算变成新的信息边界。Proof字段可以为空或优先被截断，tag与规则合法也不证明推导被原文支持，近似相同条件下的结论更不能未经核验合并。[Tri-RAG的有限对照](https://arxiv.org/html/2604.12610v1)中，condition-only并非每种检索指标都更好，完整recall亦弱于一个基线；弱标签/同源judge不提供独立proof真值。抽取器训练、原文映射、索引、payload重建与reader调用都付费，应共同保存source revision、key到完整内容的locator与截断规则；条件抽取或支持丢失时，回读原文、保留完整/hybrid检索，不让更短检索key替代实际证据。<!-- source-family:SF-2026-ARXIV-2604-12610 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12610` — Daily2026-04-16补Apr15；exact-v1 III-A–D/Eqs1–16/Algs1–2、IV-A–E/TI–V/F3/VI，2+1+2=5。只conditionkey/完整tripletpayload分责，不授prooffaithfulness；弱标签/截proof/near-key去重、recall反側与全费近文。R114Source/R86date有效，逐字PRE/实际POST尚待，不授实现/immutableproof或DAY。
+
+**12503 GraSP / AGENT-RAG Ch76**：actual121～140结构化检索gate→typedbinding→persistentmap及211～231 native-reference/serializationidentity；尚无graphsoftprompt只由可访问embedding的小selector读出、再以自然载荷给closedanswerLM的producer/consumer约束。拟在结构化检索语义binding block结束后、“多跳查询还可...”段前插：
+
+图的结构表示也应按接收者能力交接，而不把同一个hidden向量送给任意模型。一个受限KG路径先按query提取邻域，用GNN与投影形成softprompt，交给能够接收输入embedding的小selector读出entity/relation，再把自然语言载荷交给黑盒answer model决定回答或继续检索。前一层拥有结构适配接口，后一层仍只读文本；softprompt本身不补出图中缺边，也不把selector选中的关系变成事实。[GraSP的有限对照](https://arxiv.org/html/2604.12503v1)支持这种分责，但严重稀疏/噪声与较长hop仍失败，部分任务弱于基线，缺边随机删边实验不覆盖所有真实缺失模式。效率表若只在所有方法共同成功的交集计数，也不能给全部请求签发净加速；GNN/FFN训练、全部小/大模型调用、图查询与索引维护都计费。embedding接口不可得、图支持不足或完整费用失配时，保留原triplet/文本/hybrid检索与独立support检查，不把小模型桥接当作任意closed API原生读取图向量的保证。<!-- source-family:SF-2026-ARXIV-2604-12503 -->
+
+本人note逐字：`SF-2026-ARXIV-2604-12503` — Daily2026-04-16补Apr15；exact-v1 §4.1–4.4/Eqs1–9、§5.1–5.8/T1–5/Limitations/AppA，2+1+2=5。只GNNsoftprompt→embedding-accessible smallselector→自然载荷closedconsumer；随机删边/噪声/共同成功交集费用限制近文。R111Source/R86date有效，逐字PRE/actualPOST尚待，不授补边truth/全请求净加速/实现或DAY。
+
+### A52 十四每日源Apr15自然日有限收口提案（待独立Coverage复核）
+
+本层实际重读本日 `v3-reopen-notes.md`“有界来源检查与复用边界”及正式README十四源行的原查询/停止范围，结合本次SUP具名补核；原目录已经越过Apr15日期两侧的有效层分层复用，不把原09:00归属条件当自然日条件，也不把本轮失败抓取（例如hunyuan_publiclist raw404、qwendynamic名为JSON实为HTML壳、Seed metadata-only响应）冒作新有效列表。已明确原native目录/版本/范围未变，没新线索者不重复扩扫全站或组织commit；本次属于恢复受影响date与遗漏，不声称十四源全部重新网络抓取。历史目录的必要缺段在已穷尽原有有界替代后隔离，不提供正面Coverage或无遗漏保证，今后只凭具名有效历史入口定点重开。
+
+| 来源ID | 实际入口/复用范围与停止依据 | 本次自然日结果与边界 |
+| --- | --- | --- |
+| SRC-OPENAI | 复用已核完整News RSS及Agents SDK原发布正文，原字段Apr15 10:00Z；原Research历史分页/直接RSS403边界仍在。本日原87已处理SDK同事件，仅date-only去重。 | 受阻保留项：限定RSS/具名发布有效，Research完整历史目录缺段；不由RSS称全Research零遗漏。需要可复查Apr15完整官方历史分页才重开目录，SDK不重评分。 |
+| SRC-ANTHROPIC | 复用actual research目录publishedOn Apr14 13:01Z→Apr22 14:12:30.673Z邻域，覆盖整个Apr15BJT；Apr14项BJT仍Apr14，旧AAR同事件不搬日。新SUP原件SUP_anthropic亦留本地。 | 已检查：此可见研究目录无Apr15新增项，非整个机构网络无遗漏。 |
+| SRC-GOOGLE-AI | 复用Research April9项与DeepMind历史p3，FlashTTS原JSON-LD Apr15 15:00Z同事件已旧处理；Simula仅Apr16日级，补Apr15时明确窗外，不追旧09clock。 | 受阻保留项：Publications全年358列表缺日级首公开停点，不作Apr15全论文目录；需要原官方历史发布日期/分页。有限Research/DeepMind题名范围有效，AIforScience标题按范围排除不加入池。 |
+| SRC-META-AI | 原Research空提取、blog p1/p2混排Apr08/Apr06→Mar27，Publications替代呈2016–2020，原有界替代已穷尽，未取得Apr15可靠原目录。 | 受阻隔离：不写零项/全源通过；重开需正确Apr2026官方历史分页或具名当日原件，不扩扫全Meta旧论文。 |
+| SRC-QWEN | 原actual静态60＋动态40研究条目与Qwen3.6-35B-A3B完整正文；原extra.date/JSON-LD Apr15 10:00+08。此次SUP_qwen/动态响应只按其真实HTML边界保存，不把文件扩展名当API完整。 | 已检查：原具名发布已处理同事件，不加新家族或重读；有限静动态目录覆盖Apr15日期邻界，不授全部repo事件零遗漏。 |
+| SRC-DEEPSEEK | 原news16条Apr24→2025Dec01越过Apr15；SUP_deepseek_news保原可见目录片段，按相关研究主题而非所有商业新闻。 | 已检查：此公开news目录无Apr15新条目，不扩组织旧commit，不等于全网零项。 |
+| SRC-MOONSHOT | 原Blog26条止2025Nov07、KimiK2.5 release空/组织新仓库止2023；本次SUP_moonshot壳/可见目录未补出Apr2026历史段。 | 受阻隔离：Blog历史停点缺失；需官方Apr15历史Blog或具名发布正文/date。不能把旧目录无项当2026无研究。 |
+| SRC-TENCENT-HUNYUAN | 原全部publicList9条Apr23/Apr30→Feb13跨Apr15；本次SUP_hunyuan_valid actual JSON code0/totalNum9，失败endpoint404保失败性质。 | 已检查：该官方公开列表无Apr15条目；不证明所有未列作者稿零遗漏。 |
+| SRC-ZAI | 原actual16项官方Research目录Apr29→Apr07→Apr01及release邻域，SUP_zai保当前目录原件；跨Apr15整个日期。 | 已检查：该可见目录无Apr15新项，不改旧家族日期。 |
+| SRC-BYTEDANCE-SEED | 原官方publications API按日期分页已越左界Apr09；本次A40/R120实际官方Apr15 Seedance2.0 publication完整题摘/精确v1必要PDF页，承认本地rawPDF截断和HTML404非完整正文。 | 已检查：新增Apr15报告/测量事件1个，模型Feb发布不重归；移除仅因旧09clock造成的假阻塞。当前目录之外不授全机构零遗漏；已触发原论文只读必要范围，不扫描Weekly源。 |
+| SRC-BAIDU-ERNIE | 原Blog10项Apr30→Apr15 ERNIE-Image→Feb06；A40/R120实际index日期原字段/官网bundle核心及发布者HFcard必要范围，正文非壳。 | 已检查：Apr15官方发布事件1个；移除旧09clock假阻塞。当前card新增实现不回填Apr15，不因此称所有历史commit已核。 |
+| SRC-XIAOMI-MIMO | 原Paper8条Jun29→Mar13→Feb03跨Apr15；blog14无日期/新仓库止2025May，SUP_mimo保实际可见入口。 | 受阻隔离：Paper目录有限无项，Blog缺历史日级资格；重开需官方Apr15 Blog/date，不以无日期文章补造首公开。 |
+| SRC-MINIMAX | 原EN12条May26→Mar18、CN13条Apr27→Mar18，TechBlog空/llms.txt48无历史日级字段，SUP_minimax保可见目录而非techbody。 | 受阻隔离：双语Blog有限无项，TechBlog历史停点未恢复；需有效官方Apr15技术目录/date，不把llms.txt数当当日候选。 |
+| SRC-ARXIV | 本轮四主题0页complete XML，142/80/75/200返回数各等totalResults，跨主题329身份；submission slice仅发现。相关标题有界补检/决定事实消歧见A14/A19及R52/R75，精确日期/current按R4～R121，不把宽列表转逐项队列；原87及有效同事件只定点去重。 | 已检查约定主题：新增当窗事件、早稿/窗外、withdrawn与具体EX均按具名记录收口；宽月库存不是全部题摘/全文义务，不授全学科召回。原资格/中心保留项按R64/R67/A42安全隔离，不支持正面Coverage/Evidence。 |
+
+此表不预签整体Coverage通过/普通0；最终候选分母、所有owner处置、报告六节与DAY/FINAL仍需当前实际结果合并。未列任何每周来源；本次必要原件来自触发项而非新增全源扫描。Simula Apr16仅窗外线索，不阻塞Apr15补充完成、不搬旧字段。
+
+### A53 评分行政抄录纠错与末三PRE现态
+
+作者/独立reader/root实际回对：A9 CoSync12292最初准入明确2+1+2=5；A19的OFA12668、EvoSpark12776、BEAM12898均5，R75明确按其拟新增命题保留。后续Source口语“原6”及A44/本人note6没有新评分校准依据，是抄录漂移，不是以NC/Only/工作量降分。四项正式新增表均恢复最初5，历史提案/Source原文不删除，已读深度/中心反侧/必要采用命题与实际POST全部有效。root2026-10-15明确认可并只授CoSync本人末注6→5行政窄许可，作者已精确改注、正文无差额、本人读回/限定diffcheck通过，待reader这一个差额actual读回。
+
+截至此段24项新增真实正文POST有效，其中SCRIPT/AdaptiveBudget最终注已独核/root接纳释锁，HPC本人注仅同步真实POST完成并作者读回，最终注reader读回待。STGD/TriRAG/GraSP A51三单段逐字PRE已reader实际通过，root位置锁尚待，不预签实际写回或DAY。A49六NC/两Only与A50四NC/ERNIEOnly实际独核通过，最终报告普通owner仅上述三actual写回/注final，另来源A52独核及六节合并/日级验收仍普通。
+
+### A54 正式六部分首存及限定机械检查（2026-10-15）
+
+27个新增实际整合的必要Source/date/owner/PRE/真实正文完整邻接及本人注POST/final均由非writer reader实际核验，root全接纳释放窄锁。正式README当前进行中/复核未通过待DAY；新增100=27整合/44具体NC/20Only/9争议，与原87合187=66/59/48/14。R128–134按reader实际消息串行补存，不自签。A42/A53是历史停点，现不再有普通Source/owner/写回待办；只剩正式DAY→保存完成→actualFINAL。98为arxiv主题发现家族，另官网ERNIE和Seedance报告两个事件；Seedance有精确14148身份，不把numeric arxiv链接99误称98。
+
+首次机器检查暴露已有冻结链接字段未接到现validator、重复候选表header和12260不重复评分字面格式；只改本日README格式为现有“冻结候选日期”合法同日报baseline链接、候选列单header、12260“重要修订：新增理论扩展，不重复评分（原family评分见SUP A9/R68）”，未改公共校验器/原87行/分数。当前 `python3 scripts/validate_research.py --report papers/2026/04/16/README.md` 通过；实际基线比较87整行精确相同、原§4连续片段86199字符精确仍在，187候选行/187 primary证据标题，本地引用缺失0。限定真实小写tracked路径git diff --check通过；不是全工作树或语义验收，无stage/commit/push、未动index。A52 agents200与四原5行政纠错正式表已落实，必要Source/POST投入不重做。
+
+### A55 本日归并闭合（2026-10-15，DAY/完成态FINAL均实际通过）
+
+正式README已完成本轮Apr15自然日补充：新增100与原87合187、27新增真实整合落17个owner，普通0、窄Books锁0。非作者reader已实际DAY（R135）→作者保存完成态→实际FINAL（R136）通过，未扩池、未改原87整行/日期评分/原小时窗口/连续原§4，未动index或其他2025路由。A42/A53/A54的待办仅历史时态，已由R118–136逐层真实结果闭合。本日作者/reader工作到此退出，下一fresh日期仅由root另分配；外部终态保留项按§5具名证据定点重开，不授全源无遗漏/保证或额外旧日恢复权限。
+
 ## reader 独占尾区
 
 以下仅由独立非作者 supp_apr16_reader 追加实际准入、Source/PRE、POST、DAY和FINAL复核，不预签。
@@ -1454,3 +1621,101 @@ V-A五trial/V-Bbest3/V-C15runs不同，CAF外repository预算ND、TSP500best .88
 其他所有已有必要Source有效但未正式具体owner/Books处置者，按作者当前唯一SUP逐项停点恢复，不凭Source完成自动转NC/Only，也不在暂停时冻结猜测总数。来源收口/两具名先公开资格若仍普通，须作者保存其真实必要缺口与最后入口；不是reader已签隔离/通过。README六部分自包含合并、格式/冻结/引用检查、完整六部分DAY和保存完成态FINAL均未完成、未授日级验收；中心争议/外部缺段不授正面Coverage/Evidence或无遗漏。
 
 恢复必须由用户明确授权后fresh重读AGENTS/Prompt/两合同/Sources用法/Daily/arXiv主题/ROADMAP与本日最新停点，不继承其他日池；先接上述两Source及A40/A41普通层和作者其余具名owner，再报告合并，普通0后实际DAY→作者保存完成态→actualFINAL。当前reader ownership在本停点实际保存/readback后释放并结束，不等待或自行恢复。
+
+### R118 — fresh恢复两必要Source实际通过（新独立reader结论，作者串行保存）
+
+复核者：`resume_apr16_review`，非本日报告作者。以下为该reader实际读取并消息交回的结论，由作者按双方串行约定保存，不是作者自签。
+
+13001 XRZeroG0：实际读精确v1 §3.1–3.4、§4.1、§5.1–5.4/F5–8、§6.2。VR三view/URDF IK→随机subset实机open-loop不能保证其余可执行；500+500与500+50非matched总量，基座已有robotdata；93.2ep/h、35→15s、1/20估算分协议，硬件/precision/seedCI/full预算ND。必要标准Source仅labels/retargeting验收分层范围通过。
+
+13035 SceneCritic：实际读精确v1 §3–7.3/T1–4与AppB setup/B1–B5。SceneOnto prior＋symbolic layout与render是两个测量对象；ProcTHOR正例高分调阈不是负例校准，T1 `(View−Top1)^2/4`及top两次不是大量variance；16人594judgment局部不授几何truth；B5为2D AABB/OBB SAT tolerance .2m，非3D mesh collision，raw recipe Eq6重复同条件概率不正面采用；13model posttraining非因果。必要标准Source仅symbolic/render独立判据范围通过。
+
+两项R86日期/current未变复用，实际owner仍待，不授DAY。A19固定31现在必要层为28有限Source通过＋3中心安全隔离；不是31项Books处置通过。
+
+### R119 — A41四具体NC与GlotOnly实际通过（新reader结论，作者串行保存）
+
+复核者 `resume_apr16_review` 实读当前Books约束与实际owner完整局部/邻接，复用R73/R83/R96/R53未变exact Source；结论实际通过，无Books写入、不授DAY：11950→Ch72 142–144运行激活/PoC-native-effect/fullchain及330–336 executable probe→test→reviewer、未命中≠安全；12582→Ch23 164–170 SCR/early-late softmask/learnedhook的sensor/head/layer/强度与consumer分责；12872→Ch26 101–113几何skill/层级对象图pose/revision→controller及陈旧map重观测；13015→Ch26 329–341 privilegedfuturetarget、共享早encoder非解耦、移除decoder仍付训练与controller验收，四项有限采用具体已有覆盖。不宣称实现原论文全部recipe/harness。12978保158script、四规范化minCER/charset权限/vertical协议，Ch66 161–171已分metric/normalization、语言与meaning/字符守恒；本次无新跨系统稳定接口差额，具体仅报告通过，原准入与分数不倒删。
+
+### R120 — A40两官方事件准入/date/必要Source实际通过（新reader结论，作者串行保存）
+
+`resume_apr16_review` 实读ERNIE原index日期/邻域、官方bundle Overview/PEModel及发布者HFcard；仅Apr15发布2+2+1=5准入成立，structured小PE与generator分责、数学/知识失败及全预算有限采用通过。GenEval .8856→.8728反側、OneIG/LongText异方向、8B不当全系统参数、24G不当SLO；DMD/RL未披露recipe与后来SGLang不回填Apr15。
+
+同reader实际核Seedance官方Apr15publication全文题摘/14148link、官方exact-v1 PDF pp1–5 §1/2.1/2.2及pp20–22 §2.5/T28：模型Feb早release，本次Apr15报告测量事件2+2+2=6准入成立。taskfollowing/referencealignment/editconsistency和supported-input人口分验；T28编辑2.20弱2.29/2.24、extension1.93弱2.78且Veo只自身视频/Seed任意uploaded不合总排名。专家N/全budget/CI/hwprecision/fullSLO ND，不授物理/production保证。两项仅有限接口Source/date通过，具体Books尚待；不称本地坏PDF完整或已读完整26页。
+
+### R121 — A43两首公开资格实际独核（新reader结论，作者串行保存）
+
+`resume_apr16_review` 实核SUMMER AAMAS官方具名2022–2031但无早公开日；MIRALab MarchPDF p18仅两句研究预告无方法/实验正文，不支持整稿早公开排除。无具体earlier正文反证，R29 Apr15日界组合与R62Source可复用，owner普通。
+
+Nemotron官方March10页/March11Blog已公开NVFP4/LatentMoE/MTP，官方链接51页同题PDF首页April3/abstract/Intro与arxivv1完整abstract采用命题一致；这三核心同模型事件窗外退出、不新评分通过。当前PDF封面不证明精确字节April3已公开、当前链接不证明历史附件时间，不授51页全文已审；出现具名新revision增量仅定点重开，不扩March任务。primary链接见A43及[exact-v1 abs](https://arxiv.org/abs/2604.12374v1)。
+
+### R122 — VISTA逐字PRE与真实POST通过（新reader结论，作者串行保存）
+
+`resume_apr16_review` actual A44完整逐字单段/本人注、Ch29 350–358 SCD/ORBIT及exact-v1 §3.1–3.3/Eqs2–4/Alg1，历史correct-set新增覆盖配权teacher→gold与固定label/sets/order的zero-prune是实际owner差额，非SCD单teacher/mode重复。rawcount/τ不混recipe、Light质量反侧、全费与非静态LLM未验证近文，逐字PRE通过；root授该窄位置后作者保存。
+
+同reader随后actual Ch29 349–366完整P-ALIGN→SCD→新段→ORBIT→ridge及本人注1576，正文逐字一致、完整旧交接未破坏；实际正文/完整邻接/本人注POST通过，新增第18条真实正文POST。作者现在只同步本人注并读回，最终注读回仍待，不授DAY。
+
+### R123 — rDPO/Artifact两必要修订与三PRE通过（新reader结论，作者串行保存）
+
+`resume_apr16_review` actual rDPOv1 §4.1–4.3/Eq7/Rules1–5与Ch34 RefEval前后，发现A44初稿“满足必要项/至少失去一项”抹掉partial资格；实际Rule1 chosen多数full且最多一项partial，Rule2 rejected至少一项0或至少两项.5。作者已修为声明full/partial门槛与不合格/多项partial，reader实际读回修订PRE通过。
+
+同readeractual ArtifactWorld compressedv1 §3.2–4.4/Eqs1–5与Ch24空间noise-map→DiT-IC完整前后，初稿rawpixel差/三路任意选t须修；原为LPIPS多层感知feature discrepancy、tseq=[0,t,0]。作者已修为感知特征差、reference/heatmap clean0与target独立采t，reader实际读回PRE通过；target-only loss不隔离条件梯度、假几何/指标反退与全费准确。
+
+CoSync readeractual compressedv1 §3.1–3.5/Eqs1–6、Ch24 learnednull完整前后→非发声bridge，same-block styleMHSA→lipzeroGate→timedtextMHCA实际差额成立。非三trainingstage/认知定律、共享AVHubertsensor/CTC/CFM不授物理同步，三人口/WER/SPK反側/全费及fallback近文，A44逐字单段/本人注PRE通过。三项待root窄锁、未POST，不授DAY。
+
+### R124 — A45 DreamStereo/Spreadsheet两具体NC通过（新reader结论，作者串行保存）
+
+`resume_apr16_review` actual Ch24 73–86完整editing前后，mask/dilate/gather→local+global→scatter/blend、非语义真边界、全输入/VAE/组件FPS与SLO分账，承载12270本次有限mask计算人口接口；不说已实现双投影/Jacobian/stereo算法，R66必要透明/反射/大disparity/DiT-only反側保留，具体已有覆盖通过。
+
+同reader actual Ch76 114–140结构中间表示cell→原span/consistencyGate/原文回退及211–231 serialization/reader分责，承载12282派生表结构consumer资格/YAML有效非原表忠实；不说实现双validator recipe，未pass迭代上限/同源validator/全费保源，具体已有覆盖通过，不双写Ch78。两项非Source自动NC，不授DAY。
+
+### R125 — A46四具体NC/两Only与VISTA最终注actual读回通过
+
+`resume_apr16_review` actual Ch77 135–161→12357 reflection pending/有源接纳与低风险直写、contentcredit分责；Ch79 51–76→12390规则经验compatibility/目标policy试用/无guidance退路；Ch78 172–187/198–231→12421窄generic粒度/catalogschema/revisablefrontier/观察效用；Ch27 247–270/345–366→12477语言字符过滤/retention分布/classifieryield非utility与synthetic共源盲点。A46四项具体NC实际通过，不声称实现各原recipe。12307 LPT/12372 Sliding两Only实际通过，保5分准入/受限recipe与有价值负侧，不按领域、小规模或成熟模块标签倒删。R99～105/R86未变复用，不授DAY。
+
+同reader实际最后读回VISTA本人注，真实PRE/POST链与作者回读准确、正文无差额，最终注通过，root已接纳并释放Ch29该窄锁。末注仅去行政final待文字，没有重写正文，不重复Source/全章验证。
+
+### R126 — rDPO13029真实正文/完整邻接/本人注POST通过
+
+`resume_apr16_review` actual Ch34 278–298完整数据质量→新增修订段→RefEval→pair来源/人口偏差及本人末注。A44/R123最后修订逐字一致；essential full/partial门槛先于margin、curation非梯度、三split非freshonpolicy、judge/knowledge负側及全费回退近正文，原DPO目标与RefEval三reference角色保留。新增第19条真实POST通过；作者已仅同步本人注并读回，最终注actual读回待，不授DAY。
+
+### R127 — ArtifactWorld12251真实正文/完整邻接/本人注POST通过
+
+`resume_apr16_review` actual Ch24 191–211完整采样器→空间map→新段→DiTIC两段→causalcontext及本人注，逐字最后修订A44/R123一致。LPIPS感知feature、reference/map clean0及target采t、targetloss不隔离条件梯度、生成修复非世界state与反側/全费/fallback真实近文，旧sampling/codec推理链保留。新增第20条实际POST通过，作者已仅同步注并读回，最终注actual读回待，不授DAY。
+
+### R128 — CoSync实际POST及四项同步末注final通过
+
+`resume_apr16_review` actual Ch24 340–364完整capacity/sharedcontext→learnednull→新增sameblock条件次序→非发声bridge→EMA及本人注，逐字A44/R123一致。算子次序非训练stage，InfoNCE/CTC/flow代理与共享AVHubert sensor、三人口反側/全费/fallback真实在正文，不接管物理/world/action owner，新增第21条真实POST。其后actual读回Ch29 VISTA、Ch34 rDPO及Ch24 ArtifactWorld/CoSync同步末注，无未来待语，真实Source/date/PRE/POST链准确，限定检查通过；root已接纳并释放四指定位置，不授DAY。
+
+### R129 — A47具体四NC及RALP Only实际通过
+
+`resume_apr16_review` actual Ch29 154–170/566–578/626–649及P-ALIGN，承载KGReasoner12487有限轨迹消费/文本回退不复原环境与ECI12748答案/trace资格非因果truth，不称已有GNN/CHR配方。actual Ch77 54–74/510–547/1212–1237承载EvoSpark12776模拟分层、派生promotion非事实、overwrite非ACID；actual Ch78 122–143承载BEAM12898完整程序实际跑后才reuse，R116 rank/加性最优冲突仍隔离，不签全部运行无效。RALP12651 Only保query/IRI/Manchester/fewshot局部协议、MIPRO strings非梯度、0.5confidence非truth与方向冲突，不因领域硬排。旧Source/date未变复用，不授DAY。
+
+### R130 — A48三PRE及SCRIPT/AdaptiveBudget/HPC真实POST与末注final通过
+
+`resume_apr16_review` actual Ch12 286–313及SCRIPT v1§3.1–3.3/Eq1–4、Ch66 790–820及AdaptiveBudget v1§2.1/3.1/4.1、Ch57 54–88及HPC v1§4.1–4.4，三个A48逐字PRE实际通过，位置与具体差额成立。其后actual Ch12 288–310完整lookup→新增旁路→ngram/hash及注，Ch66 797–815完整GP两段→PPI allocation→CEM/importance及注，Ch57 61–90完整planes/scheduler→diskless/VM/双域→控制迁移及注，逐字PRE一致：token长度不等free/无遗忘、paired residual proxy非adaptive有限MSE/CI、control存活非GPU endpoint可用，全部反側/全费/fallback近正文。新增第22/23/24条真实POST。仅同步本人注后非writer final actual读回通过，root接纳释锁，不授DAY。
+
+### R131 — A49六NC/两Only与A50四NC/ERNIE Only实际通过
+
+`resume_apr16_review` actual Ch66 70–111/359–374承载Toxi12321/Scene13035诊断及symbolic/render两个测量对象；Ch23 134–159/184–206完整补读承载DualAnchor12403/IAD12440/CAM12551 prompt/队列状态、multi-readout/consumer与输入identity；Ch26 canonicalURDF与126–139承载XR13001 labels/IK/subsetplayback非全执行/contacttruth。StructDiff12575及MCSD12719 Only保有限recipe和有价值反側，不因小样本/成熟模块/领域退出。actual Ch82 1058–1079承载DeCoNav12486双时钟/barrier/消息proposal；Ch24 136–145承载OFA12668 trainedbudgetfamily非token/channel混同；Ch77 968–1009/1691–1703承载SUMMER12081 retention/score/route/write分责；Ch66 116–137/340–350/1060–1076承载Seedance任务/参考/编辑测量与人口；ERNIE Only保原5及PE方向不一，现Ch24 c_ideal/c_user已有，非因未公开配方设Source阻塞。未宣称已有各recipe/全benchmark实现，不授DAY。
+
+### R132 — A51三PRE、真实正文POST及末注final通过
+
+`resume_apr16_review` actual Ch23 193–212、Ch76 117–144/498–529完整上下邻，及原v1 STGD§3.2–3.7/Eq1–8、TriRAG III-A–D、GraSP§4.1–4.4再回对，三个最小consumer差额逐字PRE通过。root逐位置授窄锁后，actual STGD Ch23 193–216/body206/note2166、TriRAG Ch76 499–528/body518/note1826、GraSP Ch76 120–148/body136/note1828通过POST：静态producer→temporalconsumer、conditiononlykey/完整triplet与可空截proof、embedding-accessible selector→closed consumer文本边界均准确，零初始化非无遗忘/proof非faithful/缺边与共同成功交集/全费及fallback保留。仅同步真实POST后，三本人注final再次actual读回，无未来待语；root接纳释锁，新增第25/26/27条全链有效，不授DAY。
+
+### R133 — 四项初始5分行政纠错实际通过
+
+`resume_apr16_review` 与root actual核A9 CoSync12292=2+1+2=5、A19 OFA12668/EvoSpark12776/BEAM12898各5及R75，后Source口语原6不是新校准。恢复四项初始5不变实际Source深度/POST。root授CoSync末注唯一6→5行政许可后，reader actual读Ch24本人末注2836：2+1+2=5及A9行政解释正确、正文无差额，final通过并释锁。历史提案保留，正式表不沿抄6，不重读有效Source。
+
+### R134 — A52自然日有限来源收口及100分母链独核通过（待正式六节DAY）
+
+`resume_apr16_review` actual重读有界目录停止记录/十四源，解析主题query分类×主题/日期及0页complete：142/80/75/200合497返回、union329。A1 agents193为历史抄录，当前A52与正式源表改200，不动池/日期/评分。实际检查相关标题A14/A19/R52/R75范围；Anthropic Apr14 13:01Z→Apr22邻域、DeepSeek16、ZAI Apr29/7/1、Hunyuan code0/9 metadata（Apr22UTC展示BJT23）有效，failed404不算源。其余目录未变有效层复用，不称fresh十四源抓取；FlashTTS Apr15 15Z为旧同事件、SimulaApr16窗外、Research/Meta/Moon/MiMo/Mini历史缺段及资格/中心争议隔离准确，无新增普通来源待办，不授全Coverage正面/无遗漏。actual分批身份独立抽取：A1 4+A3 13+A7 24+A9 15+A14有效11+A19 31=98个arxiv精确ID无跨批重复，官网2合100；27I/44NC/20Only/9争议算术正确，旧87=39I/15NC/28Only/5争议，合187=66I/59NC/48Only/14争议。12231是firstpub必要date未恢复的资格隔离，不是已证早公开；举办日/venue月/403不推早公开。正式100行/证据与冻结仍待保存后actualDAY。
+
+### R135 — 正式六节actual DAY通过，完成态FINAL尚未预授
+
+非作者 `resume_apr16_review` actual逐项读完本日正式六节、新增100候选表及100证据，未变必要Source与旧87按有效层复用、不重附件。新增98主题arxiv精确ID与既定集合完全相同，另Seed14148官方报告及ERNIE发布合100；100表URL/证据标题逐一同序唯一、与原86无交集。27I/44具体NC/20Only/9中心争议和必要Source/具体owner/27真实POST-final匹配，合187=66I/59NC/48Only/14争议，17个新增owner。新增日期全Apr15，四原5、12260重要理论修订不重复评分、Apertus4及agents200准确；六资格/历史源缺段/14中心争议隔离不授正面Evidence/Coverage/无遗漏。
+
+实际确认原87整行/日期/分数/顺序精确冻结，原§4整个连续片段含首换行86200字符（正文86199）原样。DAY发现并已actual读回四个报告压缩差额：13010固定SFT rollout缓存不称student onpolicy、11914 add-on未直接接policy但auxloss可共享参数起作用、12575改为diversity/遮挡/strict equivariance/Eq2具体边界移除串入MCSD的VI、12379必要Source R14→实际R24。机制分数/处置不因压缩纠正变更。R128–134真实结论表达actual通过；reviewer实际V3、README/SUP限定cached/unstaged零告警、本地389引用无缺失。DAY实际通过，可以按实际状态保存完成再actualFINAL；本条不预签完成态FINAL/代码复现/全源Full。
+
+### R136 — 完成态actual FINAL通过，本日独立reader ownership释放
+
+非作者 `resume_apr16_review` actual打开14:35:53+08:00保存完成态README：状态完成、§1六节DAY通过、§5普通无、§6非作者通过与R135引用一致；§2/§3/§4相对已实际DAY版本逐节内容未变（仅会话内读比，无新增审计文件），100身份/处置/证据、十四来源及冻旧内容无新差额。actual完成态V3及README/SUP限定真实cached/unstaged检查再次零告警，R135真实表达actual读回准确。保留项明确不授Evidence/Coverage/无遗漏；本真实FINAL可仅串行保存，不必再请求同一次复核。reader已向root报告可接纳并释放本日ownership；本日无Books锁/普通研究待办，不授全源Full/代码复现/部署，无stage/commit/push。

@@ -283,6 +283,8 @@ Production readiness 是持续运行的证据与控制闭环，不是上线前�
 
 轻量恢复用额外校验计算、metadata 和实现 TCB 换取更低重算成本；碰撞、多点错误、kernel 变化和对抗 fault 会产生漏检或误修。作者实验只覆盖披露的 quantized integer/GEMM、fault model 与硬件设置，不证明任意 accelerator 或生产 silent-data-corruption rate。高风险结果、syndrome 不可解或 sketch residual 超界时，应丢弃本次计算并回退完整重算与硬件隔离。
 
+保护预算还应按算子分配，不能把 dense GEMM 的检出率移植到 MoE gate。以 row/column norm 构成的 Cauchy–Schwarz 全局上界，能省去 checksum roundoff-margin 的求值，却因界较松漏掉局部扰动；router 的微小 logit 变化又可能改选 experts。[受控 bit-flip 对照](https://arxiv.org/html/2610.18557v1#S3)中，bf16/L40S上的dense层检出接近checksum，而所测Mixtral gate仅保留约55%的检出能力；这不证明所有router都同样脆弱。该实验以生成token序列改变标记SDC，不是语义错误率，fusion中的FlashAttention matmul也未保护。KV还会复用未检错误，因此须沿token传播与任务结果验收，校验kernel和阈值求值开销分别计账。覆盖不足或高风险gate应保留checksum/重算与设备隔离，不由局部无误报签发完整输出正确或真实硬件故障率。<!-- source-family:SF-2026-ARXIV-2610-18557 -->
+
 ## Review notes
 
 - **CB-VER（arXiv:2604.03539v1；Status: Experimental）**：exact-v1 支持 converges-before graph、组件 interface composition 与 CHC-based synthesis 在其 benchmarks 中的可行性；不证明未建模环境、实际实现或一般 AI 平台控制面的端到端正确性。https://arxiv.org/abs/2604.03539v1

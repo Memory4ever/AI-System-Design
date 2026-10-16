@@ -40,6 +40,10 @@ deployment artifact      runtime-ready converted model
 
 三个对象可能共享 tensors，但完成标准不同。
 
+即使当前预测与 loss 相同，两份权重也未必是可互换的训练起点。正标量互逆缩放 Q/K、V/O 或满足齐次条件的 MLP 矩阵对，可以保持当前函数，却改变梯度与相对更新尺度；GELU 的 up/down 不满足这项精确对称，SwiGLU 也只覆盖 value–output 对而非 gate。另以 `c>0` 表示某坐标块的缩放，对精确对称坐标 `θ′=cθ`，对应历史中的 Adam moments 应为 `m′=m/c`、`v′=v/c²`；但仅转换 moments 仍不足以让下一步等变，还需同时满足 `η′=cη`、`ε′=ε/c` 与 `decay′=decay/c`，并保持 counters 与随机性相同。函数等价因而不能代替 resume-state 等价。<!-- source-family:SF-2026-ARXIV-2610-18085 -->
+
+一种受限恢复方式是在第一次 resumed update 前，把精确对称轨道上的矩阵对及 moments 一起规范到同一 balanced state；它不是任意权重重标定，也不等同只周期性调整权重。变换与校验增加状态迁移成本，错误的 pair、Norm 或 optimizer 耦合会破坏前提。[受控 checkpoint 实验](https://arxiv.org/html/2610.18085v1#S5)主要恢复人为引入的尺度失衡，未失衡 control 没有可靠改善，不能推出正常大模型默认获益；soft damping 仍依赖起始位置，也不是 exact canonical restart。不能证明对称与完整状态变换时，保持原参数化，保留原 checkpoint 并按新优化轨迹验收，不以恢复时 loss 接近签发连续性。
+
 ## 一个完整训练状态清单
 
 可恢复 checkpoint 通常包括：
@@ -175,6 +179,8 @@ rank-local sharded state
 ```
 
 PyTorch Distributed Checkpoint 与 Megatron distributed checkpoint 都提供面向 sharded state 的 save/load 能力。具体 API 会演化，稳定要求是保存 global tensor identity、local shard offsets、dtype/shape 与 layout metadata。
+
+这里的 tensor identity 还包括 checkpoint 文件之外的构造状态。RoPE frequency 等 non-persistent buffer 可能由初始化计算生成，不在 `state_dict` 中；若 meta-init、整模块 dtype 转换与 materialization 将原本显式 FP32 的 buffer 变成 BF16，再按现有 buffer dtype 恢复，相同权重也会产生随位置变化的 log-probability 偏移。恢复路径应区分持久状态与构造派生状态，保存或确定性重建后者的值、shape 和构造 dtype，再用固定输入验输出；不能把“全部转成模型 dtype”当成统一正确性规则。[UniRL 的限定修正](https://github.com/Tencent-Hunyuan/UniRL/pull/596)支持这一生命周期边界，但其 Qwen 路径对照不证明任意架构均等价。构造快照、copy 与 wrapper 校验仍有成本；无法重建或输出失配时，保留已验证的完整加载路径，不由 weights 加载成功批准 policy 一致。
 
 ### 低精度参数恢复要区分数值、编码与更新状态
 
@@ -434,6 +440,8 @@ Delta 要求所有 receiver 以同一 baseline 应用固定 candidate：XOR 必�
 融合两个从共同 base 出发的 task vectors，还可能需要任务不对称的筛选，而不只是统一平均。在受限 reasoning/task 合并分支中，分别用各自 calibration 数据的梯度幅度，选择 reasoning 向量的低梯度位置与任务向量的高梯度位置，再从双方集合都去掉 overlap，按缩放系数加回共同 base。这个 mask 是模型、loss 与校准数据依赖的转换 proposal；不同选择方向和交集排除不证明推理或安全知识已被定位到独立地址，也不保证参数互不重叠就没有行为干扰。[有限模型与mask消融](https://arxiv.org/html/2601.05560v1)支持该受测分支，同时提醒低攻击成功率可能来自输出崩溃；因此目标 artifact 要同时再验任务效用、reasoning、输出完整性和安全，而不继承源模型成绩。梯度采集、筛选与发布矩阵都有成本；共同 base 不同、校准迁移或回归未过时，保留源 artifact、原合并方法或不合并。
 <!-- source-family:SF-2026-ARXIV-2601-05560 -->
 
+对同一基座、架构与张量坐标兼容，且均已完成后训练与对齐的最终 checkpoints，统一平均是成本和语义都容易解释的起点，但总体分数接近不等于各能力类别互补。另一条受限分支是在类别评分矩阵中寻找低相关的能力切片，从各切片选择 checkpoint experts，再搜索非均匀平均系数；因此“平均哪些模型”和“用什么权重平均”必须与用于选择的类别样本、评分及搜索过程一起成为 artifact build 的输入，而不能只记录最终权重文件。[同基座 checkpoint 的受限对照](https://arxiv.org/pdf/2511.13254v1)区分全体均匀平均、选定子集均匀平均与选定子集加权平均，支持这个选择分支，不证明任意架构、任务或弱互补类别都获益；其公开榜单分数参与选择和调权，独立开发集只是后续建议，不能把所报结果当测试独立的泛化证据。候选加载、类别评价、系数搜索及目标验收仍有费用，“不再训练”不等于零成本。由此推导的发布要求是保留 source checkpoints、子集与系数、选择人口和 scorer lineage，再按第 66 章分离开发反馈与独立最终验收；类别样本不足以分辨互补、回归不稳或验收失败时，保留均匀方案、单一已验模型或不合并，而不是让搜索结果直接取得 release 资格。<!-- source-family:SF-2025-ARXIV-2511-13254 -->
+
 第 66 章将进一步要求 equivalence Evaluation 绑定 source/target artifact、转换配置、runtime、dataset 与 scorer identity。只有证据可追溯到实际被部署的 target artifact，Registry 和 release gate 才能消费它。
 
 ### Deployment Artifact 的完整交接契约
@@ -632,3 +640,5 @@ Primary-source / official documentation 校验入口：
 - `SF-2026-ARXIV-2512-24511`：[exact v1](https://arxiv.org/html/2512.24511v1) §3.1 Polaris/Lustre setup、§3.2 tensor/request/file 粒度、§3.4 direct/cached 混合路径反证、§3.5 restore allocation/framework 对照。采用 I/O microbenchmark 与端到端 restore 的不同成本合同；真实 BLOOM3B/LLaMA7B/13B 的 4/8/16 ranks 与 8GB 连续 host-buffer 测试分开，不采用通用 34% 加速或 mixed-path 优势。必要原源与实际正文/邻接/末注已由 root 非作者复核通过；未运行代码或复现实验。
 
 - `SF-2026-ARXIV-2601-05560` — Daily `2026-01-13`；[ReasonAny exact-v1](https://arxiv.org/html/2601.05560v1) §2–4。原评分保持，具体owner差额深入；采用同base BottomK/TopK双向overlap排除、mask calibration依赖与target回归；低ASR输出collapse反侧。未运行代码或复现实验；root实际必要源/现owner写前核通过并授窄锁；root已实际核正文/前后邻接及末注，非作者POST通过。
+
+- `SF-2025-ARXIV-2511-13254` — Daily `2025-11-19`补充窗口Nov18；[Meta官方publication](https://ai.meta.com/research/publications/souper-model-how-simple-arithmetic-unlocks-state-of-the-art-llm-performance/)明确Nov18日期，仅作机构披露事件；[SoCE精确v1 PDF](https://arxiv.org/pdf/2511.13254v1) §3/Algorithm1、§4.1三对照/§4.2.3条件及§7.1支持同base、架构/张量坐标兼容且均已完成后训练与对齐的最终checkpoint的类别互补子集/系数选择分支；张量兼容不代替posttraining/alignment资格。公开榜参与选择，独立dev仅后续建议，不能授测试独立泛化/普遍鲁棒性；选择人口、artifact lineage、独立最终验收及回退是受此边界约束的工程推断，不冒原论文已验证release流程。晚v2的precision-collapse叙述不回填v1；未运行代码或复现实验，不授生产效果。Ohm独核§15真实非写入者POST通过；root独核§2实际读回接纳本项整合并释放Ch35窄锁，不代表Nov19日级验收。

@@ -74,3 +74,49 @@ Video1.5 的 all_gather backward/SUM reduce_scatter 修订与 MiMo 的 routing r
 终态保留项、原始入口失败与重开条件按本日 README/ADMISSION/SOURCE_STOPS 保留；不支持正面证据、Books 或无遗漏断言。普通作者读文待办 0，具体指标混淆纠正已实际落实；进入完成态结构检查。
 
 结论：通过
+
+## 2026-10-15 恢复：Alignment单段写前范围批准（不是日级通过）
+
+用户明确恢复后root实际重读AGENTS/当前合同、来源分组、Prompt、全ROADMAP/State及Books背景/学习方法/写法；实际读SUP_ALIGNMENT_SOURCE§1–6及Feynman独核§3–5，精确复用同事件/采用命题的必要Source与5分层。另从已保存RAW_ALIGNMENT实际完整读Mitigation1 setup/results和Limitations的p/h3/h4（不含prompt表），确认首轮文本决定后轮问询context、后轮token mask、问询回答参与reward、首轮间接选择，以及人工organism/高方差/非真实whitebox结论边界。未重全正文/附件/实验，不声称复现。
+
+当前实际顺读Ch31开篇1–38、完整450–478及834–864，Ch30/32开篇、Ch66完整246–270。probe表示漂移、CoT/output奖励冲突、elicitation与monitor配对已有覆盖，不再追加这些通用段；只有生成式第二轮监督依赖首轮轨迹的接口差额由TRAIN-RLHF唯一承载。准确锚点仍是Obfuscation Atlas完整probe段后、Pass@k目标段前，现邻接未变。当前Ch31 cached/unstaged numstat均空，旧cached18只是历史观察，不沿为本次dirty状态。
+
+root批准SUP_ALIGNMENT_SOURCE§6已通过的逐字一自然段及本人一末Review note，正式note补原作者URL https://alignment.anthropic.com/2025/alignment-faking-mitigations/ 。授本日writer Boyle唯一此窄写锁，不改其他正文/源注/index，不额外写Ch66。写后Newton须实际顺读完整新段、两侧和自身note回对已核Source，root再实际读回才接纳并释放；本节仅写前授权，不是写入/POST或DAY。原Seedance6分完整行/日期/窗口/连续§4冻结。其余本日Source与六节尚未完成，90/132不含Dec17。
+
+### Alignment实际写后接纳 / 窄锁释放
+
+root实际读取Newton独核§10真实nonwriter POST，再实际顺读Ch31完整456–479：更新方向→原probe→新L464生成式问询→原Pass@k两段/组合诊断，另实际读末本人完整note与前注，并核完整限定diff只有4新增0删（正文1自然段＋自身note）。新段逐字等已批准PRE；首轮context→后轮问询/reward→首轮更新与mask权限、人工organism、非生产/白盒保证、额外评价费用及checkpoint/outcome退路近文成立，原两侧不被改写，原作者URL已补。cached为空，限定cached/unstaged diff-check均exit0；未动其它正文/notes/index，不冒全仓clean。
+
+**实际POST接纳，释放Boyle这一个Ch31窄锁，本日实际整合1。** writer仅同步本人note中已发生Newton§10/root读回与释放状态，root再读行政差额，不改机制正文或第三次Source/PRE。此单项不授Dec17整体DAY/FINAL；其余Source/Meta/MiMo/日期和six仍普通，90/132不增加。
+
+root随后实际读回Ch31末本人完整note，已准确同步Newton§10真实POST、root接纳及锁释放，必要Source/5分/采用禁界均保持；这一行政差额闭合，无待重复审批/书写。当前无本轮Books锁，本日整合1仍非DAY。
+
+## 2026-10-15 MiMo / Meta 三项单段写前批准
+
+root完整读SUP_MIMO_SOURCE§1–4、SUP_META_SOURCE§1–4以及Newton独核§12–15，必要原release身份/后稿角色按同命题有效层复用；另实际读MIMO_NECESSARY及当前Ch22完整250–306、Ch24完整874–921、Ch23完整934–970。三拟正文及本人note已逐字读，准确两侧与现正文相符；不是据题名无匹配推gap。MiMo无Value只入分母不同于现content anchor/结构性诊断；SAM混合音条件分离不同于ASR和语音生成；PE活动采样竞争具体化原多目标权重而不重写其一般原则。Newton实际逐字PRE§15通过可复用，不重复其完整方法/全PDF。
+
+三项评分/采用域分别5/6/5，本文不修改旧Seedance6分或给同family子机制加家族。MiMo32B dense消融/最终MoE分责、后稿Meta必要反侧只作明示补证、非Dec16完整recipe、输出与judge分验、局部指标相反取舍、全费用与原机制退路均近文，未授性能普效/真实安全。root批准三包现逐字正文各一自然段＋各本人一末Review note，分别授Boyle三个独立文件的唯一窄锁：
+
+- MODEL-LONG-CONTEXT / Ch22：现结构性sink段及独立SF-2026-ARXIV-2605-06611后、Conditional Attention标题前；只SUP_MIMO_SOURCE§4正文/note。
+- MULTIMODAL-GENERATIVE-PARADIGMS / Ch24：现RNNT一致性限制完整段后、SF-2026-ARXIV-2605-20946:start前；只SUP_META_SOURCE§3正文/note。
+- MULTIMODAL-REPRESENTATION / Ch23：多目标公式后完整权重段后、joint critic完整段前；只SUP_META_SOURCE§4正文/note。
+
+root当前三个文件cached/unstaged numstat均空，写前writer再次看dirty并保护后到并发内容；不改原marker/两侧/其它notes/索引，不新增标题。每本真实保存后Newton分别实际完整新增/两侧/本人注POST，root实际读回才接纳并释放各锁，不能批量用marker预签。此写前批准不是真实写入/整合数或DAY/FINAL；Alignment已接纳1保持，其余本日有限Source/date/six继续。
+
+### 三项实际POST接纳 / 各窄锁释放
+
+root实际读Newton§18分别nonwriterPOST，随后分别实际顺读Ch22完整272–304及末本人完整注/前注、Ch23完整942–960含原公式/权重与joint critic及末本人注/前注、Ch24完整878–899含CTC/RNNT限制与speech绑定段/码层交接及末本人注/前注，并读三文件完整限定diff。每本只有批准正文1自然段＋自身1末注/4新增0删，未移原marker或改其它正文。三篇精准版本、必要反側、采用禁界与后稿补证角色均同批准稿；不是从marker或writer自签推验收。
+
+MiMo无Value分母不恢复滑出内容/不授hybrid总KV常数、32B消融与最终MoE分责；SAM提示条件不签实例/波形守恒/judge真值；PE活动采样的边界与误报指标反向取舍不签通用比例或规模因果，均在正文近处，现论证承接自然。原作者与精确后稿URL、未复现和费用/回退限制保留。三文件限定cached/unstaged diff-check均exit0，外部已有/后到修改保护，不称全仓clean。
+
+**三项实际整合接纳，释放Boyle的Ch22/Ch24/Ch23三个窄锁；本日连Alignment共实际整合4项。** writer仅同步各自本人note已发生Newton18/root读回/释放行政状态，root再实际读差额，不再重Source/PRE/正文。当前无本轮Books写锁；单项4不等Dec17整体DAY/FINAL，90/132暂不因书写增加。
+
+root随后实际逐一读回Ch22/Ch23/Ch24末本人完整note，均已准确同步Newton18真实POST/root接纳及各锁释放，原必要Source/评分/采用禁界和未复现分责不变；三个行政差额闭合，不再重正文或Source/PRE。本日实际整合4仍非DAY；当前root因其它已验日报接纳为92/132，不包含Dec17。
+
+### root实际日级接纳：DAY22与保存完成态FINAL23
+
+root非本日报作者，实际完整读取Newton19–23及作者SUP_RESUME6、来源补包全部五节，并顺读README全部六部分及随后completion行政差额。精确保存稿SHA256为`906448baf761dfb98bd9a44419d640912fbae6d9c40c1700fccda2fa196c466b`，与Newton实际FINAL23相同；状态完成/13:51:23检查时间、五正式家族及四实际整合/一仅报告、有限Source/未知日期和后稿补证权限一致。原连续§4中的旧hold已由当前更新段明确覆盖，没有把后稿细节冒原Dec16全部recipe；此前root各真实POST/完整邻接/本人注及行政读回有效，不再重审单篇。
+
+完成态V3重新通过；root相对HEAD实核旧window/Seedance完整行均保持，整个原§4连标题区的2297字符仍为当前连续前缀（reader2291为正文口径，不混作不同证据），一H1/六H2完整，26本地引用/22路径零缺失，限定cached与unstaged diff-check均通过。未将截断的宽diff输出当全量语义阅读；语义依据是上述完整保存稿/精确差额及独核实际层，机器只支持接口/冻结/路径。
+
+**接纳Dec17整日，当前93/132已验收、39待。** 外部日期/历史目录、Video1.5 revision及独立安全材料保持具名安全隔离，不授正面Coverage/Evidence、无遗漏或生产保证；普通工作零、四Books锁均已释放。作者只可同步已发生FINAL23/root接纳指向，不改研究内容。立即fresh转Dec18（只补Dec17自然日），每日重读适用上下文，不继承本日35/26池或Source成功。无stage、commit、push，保护并发index及其它任务。

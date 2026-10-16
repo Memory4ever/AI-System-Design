@@ -55,6 +55,8 @@ Feedback 可以来自：
 
 同一模型可能在 generation 与 critique 中重复同一盲点。External tests 和 environment outcomes 通常比自由文本“再想想”更可操作。
 
+外部反馈也不是同样强的修复信号：`NameError`一类traceback能定位缺失对象，单纯`AssertionError`往往只暴露答案不符，未说明哪条算法假设错了。一个受限小模型代码对照中，简单generate–execute–refine已能获得主要收益，更复杂的受约束pipeline没有稳定超过它；因此应先检验反馈是否可行动，再把收益归给拓扑。明确的执行测试已通过的candidate应保留，不再为凑轮数继续改写，因为修复器也可能破坏原来正确的代码；这只保护当前测试义务，不认证未见输入正确或安全。搜索、refiner与反复评价都增加成本，单次随机fitness还会偏选幸运候选，须另作未参与选择的重复验证。[作者的1–3B/Python/HumanEval与MBPP实验](https://arxiv.org/html/2604.21950v1)仅支持这些局部边界，早停退化分析还是single-run，不推导所有模型、任意DAG或同预算净收益；缺可靠oracle时仍保留原候选、有限retry或人工核验。<!-- source-family:SF-2026-ARXIV-2604-21950 -->
+
 针对有文档依据的回答，可以把“读原答案后评论”改成盲再回答：一个提问器先将候选回答分成原子问题及其原断言，再让 checker 只消费问题和原始文档，不看候选回答与预期断言，最后由比较器核对两份答案。这样限制了直接确认原答案的可见性，却没有制造模型、数据或问题选择的独立性；提问本身可能漏掉、改写或暗示关键事实，文档也可能错误。必须保存原回答、完整 claim–question 对应、再回答与未被检验的部分，不由多数投票或全体一致认证事实真值。<!-- source-family:SF-2026-ARXIV-2603-24579 -->
 
 检查人口还会被优化目标反过来改变。[受限共享 policy 实验](https://arxiv.org/html/2603.24579v1)在全部被提问 claims 一致才不给惩罚时，实际观察到提问数下降；增加最低问题数只能约束数量，不能证明完整覆盖原检验义务。这条反馈可在推理时消费，也可另进入第31～34章的参数优化，但二者的状态与预算不能混同。提问、多个 checker rollout、匹配、训练与独立评价都付费；缺原始依据、问题覆盖不可靠或同源反馈冲突时，应保留原结果、回读原文并升级确定性 verifier 或人工，而不是以较少被审事实换一个更高的一致分数。
@@ -398,6 +400,8 @@ Reflection 的价值来自 evidence-backed feedback、constraint-wise audit 和�
 但不自动成为长期 Memory。下一章用 Workflow 为这些循环提供持久状态和确定控制。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-21950` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～5必要Source与局部反侧深入。无固定seed/sigma非正式检验/早停single-run/coder未入search/NEAT无MBPP/solved-count非pp边界保留；root非作者必要Source/日级日期合证及逐字PRE通过，明确executiontest并非独立holdout；作者已按单段窄lease保存正文，root非writer实际正文、完整两侧与本人注POST通过，窄lease释放；作者仅同步此注并实际读回。未核代码或复现。
 
 - `SF-2026-ARXIV-2604-01993` — Daily2026-04-04补Apr3；[SAFE exact-v1](https://arxiv.org/html/2604.01993v1)必要§3–5/7、A5/A8，2+2+2=6。只采用learned atomic type/diagnosis/guidance与有界逐步重生差额；不授runtime KG oracle/strict grounded、flagged precision等recall、调用数或prefill cache等全费。supp_apr04_reader actual必要Source/Ch80逐字PRE通过，root授仅两body/本人注窄锁，作者实写并顺读；supp_apr04_reader已实际完整新增/局部前后邻接及本人注，nonwriter POST通过，作者状态同步实读，窄锁释放；未核代码/复现/生产SLO。
 

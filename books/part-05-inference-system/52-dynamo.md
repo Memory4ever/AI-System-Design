@@ -362,6 +362,10 @@ revision 的冗余状态恢复 coverage；最后重建 collective、buffer 与 C
 给定 serving stack，不构成任意 MoE fleet 的 availability 保证。[受限证据：arXiv:2605.10670v1]
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-10670:end -->
 
+可计划的 EP 收缩不一定要销毁全部执行身份。若先建立最大 worker 集合的通信 parent domain，后续可派生 active subgroup，并同时切换点对点可达 mask；worker 保留进程、executor 与 CUDA Graph，虚拟地址不变而物理页可释放。专家先在存活组中补齐、请求迁出或按规则重建 KV，再在 safe point 一起提交 request routing、expert mapping 与 active membership。清空本地请求队列不是 quiescence：远端仍可能向该 worker 的 experts 或通信 buffer 发起访问，必须先撤销 reachability 并 drain 在途操作，才允许 unmap/reuse；扩容则须先恢复页面与内容，再重新发布可达性。<!-- source-family:SF-2026-ARXIV-2610-18451 -->
+
+[FastEEP 的受限实现](https://arxiv.org/html/2610.18451v1#S4)用保留结构换更快切换，但仍支付 host 备份、专家复制、KV迁移/重算与预初始化最大拓扑的成本；专家slots也限制最小active组。16张H20-3e、EP2–16的有限对照不证明任意拓扑与SLO，closed-loop示例的8→4→8切换仍有4.2/7.3秒零输出期，不能叫无中断。超出parent域、无法保地址/正确内容或停顿超预算时，保留整组重建、固定EP与显式请求终止/重试，而不是让结构复用替状态有效性签字。
+
 ## 与第55章的边界
 
 本章回答 Dynamo 怎样组合 routing、state transfer、cache tiering 和 planner。第55章从第一性原理回答 PD separation 何时值得，以及 transfer/interference 的 break-even。Dynamo 是一种实现，不是 PD 有效性的证明。

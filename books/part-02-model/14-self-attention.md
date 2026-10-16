@@ -404,6 +404,10 @@ compute budget 时。此时可以让预算条件进入 layer/head gate：训练�
 两阶段剪枝能减少 Attention 成本，也会放大运动估计错误、丢失稀有事件，并让阈值随 layer 和视频域漂移。作者结果只覆盖披露模型与数据；几何证据不足、精度回归或场景快速变化时，应提高预算或回退 dense attention。arXiv:2605.23892v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23892:end -->
 
+生成视频前还没有真实运动可供测量，固定稀疏比例因此仍是便宜的起点；若不同 prompt 对长距离关系的需求差异明显，可以先以参考视频的运动强度代理离线标定多组稀疏配置，再由 prompt embedding 预测代理类别、选择配置。在线选择器继续在几何候选窗口内用少量 Q/K 探测提议动态 mask；这把“需要多少候选”和“本步保留哪些候选”分成两个控制层，预测的运动类别不是生成结果的物理事实。
+
+[有限视频 Attention 对照](https://arxiv.org/html/2604.20470v1)支持这条条件化预算路径，但固定稀疏和动态 mask 单独使用仍有质量反退，动态探测还可能慢于原路径；预测器与可选 LoRA 的结果不能混成同一个免训练收益。参考生成、光流标签、离线配置搜索、router/adapter 训练及在线探测都需计费，soft mask 加 epsilon 也不自动形成严格删除支集。类别漂移、漏掉重要关系或净收益不成立时，应扩大预算、回到已验证固定 mask 或 dense Attention，并由 runtime 独立验实际 mask 执行与端到端费用，不从局部 feature/光流 proxy 宣称物理一致或生产 SLO。
+
 ## 改变匹配表示：从独立 Q/K/V 到条件化替代
 
 保持 Q/K/V 的独立坐标最容易分清路由与传值。如果要合并表示、通过 latent slot 中转，或移除可学习寻址投影，就必须重新检查参数化和表达边界，不能只把变化记作缓存或 kernel 优化。
@@ -515,6 +519,8 @@ PagedAttention  管理运行时 KV Cache 物理存储
 ```
 
 这些技术共享 Attention 背景，却属于不同知识树节点。
+
+若完整序列仍放不进设备，还可把允许的 query–key pairs 分配给若干相互覆盖的子序列任务，而不是让每段各做 softmax 后直接平均。组合设计必须保证每个有效 pair 被处理、重复对角只计一次，并继承原 mask；各任务累加未归一的 numerator 与 denominator，再汇总后统一相除，反向也沿同一归约重算和累加。[有限 pair-cover 分解](https://arxiv.org/html/2604.20819v1)依赖所选 Steiner 结构确实存在，实数算术恒等不等低精度 bitwise exact；从局部 out/lse 还原质量时，共同数值缩放仍须实现验收。Host accumulator、gather/transfer、mask、二次总计算与 OOM 后的部分写回恢复都计费，缩尺任务外推不是完整十亿 token 执行。覆盖、内存或数值恢复未闭时，保留普通分块/streaming Attention 与已验证序列上限，不由可重排任务推出整模型不会 OOM。<!-- source-family:SF-2026-ARXIV-2604-20819 -->
 
 ### 数值与实现边界
 
@@ -694,3 +700,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-10791` — Apr15补Apr14；[Pre-Projection exact-v1](https://arxiv.org/html/2604.10791v1) §2 Eq1–5/T1、§3/T2/§5.3。2+1+2=5，投影前feature与其额外旁路缺口深入；保原x residual、position仅本层无新注入、near-zero非exact与K/Vshape非值复用/免费、参数不matched/ARC/HSwag/410M LoRA反側，不采weightnorm语义因果/+40.6%普遍收益；硬件/长度/总runtime未披露。 root必要Source/date/actual owner/逐字PRE通过授唯一两段＋本人注窄锁，root实际正文/完整邻接/本人注非writer POST通过；作者仅同步本注并实读回，窄锁释放，不授DAY。未核实现/复现。
 
 - `SF-2026-ARXIV-2604-11321` — Apr15补Apr14；[exact-v1](https://arxiv.org/html/2604.11321v1) §3.2–3.4/4 T1–5与AppC/E，2+1+2=5，spike×hard onehot的实际算子缺口深入。保causal support/神经时间分轴、surrogate backward仍浮点、tie/axis/zero未披露、softmax/BERT反側、容量不同和能耗算术估算非芯片/服务总费，不授无损转换/生产优势。root必要Source/date与actual owner/逐字PRE通过授两段+本人注窄锁；作者已写并顺读完整邻接/本人注，root非writer实际完整邻接/本人注POST通过；作者仅同步本注并最终实读回，窄锁释放，不授DAY。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-20470` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20470v1)必要机制/评价与直接反侧，2+2+2=6，具体owner缺口受影响深入。采用边界、失败退路与全部费用近正文；不授通用质量/安全或生产SLO。fresh实际必要Source与owner/邻接，root逐字PRE通过并授两段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-20819` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20819v1)A5必要机制/评价及直接反侧，2+2+2=6，A7具体owner差额深入。有限采用命题、失败退路与全费近正文，不授全主张/生产保证；非作者必要Source按A5 root/fresh具名结果有效复用，root实际现局部/逐字PRE通过并授单段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。

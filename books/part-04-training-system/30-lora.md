@@ -108,6 +108,10 @@ y = W_0 x
 
 模型先精确继承基座行为，再逐步学习 adapter update。具体初始化和 scaling 必须以实现与 checkpoint metadata 为准。
 
+也可以用校准 activation 的二阶矩差额提出非零低秩初始化，把目标方向放入 `B₀A₀`；但若要求初始整体仍等于原 `W₀`，就必须同时冻结扣除这项的残余基座。以实际缩放 `s` 记，保存 `W_res=W₀−sB₀A₀` 后运行 `W_res+sBA`，才在初始点恢复 `W₀`；训练后的真实增量则是 `s(BA−B₀A₀)`，不是单独的 `sBA`。校准人口、因子初始化、残余权重和缩放共同定义新 artifact，不能只替换两个 adapter 文件。<!-- source-family:SF-2026-ARXIV-2604-17396 -->
+
+对最终 `B` 加正交 soft penalty，只约束这个分支的某种坐标读数，不保证整个净更新在保留输入上为零；`B→cB、A→A/c` 保持 `BA` 却可改变单因子 penalty，也须单独检查。[必要初始化与遗忘对照](https://arxiv.org/html/2604.17396v1)只支持有限 forget/retain 取舍，其谱最优推导限定于相应投影类，不能扩成任意低秩更新的全局最优或真实删除证明。二阶矩估计、分解、forget/retain forward 与超参搜索都计费；缩放未闭、校准不足或保留能力退化时，保留原 checkpoint、普通零增量初始化和独立遗忘/能力评价，不以 aggregate utility 或 MCQ 跌分批准知识已不可提取。<!-- source-family:SF-2026-ARXIV-2604-17396 -->
+
 初始化继承也不能解释持续适配后的全部保留收益。比较 LoRA 与 full fine-tuning 时，同时改变了低秩参数化、更新支集与基座冻结；若要把较少遗忘归给低秩本身，还需 classifier-only、浅层 adapter 和逐步解冻的控制，而不只看两者总分。在有限序列 encoder 实验中，强冻结的非标准 LoRA 分支也接近标准 LoRA 的保留效果，这削弱了低秩结构是唯一原因的解释，却不证明冻结比例拥有跨模型的安全阈值。
 
 `arXiv:2603.27707v1` §3–6 的主五 seed、全验证四任务结果与冻结/表征探索分开：较少遗忘伴随最终新旧任务平均精度下降，扩到六任务后低平均仍掩盖一个旧任务的大幅退步。Centroid similarity 和冻结参数比例不是行为保留证书；任务顺序、训练/调参预算、target modules 与各任务质量都须保存。更多冻结减少可塑性，也可能无法学好新任务；新旧能力/费用不合适时，保留 fuller update、独立 adapter/replay 或较短适配序列并重新回归，不让低 rank、冻结基座或较高表征相似度代替验收。<!-- source-family:SF-2026-ARXIV-2603-27707 -->
@@ -131,6 +135,8 @@ y = W_0 x
 低维训练方向也可以从任务相关的初始化几何提出，而不是一律随机选择。一个受限分析在 whitened 输入、小输出维度 `K<d/2`、平滑激活、小 semi-orthogonal 初始化的两层网络中，固定第二层并以平方误差 GD 训练；还须假设梯度衰减、谱间隙和残差有界。由初始化权重与初始梯度构造的坐标块之外，每步更新受梯度子空间偏转和尾部谱共同约束。结论不是权重本身恒为 rank `2K`，也不是任何激活、optimizer 或 Transformer 都能由一次 SVD 获得完整训练子空间。<!-- source-family:SF-2026-ARXIV-2602-06208 -->
 
 在这类条件提供可检验候选时，可从一次初始 forward/backward 估计任务相关子空间，构造更窄 MLP 的首尾 basis；这些 basis 随后仍训练，不是冻结预训练基座上的 LoRA。[受限 MLP/分类 head 对照](https://arxiv.org/html/2602.06208v1)中，随机或偏离任务方向较大的初始化失败，只有 head 可训练时还保留质量缺口，增加宽度也未消除全部差额。初始梯度、分解、更多训练步和独立超参搜索均有成本；同超参下轨迹接近只支持该局部构造，不证明充分调优后普遍等效。任务输出较大、特征随训练漂移或窄空间质量回归时，保留 full-parameter training、原 LoRA 或更宽参数化，并重新验收目标质量与能力回归，不按分类数直接宣布通用最小 rank。
+
+任务相关 basis 也可以在校准后冻结，只让另一侧 factor 学习：从少量带标签任务样本估计输入二阶矩与权重梯度敏感度，用权重乘该二阶矩的右奇异向量初始化输入侧 A，保持 B 为零；再用同一敏感度共同分配各 module 的 rank 和有效 scaling。[TLoRA 的有限对照](https://arxiv.org/html/2604.18124v1)支持这条初始化、预算与更新支集联合选择，而不是证明由原权重便能恢复未知最优任务更新。固定 A 将净更新限制在所选 rowspace，节省其梯度与 optimizer 状态，却仍保存 A 并执行投影；总 rank 相等也不保证宽度不同的 modules 有相同可训参数数。二阶矩、SVD、标签梯度、CPU offload 和独立调参均有费用，预计算加训练未必更快，冻结与 rank/scale 分配也不在所有切片单调有益。任务方向漂移、窄空间质量或总预算回退时，保留可训练双 factor、随机/其他初始化、更宽 rank 或 full update，不将局部质量接近当作动态子空间普遍冗余。<!-- source-family:SF-2026-ARXIV-2604-18124 -->
 
 ### 冻结随机基座是另一种训练假设
 
@@ -235,6 +241,8 @@ grad(A), grad(B)    enabled
 共享方向还可以沿训练阶段累积，而不预设同一组 basis 永久覆盖任务。一个受限的视觉—语言 prompt 适配分支，将各层低秩 projector 增量分成归一化矩阵方向和 scalar 幅度；每个阶段冻结此前方向，只重新学习旧幅度并加入新方向，晚期新项还可使用更低 rank。这固定了旧方向的坐标，却没有固定其作用：旧幅度变小甚至为零仍可改变预测，累计方向存储也不会因晚期 rank 下降自动恒定。[有限 CLIP 对照](https://arxiv.org/html/2603.09493v1)还联合原模型输出正则，部分任务反退，不证明无遗忘或把收益唯一归因这条更新规则。历史保存与累加、prompt 投影、参考前向和调参都付费；旧任务回归、方向失配或累计预算不合算时，应保留普通静态 LoRA、独立 prompt 适配与逐任务保留验收，而不是用冻结基座替代行为检查。<!-- source-family:SF-2026-ARXIV-2603-09493 -->
 
 持续阶段的低秩更新还可把“保留旧方向”改成“禁止新更新进入旧方向”：从既有参数增量提取声明的列空间，构造固定的正交补投影，并把它放进新低秩分支的 forward，使训练梯度也受同一可行子空间约束；先自由训练、最后才投影是另一个优化问题。这里限制的是参数方向，不是原输入或旧行为的无损保留，累计方向须保持有效秩与正交条件，不能把相减的矩阵一律当成投影。[有限冻结分类头对照](https://arxiv.org/html/2604.12526v1)支持比较这两条路径与保留／遗忘取舍，却不由可行梯度推出真实局部极小、零干扰或法律删除；反向融合后的忘记类仍可被识别。随着阶段增加，可用补空间会耗尽，SVD、投影状态与全部适配／回归都付费；空间饱和、原行为退步或投影资格未过时，保留独立 adapter、增加可验容量、replay 或普通更新，不让静态 merge 代替旧任务和新任务的共同验收。<!-- source-family:SF-2026-ARXIV-2604-12526 -->
+
+把约束放在梯度上时，还须验最终参数步，而不是只验送入 optimizer 的方向。若先把 task gradient 投到某个 calibration 子空间的正交补，再由 AdamW 作逐坐标预条件、momentum 和 decay，实际 step 一般不再留在该补空间；例如方向 (1,−1) 原与 (1,1) 正交，不同坐标缩放后即可失去正交。因而若设计依赖硬约束，须另核最终 step/optimizer state 或参数化可行域，而不能把 raw-gradient projection 当成已实施的零干扰证明。[SafeAnchor v1 的有限安全适配](https://arxiv.org/html/2604.17691v1)还用样本 empirical Fisher、软回注、参考 KL 与重复 probe/repair，它们只定义该人口上的保护代理，不认证完整安全语义或独立 holdout 泛化。方向估计、投影/SVD、参考前向、probe与repair都付费；新旧任务或攻击回归不足时，保留原 checkpoint、独立 adapter/replay及行为门禁，不由保留比率或原probe恢复签生产安全。<!-- source-family:SF-2026-ARXIV-2604-17691 -->
 
 共享方向还可以跨时间，而不只跨同一checkpoint中的模块：让共同左右basis保持固定，把小core写成时间的函数，再用它提出尚未观测时段的低秩增量。这里时间是预测器的输入，未来域的质量仍是待验收对象；每个时刻的独立更新都低秩，不代表它们联合的行列支持仍落在同一个小basis内。采用这条分支须分别验证共享支持、时间预测horizon与突变切片，不能从已见时间的拟合推出任意未来漂移可外推。Matrix-exponential、RNN或MLP core各自增加模型与历史状态计算，固定basis参数较少也不等于完整训练/运行内存恒定或更快；[受限时序分类对照](https://arxiv.org/html/2602.11965v1)中训练与测试时间仍可高于普通适配。支持失配、突变或外推质量退步时，停止发布预测增量，保留最近已验收adapter、逐域独立LoRA或增量微调。<!-- source-family:SF-2026-ARXIV-2602-11965 -->
 
@@ -482,6 +490,8 @@ Private LoRA 的 selector 可以在最终 private update 前冻结；只读取�
 低秩约束也可以作用于深层输入 prompt，而不是权重差额：视觉与文本 prompt 各分解为 `P=UV`，匹配 prompt 位置时共享 `U`，但分别保留适配不同 embedding 维度的 `V`。共享的是 token 位置系数，不是两模态已经处于同一坐标系；输入侧 prompt 仍占序列与 activation，不能像可合并的权重 LoRA 一样消去运行期开销。以 frozen zero-shot feature/logit 锚定，再减去类别 residual 的共同均值，可约束少样本 prompt 的漂移，但类别人口和锚定费用也是部署契约。有限消融中低秩单独反而略降，叠加 anchor/共享后的 harmonic mean 改善仍伴随部分 base accuracy 回落，rank 1 也不普遍最优；因此把低秩、锚定与 drift correction 分开核费，保留原 CLIP、完整 prompt 与权重适配的选择。<!-- source-family:SF-2026-ARXIV-2602-21397 -->
 
 不改权重的适配还可以把每层 attention 的虚拟 K/V 作为可训练资产：固定虚拟 keys/value 参数，由当前 query 读取它们，替代每次请求都带入真实示例的部分上下文作用。给定这一层的 Q/K/V，原 query self-attention 与示例读取可按各自 softmax 归一化质量拆开，但不能据此认定所有层或任务都等价；学习的低秩虚拟 K/V 仍增加 attention 读取和归一化开销，不能像权重 LoRA 一样直接 merge 消失。尤其把新增 value 初始化为零，只消除了新增 value 项；虚拟 keys 已改变分母，原 attention 项仍可能被缩放，因此零 value 不是整个层的 no-op。基座、head/layout、虚拟 K/V、初始化与归一化规则须共同绑定适配版本，并分别验收初始输出及训练后的任务质量。有限对照中幻觉子指标也会反退，较少可训练参数不等于总训练或在线成本更低；质量、布局或请求预算不适配时，真实示例、显式 prompt 与可 merge 的权重 delta 仍是不同的合理分支。<!-- source-family:SF-2026-ARXIV-2603-12760 -->
+
+虚拟 prefix 的权重还可以不被 softmax 强制填满：保留原 self-attention 路径，另从当前输入为 prefix 生成 sigmoid 分数，仅在总分超过预算时归一，并用受校准统计条件的门丢掉不适用项；另一低秩 adapter 消费未归一原分数之和超过基准的正部，以分开记忆检索与任务适配两种消费者。[DPW 的有限持续分类对照](https://arxiv.org/html/2604.18075v1)支持这种受限双路接口，但 prefix 总权重不超过一，不等于另一 consumer 或整层/整网增量都有同样硬界。冻结共享 adapter basis 可限制跨任务被改写的资产，SVD 初始化和 Gaussian 路由仍只是候选，不证明新子空间、校准 task posterior 或无遗忘；有 task ID 与无 task ID 协议也须分验。统计、prefix 池、额外 attention、basis/SVD、adapter 与选择费用都在，零权重不自动使 dense FLOPs 消失；任务路由、共享 basis 或旧能力回归时，保留原 CLIP/固定 prefix、普通 adapter 和逐任务独立验收，不由局部 drift bound 批准任意持续适配。<!-- source-family:SF-2026-ARXIV-2604-18075 -->
 
 ### Recurrent Launch State：权重与 Prompt 之外的第三个适配面
 
@@ -808,6 +818,8 @@ LoRA 通常把适配器视为需要通过梯度学习得到的模型状态；另
 
 两阶段把 online 成本转到 memory 提取、参数生成、adapter 装载与后续复用，并依赖先前的生成器训练和合成 QA 数据；参数量或 FLOPs 估算不能替代实际 latency/SLO。受限 Qwen3-8B 实验中，ICL 的 QA F1 仍高于生成 adapter，多轮历史增长与长文也会退步，因此“无 test-time training”不是无成本或无质量损失。只有 context 与生成状态可校验、复用次数足够且 held-out 质量达标时才选择这条分支；否则保留 ICL/RAG、普通 SFT 或逐任务 LoRA，不将压缩 memory 视为 context 的无损替代。
 
+生成的 context adapter 也可能先调使用强度，而不立即重训参数生成器。一条受限分支按各层低秩因子的范数乘积选择少量层并放大其中一因子；另一分支先用原模型短回答的词面不确定性决定本题是否增强。[必要 top/random/bottom 与强度对照](https://arxiv.org/html/2604.23750v1)只支持有限 parametric recall 的选择分支：范数大不认证知识正确，放大线性 LoRA 输出也不使整个网络 logit 随系数线性，原文 margin 恒等式不能证明只有幅度而无表示缺陷。层数/强度在本 benchmark 调节，组合事实、反直觉问题、多文档和改写仍可退步；query probe 增加约束外调用，不能当每文档一次摊销。Context 提取、参数生成、载入、probe 与回归全计费；内容来源、任务或强度失配时，保留未增强 adapter、ICL/RAG 或普通训练，不由 recall 提升批准事实或通用推理。<!-- source-family:SF-2026-ARXIV-2604-23750 -->
+
 ## 小结
 
 LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters、gradients、optimizer states 和每任务 artifact。它保留基座模型的大部分计算，并以受限更新空间换取成本与资产复用。
@@ -856,6 +868,8 @@ adapter/全量训练方案。
 <!-- source-family:SF-2026-ARXIV-2605-24549 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23750` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23750v1)§4.1/5/7.1/8.1/9.9/10.3；2+1+2=5。只固定contextadapter幅度/层选择与queryprobe替代，margin定义重排不证纯幅度瓶颈或全网logit线性；反退/调参/全部费用近文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 
 - `SF-2026-GITHUB-UNIRL-PR575` — Daily2026-10-14；[精确 merge 的 lora.py](https://github.com/Tencent-Hunyuan/UniRL/blob/6c828f5ed81649153315d996f0f597e8808ff144/unirl/train/lora.py)，必要 frozen adapter load/inject/hash 路径及作者 CPU/Gloo 负例。仅 tensor 内容一致性，不含配置/最终 GPU checksum；未本地运行或复现。
 
@@ -1021,3 +1035,11 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-11446` — Apr15补Apr14；[NExt exact-v1](https://arxiv.org/html/2604.11446v1) §3.1–3.3/4.1–4.3 Eq4–11/Alg1、§5T2–6/F5与MMLU直接反側。2+1+2=5具体merged global/local delta→rank1 predictor缺口深入；仅parameterproposal，非optimizer/采样历史恢复，保SVD gauge/zero未披露、FP/LoRA LR/steps/test-repeat差异与任务回退，4A800局部server时间不外推全费用/通用加速。 root必要Source/date/currentowner/逐字PRE通过授两段+本人注窄锁，root实际正文/完整上下邻/本人注非writer POST通过，作者仅同步本注并实读回，窄锁释放，不授DAY。未核实现/复现。
 
 - `SF-2026-ARXIV-2604-12526` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12526v1)III-A～B/Eqs1～3/Lemma1/IV-A～D/T1/F2～3，2+1+2=5，forward参数正交补/后投影及有限容量差额受影响深入。R79必要Source/R64date通过；不授retain输入无损、true minima、zero interference或删除/完整recipe；SVD/投影与全费、有限head/饱和反側保留，未核实现/复现。reader R109逐字PRE/R110实际单段、完整邻接及本人注POST通过；作者仅同步此注并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-17396` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17396v1) §2–4/Eq1–2/T1–6、AppA/B必要/C Alg1/D1–5，2+1+2=5安全受影响深入。只非零init/residual/netupdate与soft单因子约束边界，不补PEFT scaling未披露实现，不采unrestrictedrankopt/零干扰/删除认证。TOFU/WMDP slice反侧/选择门槛/初始化小时非总费保报告。fresh actualSource完成；root逐字PRE通过并授本局部与本人note窄lease，作者已保存并顺读完整邻接；root实际非writer正文/完整两侧/本人注POST通过，lease释放，作者仅行政同步并实读回；不授代码/复现或DAY。
+
+- `SF-2026-ARXIV-2604-17691` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17691v1) §3–4/Eq1–8/Alg1/T1–4与A/C/D/F必要，2+1+2=5，安全受影响投影/AdamW step差额深入。Fisher/probe只样本代理、软回注与KL/重复repair非硬安全，retention比率非风险概率，真实step/optimizerstate分责及全费近文。fresh实际必要Source与root actual owner/A52逐字PRE通过并授窄lease，作者保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，窄lease释放，作者仅行政同步并实际读回，未核artifact/复现或DAY。
+
+- `SF-2026-ARXIV-2604-18124` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18124v1)必要Source/fresh实际层与本日SUP有效，原分5不改，具体差额必要深入。仅采用上述受限接口，保直接反侧与完整费用，不授整体质量、真实bytes相等、训练加速或一般最优；未核实现/复现。root实际owner/逐字PRE通过授本窄lease，作者已实际写入并顺读完整邻接；root实际非writer新段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-18075` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18075v1)必要Source与本日SUP有效，2+1+2=5，具体接口差额必要深入。采用上述受限机制，不授完整概率路径等价、语义真值、全任务质量或服务SLO；支持、反侧与全费近正文。root实际owner/逐字PRE、保存正文完整两侧及本人注POST均通过，窄lease释放；作者仅行政同步并实际读回。未核实现/复现，不授DAY。

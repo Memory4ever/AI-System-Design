@@ -473,6 +473,10 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 而且作者在特定 MoE 配方中的 loss/benchmark 不能证明它会普遍取代标准 residual。模型较浅、吞吐优先、
 跨 stage 带宽紧张或公开实现尚不成熟时，单一 residual stream 仍是更稳健的设计。
 
+不逐层保存历史，还可以保留标准additive residual `x`，另为每个token维护固定宽度的关联矩阵 `M`与inverse-covariance `P`：当前层读取 `x+Mq`，子层增量既更新residual，又以预测残差乘gain的rank-one项写入 `M`。正forgetting/importance与ridge条件下，Sherman–Morrison递推给出加权depth regression的RLS解；这利用层本已顺序执行的约束，不意味着同样的不可并行求解适合token-sequence Prefill，也不是跨token持久KV。普通residual与压缩关联记忆承担不同职责，不能把后者当作前者的无损替代。<!-- source-family:SF-2026-ARXIV-2610-18809 -->
+
+固定的是随depth推进的state宽度，不是总activation成本。分组各有 `P`，`Dk=8`时单memory matrix已为每token `8D`、另加residual与covariance；unwinding/windowing以重算、紧凑中间量和延迟融合减少保存/流量。[受限消融](https://arxiv.org/html/2610.18809v1#S4)中去掉residual的两种变体都劣于PreLN，而RLS替换为delta/outer仅有局部小差额；400M/1.5B质量及B200 kernel结果不证明普遍优越，1.5B也未跑FullAttnRes。额外状态、递推数值与专用kernel不合预算时，保留标准residual、粗block summary或显式depth retrieval，不能由较低PPL签发全规模吞吐保证。
+
 多路 depth retrieval 也不一定要求维护多份可更新 residual state。可以先保存完整维度的单流 source 或 block summary，再由多尺度因果 depthwise convolution 构造含不同局部上下文的视图；各视图以自己的 pseudo-query 对历史 sources 做 softmax retrieval，最后用输入相关标量混合成下一子层的单流输入。这里扩展的是历史的读取视角，不是切开 hidden channels，也不是把同一向量乘几个标量便获得多样信息；因果窗口只允许当前位置及更早 token，checkpoint 必须与这套扩展、查询和融合接口共同训练。<!-- source-family:SF-2026-ARXIV-2610-13630 -->
 
 按需扩展让持久 source 保存与跨 stage payload 仍按 `O(Nd)` 计量，却不让全部中间状态、访存或计算都保持单流：批量预计算仍会产生每个目标层的多路 retrieved states，最终融合也需读写它们。[MSAR 的受限 MoE 对照](https://arxiv.org/html/2610.13630v1#S3)支持这种读取分支，去掉上下文扩展后收益缩小；较多 streams 的边际收益很小，论文的 iso-loss FLOPs 拟合也不是实测 wall-clock 加速。卷积、重算、深度读取、融合与并行缓存都计价，fused execution 尚须实际实现验证；净质量或预算不成立时，保留单头 depth retrieval、较粗 block summaries 或普通 residual，不对已有 checkpoint 任意改接线。

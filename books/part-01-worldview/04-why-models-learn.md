@@ -93,6 +93,10 @@ theta_star = argmin_theta R_hat(theta)
 
 例如，一个回答在 token-level loss 上更可能，并不自动意味着它事实正确、安全或符合业务策略。那些目标需要通过数据构造、后训练、约束和 Evaluation 进入系统。
 
+相同的最优预测目标，也不要求采用相同的学习过程。一次分类可直接优化最终类别的负log概率；另一条受限分支让同一模型多次更新类别分布，以本步与上一步正确类别log-score之差作奖励。折扣累积后，这等价于在随机几何停止步上优化log-score，因此中间预测也承担学习义务，而不是只等最终一步输出。它没有取消监督标签，标签仍提供训练reward；在可实现与可积等条件下，目标仍指向真实条件类别概率，不是RL天然比交叉熵更接近真理。
+
+目标相同，置信度动力却可能不同：若各步共享同一读头、thought状态固定有界，而且早步在每个非零读头方向上都存在正的误分类margin，过大logit尺度会被这些早步惩罚；这只是在强条件下约束共享读头，不证明端到端变化的表示或任何RL模型自动校准。推理时还可用value估计未来log-score改善，以负值建议停止，但它不是当前答案正确率或安全授权。[受限图像分类对照](https://arxiv.org/html/2604.22110v1)用更长RL训练预算、额外recurrent计算和边界敏感的Dirichlet policy换较低ECE，不能认证等成本收益或LLM迁移；目标、value或校准条件失配时，保留单次监督分类、后校准和固定计算上限。
+
 ## 梯度下降：怎样从错误走向参数更新
 
 如果参数很多，枚举所有 `theta` 不可行。梯度提供了当前位置上损失变化最快的方向：
@@ -131,9 +135,17 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 局部二次模型会给出一个由最大曲率和 learning rate 决定的经典稳定边界；它在 Hessian 近似固定、更新只停留在同一局部区域时很有用。深网训练却可能在 sharpness 越过这条静态阈值后继续降低 loss，因为离散 gradient map 会进入带振荡的局部分岔：normal direction 围绕低损失区域摆动，tangent direction 仍可能缓慢前进。这里改变的是训练动力学的解释，不是负梯度突然获得全局导航能力。
 
+这条边界还需要分清“梯度怎样改变”和“loss 怎样改变”。对固定步长、full-batch GD 的一步 d=w_next−w，沿该线段均匀平均的 Hessian 控制下一步梯度，而按三角权重平均的 Hessian 控制这一步 loss 变化；只看端点的最大特征值，不能把两者当成同一个观测量。若整条轨迹的 loss 上下有界，且累计平方步长持续发散，望远镜求和才迫使按平方步长加权的方向曲率均值趋向 2/η；有限能量的正常收敛轨迹不受这条结论约束，也不由它推出全局吸引或每步最大曲率锁定。
+
+[必要一步恒等式与条件边界](https://arxiv.org/html/2604.20446v1)将 EoS 变成可核的轨迹诊断，却没有把 SGD、momentum 或大模型训练自动纳入定理。计算路径曲率仍需 Hessian-vector 或等价探测成本；局部振荡、持续 forcing 与 loss 控制条件失效时，应回到实际 loss、gradient 和 step norm 的联合监控，而不是按 2/η 自动提高 learning rate。
+
 Optimizer 拥有 step size 与 momentum，loss geometry 决定局部 map，sharpness/Lyapunov 指标只是一种诊断 sensor，不能自动授予放大学习率的权限。曲率估计昂贵、局部分岔假设也可能不成立；出现 loss、gradient 或 step norm 失控时仍应回退保守 schedule、clipping 和联合监控。更完整的调度与稳定性合同由第 28 章接手。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606.15551 -->
+
+“局部更平”之外，还可以诊断新增一个样本会让当前解附近的损失函数场改变多少。一个受限方法在给定扰动人口上比较相邻数据规模的经验损失变化，区分直接 Monte Carlo 估计与局部二次代理；梯度、Hessian 和扰动协方差共同决定读数。它测量的是 loss-field 对数据加入的敏感性，不是重新优化后模型参数、测试误差或实际训练过程已经稳定；样本数、中心位置、扰动尺度与协方差必须随诊断一起记录。<!-- source-family:SF-2026-ARXIV-2604-14870 -->
+
+[曲率对齐 probing 的必要边界](https://arxiv.org/html/2604.14870v1)包括局部二次近似及导数、损失的统一有界条件，不能把 Gaussian 扰动直接当作全域保证；优先取最大曲率方向也需要相应变化方向的排序与共同坐标等条件，不是普遍最优子空间。受测小模型在较小扰动下可用，增大扰动会反退。解析代理的末阶段可以极快，却仍须支付梯度、Hessian 子空间和代理构建；约18,000倍只比较该末阶段，不能替代完整诊断总耗时。假设或读数不稳时，回到直接扰动、实际 loss/gradient/step 监测与较小邻域，不由这个 sensor 批准更大学习率或更好泛化。
 
 数据集通常太大，无法每一步计算完整平均损失。训练因而使用 mini-batch `B_t` 对梯度做估计：
 
@@ -426,6 +438,8 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-22110` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～5/7及A.1/A.2.3；strong-nonseparable fixed-thought条件、2000vs300epochs/L40/Dirichlet边界/value非truth均保留。fresh reader必要Source/date/具体owner/逐字PRE及非writer实际POST通过，root接纳并释放两段+本人注窄lease；作者仅行政同步本注并读回，不授DAY。未核实现或复现。
+
 - `SF-2026-ARXIV-2601-10873` — Daily `2026-01-20`增量；[UC exact-v1](https://arxiv.org/html/2601.10873v1) §2–6、AppC7–9必要边界。2+1+2=5，参数坐标/optimizer metric 差额深入；采用给定尺度的预条件分支，不采 transpose 错误、物理意义或 normalization 替代断言。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读103–125/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
 - `SF-2026-ARXIV-2601-10962` — Daily `2026-01-20`增量；[SGD transient exact-v1](https://arxiv.org/html/2601.10962v1) §II/III、Eq8–26与AppA2必要反侧。2+1+2=5，transient freezing 与固定慢变量 steady-state 选择分责深入；保留时间尺度/噪声-Hessian、MNIST/20runs/发散排除、flatness坐标依赖与线性路径局限，不授普遍泛化或生产schedule。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读131–160/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
 
@@ -446,3 +460,7 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - `SF-2026-ARXIV-2602-13942` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13942v1) §3.5–4.2、§7必要范围。2+1+2=5，非随机微调点的局部 NTK/早停条件差额深入；保留 Gaussian 预训练起点、邻域/宽度、RKHS、未知停点参数与 hold-out 成本，不采用通用 lazy regime 或谱即兼容性证书。未核代码/复现；root 必要源与 actual owner PRE通过，实际正文/完整邻接及本末注经root非作者POST通过，窄锁释放，不授日级。
 
 - `SF-2026-ARXIV-2603-29034` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29034v1)S3T1–3/F2–10/S4/5/7.1必要，2+1+2=5，仅noise-init fitting与inverse denoising消费者反向取舍。保六sine层/ω30/w256/十signal5000、encoder+newhead均更新、拟合Uniform85.7/79.9但denoise23对SIREN28.3/Spectrum27.6、video不全胜/cleanPSNR停点非deployment；全制备/训练费，不采临床结论，未核代码/复现。
+
+- SF-2026-ARXIV-2604-14870 — Daily2026-04-18补Apr17；[curvature probing exact-v1](https://arxiv.org/html/2604.14870v1) §3–7/Eq5–15/Thm2、A2/Lemma5，2+1+2=5。新增样本lossfield非fittedmodel/generalization，局部quadratic/导数界、topD排序限制与三阶段成本近文；不采全域/普遍最优或18000倍总加速。独立reader必要Source/root接纳与date有效，作者actual owner比较，A31逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未复现。
+
+- `SF-2026-ARXIV-2604-20446` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20446v1)§2–5/Eq36–51必要层，2+1+2=5，uniform/triangular路径曲率与无限累计平方步长条件的具体缺口深入。保有限能量反例、GD适用范围与测量全费，不授全局吸引、endpoint最大特征值锁定或SGD通用定理；未核代码/复现。fresh实际owner与邻接/root逐字PRE通过并授两段与本注窄lease，作者已写入并顺读完整邻接；root非writer实际正文/完整前后/本人注actualPOST通过，窄lease释放，本注仅行政同步，不授DAY。

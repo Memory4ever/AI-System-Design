@@ -152,6 +152,8 @@ ALFWorld、HumanEval 及论文定义的 extractor 和对照实验，不支持通
 
 <!-- source-family:SF-2026-ARXIV-2605-29463 -->
 
+Typed memory 的写入语义还可以在同一存储事务中执行，而不只给候选打 append/revise 标签：为关系类型绑定 handler，插入 edge 时同时检查冲突、关闭旧有效区间或保留并列判断；跨 scope 的合并先暂存，再由明确的 accept 操作提交，valid time 与 ingest time 分别保存。[WorldDB 的有限实现](https://arxiv.org/html/2604.18478v1)还用内容 hash 标识递归 world，但 hash 只覆盖其声明的不可变字段，不能顺带保护未入 hash 的可变 validity、全部 provenance 或异步索引状态。原子 edge+handler 也不自动证明所有客户端 serializability、ANN 更新一致或输入真实；extractor、ontology 和 merge policy 仍是信任入口。事务、历史/冲突保留、重建索引与查询全计费，不能把 oracle 输入变体和不同模型的公开榜分归因给 engine；schema、时间、冲突或费用不合格时，保留原始 episode、显式版本更正与单 writer/人工裁决，不让图连通或 Merkle identity 取得事实和授权。<!-- source-family:SF-2026-ARXIV-2604-18478 -->
+
 ### 从 Outcome Reward 到 Content-level Credit：归因只能约束写入，不能成为真值
 
 只给完整轨迹的正确性奖励，无法区分某次 memory rewrite 是否保留了答题所需内容。除了逐 token 干预，还可在有 gold answer 的训练任务中，用同一 policy 对答案的长度归一似然比较压缩 memory 与完整先前轨迹，构造 memory-local 辅助 reward，并只把它加到 memory span 的轨迹 advantage 上。比较必须绑定 scorer/policy 与目标版本；这是一种任务效用 proxy，不是无监督事实判定，也不证明某个 token 的唯一因果贡献。其他 reasoning/tool tokens 仍保留 trajectory-level credit。
@@ -327,6 +329,10 @@ utility 回传给 memory ranking；但这个差值仍混合 generation sampling�
 不是单条 memory 的因果贡献。若 coarse filter 先误删 rare-but-critical evidence，后续 learned reasoning 无法
 恢复；parser/error fallback 也可能静默改变训练标签。因此应同时测 candidate recall ceiling、selection precision、
 working-model outcome、policy drift、fallback rate 和 selective deletion，而不只测最终任务分数。
+
+训练“何时主动检索”时，整段任务 reward 还会混入检索前已发生的进展。若环境能精确恢复到同一 prefix，可固定 memory bank 与 retriever，从该状态分别继续“执行这次 Retrieve”和“跳过这次 Retrieve”，把完成质量与长度的配对差作为局部检索信号，再与原 trajectory reward 合并。这里比较的是一次读取决策及其后续行为，不是单条 memory 的事实真值；分支后继续采样仍会产生噪声，配对也不自动给出严格因果、无偏梯度或方差下降保证。
+
+[受限主动记忆实验](https://arxiv.org/html/2604.20572v1)支持这种训练接口，但状态恢复、冻结 bank、确定性检索与额外 continuation 都是条件和成本，在线持续改库的测试流也不能混作独立冻结 holdout。Replay 不可靠、bank 已变或配对费用不值时，保留普通 outcome reward、固定读取与受控组件消融；较短注入 Context 不抵扣经验提取、双分支训练和记忆更新的全费用。
 
 效用排序还可能形成冷启动反馈环：新 memory 没有可靠反馈，greedy 排名不给它曝光，随后也无法取得更新效用的证据。一条受限分支为 utility 保留均值与后验不确定性，用语义邻居统计初始化 prior，再以 Thompson sampling 给不确定条目有限探索机会；相对无 memory 的同任务 reward 差值用于更新已用集合，不因此取得单条记忆因果贡献。失败后的 teacher→工具→更强反馈 cascade 也不制造事实权威：作者的“human expert”实际由 Gemini 模拟，prior 可能继承邻居偏差，探索可能把坏记忆送入 Context。[U-Mem 的必要对照](https://arxiv.org/html/2602.22406v1)只支持所测模型/任务及 train-stream 后冻结 memory 的测试，不能证明真实持续在线最优；更多检索、base 对照、teacher/tool 与 token 消耗仍付费。反馈或预算不足时，保留静态语义检索、保守 utility 排序和既有事实治理，而不为追求曝光绕过授权或真值检查。<!-- source-family:SF-2026-ARXIV-2602-22406 -->
 
@@ -622,6 +628,10 @@ memory owner 再按该索引从原文日志确定性取回文字；命中低清�
 token，却增加渲染、视觉检索器训练与驻留、磁盘及检索延迟；文本检索、摘要和直接按原文读取仍是
 低延迟、低存储或严格取证负载的合理选择。现有受限 Agent 实验只支持这种责任分离的可行性，
 不支持无限历史可扫或端到端成本必然更低。<!-- source-family:SF-2026-ARXIV-2604-26622 -->
+
+派生视觉记忆还可以外化当前的场景解释，而不是只把原文确定性渲染为图像：按说话者视角维护逐场景示意图，以新建、续写或跳过决定更新范围，并把否定、不确定性与跨场景关系留在文字元数据和显式链接中。可描绘的空间状态与难以描绘的命题因此承担不同职责；但生成图不是新环境观察，候选图的自验证也可能与生成器共享误解，不能取代原对话证据。
+
+这种分工改变了检索的失效面：局部图像忠实，仍可能只取回起点场景而遗漏后续关系；跳过一句否定也可能留下错误状态。[受限对话实验](https://arxiv.org/html/2604.21144v1)中，图像、文字与混合表示各有胜负，且视觉与文字检索配置并非纯模态单变量对照，不能推出图像记忆普遍更准或更便宜。生成多候选、验证、视觉索引与读取的成本，应与关系链接完整性、原文回查和文字回退一起验收。<!-- source-family:SF-2026-ARXIV-2604-21144 -->
 
 ### 长期视觉流需要把 Entity Identity 从 Perception 中分离
 
@@ -1827,6 +1837,8 @@ GUI routine 也可以被编译为可搜索 transition graph，避免每屏从头
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-21144` — Daily2026-04-25补Apr24；[exact-v1](https://arxiv.org/html/2604.21144v1) §3–7/T1–2/Fig5/7必要机制/主控/直接反侧，2+2+2=6。生成场景记忆的POV/可描绘与命题分工具体差额深入；生成图非新观察、自验证非truth，检索关系遗漏与全费近文。非作者supp_apr25_review_fresh actualSource/owner/PRE有效，root字面/插点通过授两段＋本人注窄lease；作者已保存，非writer已实际顺读新正文、完整前后与本人注及限定diff，POST通过，root接纳释放本窄lease；作者仅行政同步并实际读回；未核代码/复现，不授DAY。
+
 - `SF-2026-ARXIV-2603-07024` — Daily `2026-03-11`补遗漏；[HMT exact-v1](https://arxiv.org/html/2603.07024v1) III-A–E及Table V。作者和 review_20260311 已独立核必要机制/直接反侧，root 实际比较本章程序化记忆及Ch76/78交接后窄补stage/semantic descriptor与当前ID重绑定接口。词项重叠、schema、匹配和历史成功不认证当前意图、权限或执行正确；保留费用、Maps反侧及原轨迹/基础策略。非写入者 supplement_20260311 实际顺读新增两段、完整局部邻接及末注并回对上述必要原证，写后复核通过。未核实现/复现，不授日级完成。
 
 - `SF-2026-ARXIV-2601-18510` — Daily `2026-01-28`补充；[JitRL exact-v1](https://arxiv.org/html/2601.18510v1) §3–4.4/5.6 Table8/5.7 Table9/Appendix C。2+2+2=6，局部经验→action advantage→冻结logit重加权具体owner差额深入。仅给定Ahat的KL闭式；blackbox confidence代理、固定k/LLMreward/漂移与noise covariance、同memory窄对照/异成本口径近文，不授真实最优或34倍端到端费用。jan28_review实际必要原源/owner PRE通过，root授两段+自身note窄锁；作者实际新正文/完整局部邻接及本note顺读，jan28_review非作者actual POST通过，窄锁释放，非DAY。未运行artifact/复现。
@@ -2249,3 +2261,7 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2604-08000` — [exact-v1](https://arxiv.org/html/2604.08000v1) §3.1/4.2–4.3/5/6.1/T4/6.5；silent/fast/full与深读后仍abstain，保旧anchor/subtree遗漏、异步freshness和1.3–1.5s实测均值/全费，不授<1s、constant lifecycle成本或action authority，未核实现/复现。
 
 - `SF-2026-ARXIV-2604-12285` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12285v1)§3.2–3.4/§4/Tables1–4/Limitations/C.1–3，2+2+2=6，checkpoint语义切片与summary/raw/archive-crosslink具体owner差额深入。阈值为语义proxy、图边非truth/ACID；query与maintenance分账、Temporal反侧及C2 F1下降保留。只文本记忆条件，未核artifact/复现；reader R14必要Source/R15 date/R19逐字PRE与R23实际正文、完整邻接及本人注POST通过；作者同步本人注并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-18478` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18478v1)必要Source与本日SUP有效，原分6，具体接口差额必要深入。仅采用上述条件机制，支持/直接反侧与全费用近正文，不授一般无偏、真值、无损、安全或SLO。root实际owner/逐字PRE及保存正文、完整两侧与本人注POST均通过，窄lease释放；作者行政同步并实际读回；未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-20572` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20572v1)必要机制/评价与直接反侧，2+2+2=6，具体owner缺口受影响深入。采用边界、失败退路与全部费用近正文；不授通用质量/安全或生产SLO。fresh实际必要Source与owner/邻接，root逐字PRE通过并授两段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。

@@ -45,3 +45,15 @@ actual完整读Feynman§4，本family日门/窄P/2+1+2=5与必要受影响Source
 拟自身末Review note（一条）：`SF-2025-ANTHROPIC-ALIGNMENT-INTERROGATION` — Dec17补Dec16；官方Dec16作者研究披露、必要Background/Metrics/Training details/Mitigation1及process/Limitations；2+1+2=5，只采用首轮文本→后轮问询→reward→首轮更新与gradient-mask权限，不重复probe漂移/标签-行为/monitor配对。保人工organism、15/30步/seed方差/250合成人口、output-vs-scratchpad不同采样与额外评价全费，不采生产欺骗频率/真实白盒失效/内部因果或全安全；未复现，actual共享写/非writerPOST尚未发生。
 
 请Feynman仅actual本拟段/完整两侧和自身note PRE，供root具体owner/范围/锁；不是实际落书或POST，不等全部Source或其它prepared single。无Books实际写入/lease，不写State/index/reader/脚本。
+
+## 7. 2026-10-15 Boyle实际窄写 / Newton POST待执行
+
+用户已明确恢复，root实际恢复读Source/PRE/当前邻接并在ROOT_ADMISSION_REVIEW末恢复节批准唯一Ch31窄锁；本节覆盖§4–6“尚未获锁/尚未写”的历史状态，不覆盖必要Source或逐字PRE。写前actual两次分别检查Ch31 cached/unstaged numstat均空，不沿旧cached18。本次仅按§6逐字插入一自然段于完整Obfuscation Atlas probe段后、原Pass@k段前，及Review notes末本人一条，补精确原作者URL；Draft与全部其他正文/notes保持。
+
+actual保存后完整顺读Ch31当前458–472（含完整新段、probe前段及Pass@k后段/反侧）和末四行本人注/前注；`git diff --numstat`仅4新增0删，限定`git diff --check`通过。没有改Ch66、索引、State、独核或stage/commit/push。这里只是作者写入/自检，不是非writer POST、root接纳或整合完成。
+
+Newton（用户指定id `01a13dfe-850d-70d0-ba90-8998153de73f`）的实际POST包：读取已存Ch31新正文L464及完整450–480两侧、末本人SF-2025-ANTHROPIC-ALIGNMENT-INTERROGATION注与前注，回对本文件§3/5/6、Feynman独核§4–5和root末恢复节。只验首轮文本→后轮问询→reward→首轮更新/gradient-mask权限与人工organism/费用/回退限定，不扩大读域。本人当前工具未提供multi_agent.send_input，已查可用工具无该入口，不用chat线程消息替代内部agent；本包落存可供root转交。仍持本单项窄锁等待真实POST/root读回，不自行释放或预签DAY；其余本日材料可继续准备。
+
+## 8. Newton10真实POST / root实际接纳释放 / 本人注行政同步
+
+actual完整读独核§10及ROOT_ADMISSION_REVIEW末实际POST接纳节，root已实际顺读完整新增正文、两侧和本人注并接纳4新增0删，释放Ch31此单项窄锁。按root消息只同步本人末note为Newton10实际POST/root读回接纳与释放；机制正文及他注不再改。更新后本人注实际读回、限定cached/unstaged diff-check通过。本family单项实际整合1，不是本日Source/六节DAY、completion或FINAL；后续无本作者Books锁，其余单篇包继续。

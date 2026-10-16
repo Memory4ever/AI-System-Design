@@ -85,11 +85,17 @@ draft token 2 是否可接受？
 
 <!-- source-family:SF-2026-ARXIV-2605-24793 -->
 
+草稿与 target 分在端侧和边缘服务器时，verification 还会支付网络轮次与内部状态传输。一种协议一次上传候选 token 及 hidden states；另一种先传 token ID，让边缘定位严格 greedy mismatch，再请求必要位置的 hidden，代价是新增请求/响应轮次。前者带宽重，后者在大量 mismatch 或高 RTT 时未必省。[WISV 的有限链路与设备对照](https://arxiv.org/html/2604.17701v1)另用 draft/target hidden 与 CSI 预测是否值得修复，并允许接受非 target-argmax token，这已经是质量—资源仲裁，不继承经典 residual sampling 的 target-law 保持。任务 outcome 诱导的重要性标签也不是语义等价或安全标签，坏信道放松 critical 门只改变取舍，期望预算不等逐 episode 硬上限。头训练/标签、双向 headers、RTT、hidden上传、rollback 与两模型计算都计费；质量、校准或链路失配时，保留严格 verification、固定协议或 target-only，不把少字节与局部准确率认证为无损或服务 SLO。<!-- source-family:SF-2026-ARXIV-2604-17701 -->
+
 ### 声学草稿让验证分成两级仲裁
 
 在带非自回归模态头的模型里，便宜的 proposal 也可能已经在输入编码时产生。语音识别的一个分支复用冻结 CTC encoder：先把逐帧 greedy 路径折叠为整句文本；只有所有 frame 的 entropy 都低于阈值，才直接提交该句。否则让 LLM 在同一因果前向里计算 draft 各 token 在 draft prefix 下的条件 likelihood，逐 token 均过门才接受；在首个失败点停止接受，并从已保留 prefix 续跑 AR。它无须另训独立 drafter，原模型与模态头仍需既有训练；这不是 target-law 不变的验证：输入 confidence 拥有一条绕过 target 的路径，likelihood 阈值也不同于 ratio acceptance 和 residual correction。低 entropy 不证明转写正确，若要求复现 target 的分布，就不能把这条仲裁路径当作 exact acceleration。
 
 这条分支的合同是 ASR 误差与批量处理成本，而非复现 LLM 原输出；流畅的 target 输出也可能较不忠实于声学证据。两个门分别控制直接接受和较保守的 verify，校准必须覆盖当前语言、噪声与 utterance 长度。失败后仍要支付整句 verify 与余下 AR 的成本；verify/fallback 分别组 batch 时，还要结算 acoustic embeddings 的暂存和 CPU 搬运。单 H100/BF16、按音频长度排序的作者结果只支持该批量配置下的局部 Pareto 取舍：较低平均 WER 不保证每个语料都更准或更快，高吞吐配置也付出了 WER 代价，不能把 RTFx 提升读成无损或在线 SLO 认证。低接受率、在线单句延迟目标、没有合适 CTC 头或任务不是 ASR 时，普通 AR 或已有双遍转写仍是合理分支。<!-- source-family:SF-2026-ARXIV-2603-11243 -->
+
+连续视频 block 也可以走质量仲裁，而不先假定存在离散 token 的精确 ratio acceptance：让小生成器提出一段 latent，经 decoder 转成可评分帧，再以外部质量代理决定保留还是由大生成器重生。第一段可强制使用 target 作为锚；后续采用帧级最差读数或均值，是不同的质量/接受率政策，不是恢复 target law 的概率校正。图像 reward 也没有直接观察全部时间一致性，较高接受率不能认证视频语义或完整感知质量。<!-- source-family:SF-2026-ARXIV-2604-17397 -->
+
+这时提交边界还必须覆盖状态而不只覆盖帧：draft 与 target 各自读取哪份历史、候选 decoder state 何时复制、拒绝后恢复哪份快照，都要独立定义；不能把接受 latent 等同于跨模型 KV 可直接拷贝。[必要 block 对照](https://arxiv.org/html/2604.17397v1)只在特定 Self-Forcing/双 GPU 配置下支持有限质量—时间取舍，target cache 的实际更新接口仍不能由一句“commit”补齐。首段锚定后的随机接受已接近质量门结果，不能把另一条未锚定随机基线的退步全归给 reward；被拒 draft、VAE 解码、评分、状态复制和 target 重生均付费。状态更新不闭合、代理失准或净成本不足时，保留 target 完整生成、较短 block 和严格分布保持路径，不将局部代理比值写成无损加速。<!-- source-family:SF-2026-ARXIV-2604-17397 -->
 
 回到经典的分布保持分支，一个常见误解是：Speculative Decoding 就是用小模型替代大模型生成。
 
@@ -1280,3 +1286,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 - `SF-2026-ARXIV-2610-12570` — Daily2026-10-13；[DCOCO exact-v1](https://arxiv.org/html/2610.12570v1)§3–5/全部必要eq、AppA/B/C/G与Table10负侧，2+2+2=6，proposal/sampling correctness受影响深入。保parallel K²score/轻prefixwalk、确定proposal point-mass accept=q与排除draft residual，训练softmax非proposal。B200十suite平均非每suite最佳，Llama MBPP/LCB反退、训练/长度预算差和含prefill request-rate保留。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
 
 - `SF-2026-ARXIV-2604-12989` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12989v1)§3–5/Prop1–3/§4.4/Tables1–2，2+2+2=6，onepass边际Q surrogate与target-own-token treewalk具体owner差额深入。proxy最优非真实target最优，depth/ancestor/bonus/acceptedpath-KV分账；逐人口bestB非部署策略与整树/compact费用近正文，不授任意backend exactness/SLO。reader R40必要Source/R28 date/R44逐字PRE及R47实际两段、完整邻接与本人注POST通过；作者仅同步本人末注并实际读回，未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-17397` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17397v1) §2–5/Eq1/T1–2，2+2+2=6，continuousblock quality arbitration/decoder rollback与双历史分责gap深入。非exactrejection/跨modelKVcopy；force-reject+random .0771与ours.0773及表/正文锚定口径冲突，2A6000/BF16/质量proxy和全部费用保报告，不授98%全质量/targetcache实现。root必要Source/逐字PRE及指定位置通过并授窄lease，作者已写并顺读完整邻接；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实读回；不授复现或DAY。
+
+- `SF-2026-ARXIV-2604-17701` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17701v1)必要Source与本日SUP有效，2+2+2=6，具体接口差额必要深入。采用上述受限机制，不授完整概率路径等价、语义真值、全任务质量或服务SLO；支持、反侧与全费近正文。root实际owner/逐字PRE、保存正文完整两侧及本人注POST均通过，窄lease释放；作者仅行政同步并实际读回。未核实现/复现，不授DAY。

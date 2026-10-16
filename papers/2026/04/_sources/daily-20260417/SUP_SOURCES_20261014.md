@@ -518,6 +518,28 @@ ActualCh26:90–96 calibratedvirtualview/同观察采样与609–617 ego-sketch/
 
 恢复需先读当前AGENTS与本日适用合同/来源Daily/Prompt/ROADMAP及此停点；有效Source/date/PRE/实际POST层按身份/版本/采用命题复用，不重建基线、不扫其他日/旧89/全月。完成上述普通具名与正式报告同步后，再做引用/冻结/限定cached及unstaged diff/V3检查并交root actual DAY；未授DAY前保持暂停/未完成。共享Books/State/索引仍root唯一协调，无本方State或索引改动。
 
+## A36. 明确恢复后有效层复用、formal四项同步与UMI实际窄写
+
+2026-10-15用户明确恢复2026补查，本方重新读取当前AGENTS/Prompt/研究与Report合同、来源使用说明及Daily主题、ROADMAP与本日A35/R53及最新相关State；只补Apr16自然日，不处理Live/Weekly/其他日期。2025是否运行由其独立会话负责，本任务不触其路由。已保护启动19项staged及其他会话变化，不stage/commit/push；本方不改State/索引。
+
+R1–52有效层按精确身份/版本/采用命题复用，不重Source或旧89。README已正式合入Golden13609/SID13273两真实全链、CMAT13472中心容量反证D5、SpatialEvo14144受限Only6，新增40=10I/4E/24Only/2D，合原89共129；未最终冻结。CMAT只隔离E.5严格包含及依赖强链，保有限经验，不用Only隐藏反例。13175/14149/Leap必要日资格和18614/15367窗外线索仍精确隔离，不授其正面Evidence/Coverage或无遗漏。π-Play本身EMA事实保持：A29/R45的固定teacher/非EMA是既有Ch29比较段，未误改成Pi-Play固定teacher。
+
+UMI14089已读Books当前适用约束、Ch26坐标桥/privileged teacher/portable数据链及开闭交接，Ch25世界预测→Ch26真实动作与Ch27训练数据分责保持。root重新核当前TAMEn完整两段→多camera完整链后，授Ch26该处A33原逐字两段及本人注窄lease；本方只插入已R52通过两段，并在Review notes加入本人14089注，未动并发Oct15 staged段或其他注。正文/完整邻接及本人注已作者读回，Source/date/PRE复用，实际非writer POST/final尚普通；不将实际写入先记整合闭合。未扩任何材料或索取无关附件。
+
+剩余具名：UMI actualPOST→本人注同步→final；CRAFT14121 root主对照/必要参数/中心TF-IRF与group/DAG冲突处置；HiVLA14125消融/S1a/真实失败/具体owner与PRE终核/必要写后；LongCoT14140 C依赖对照/D限制/具体Only裁决。全部普通待办仍推进，之后再六部分最终合并、冻结/本地引用/V3和限定cached/unstaged检查、非作者DAY与保存态FINAL；不自派后日。
+
+## A37. 最后四项正式归并、两实际POST及日级待审
+
+root R54 CRAFT中心构造/统计人口争议、R55 HiVLA必要Source/逐字PRE、R56 LongCoT受限Only与R58三项有限自然日资格均已实际通过；只复用其确切层，不把current v5/v2身份当本窗新版本或依赖。CRAFT保持2+1+2=5中心争议，不以Only掩盖TF-IRF N、μ/σ group或DAG/环处理身份未闭；恢复需一致作者说明/可核实现，不EX、不写Books。LongCoT5标准Only不采普遍capacity/唯一因果/跨provider可靠排名，不开启科学应用。三date只为官方目标页身份+原v1字段+R6公告批界联合的有据Apr16推断，非逐篇历史membership或精确时刻。
+
+UMI14089按R57真实POST后仅同步本人注，root R59实际final读回并释放锁；HiVLA14125按R55窄lease逐字A34两段实际写Ch26:92/94，virtualview90完整前邻→新两段→StageCraft96/98完整后邻；root R59真实正文/完整邻接/本人注POST通过，本方仅同步本人2489注并实读回，root随后实际final读回通过并释放最后窄锁。两正文均机械对比已过逐字PRE，未动Oct15 staged段/别注，未核代码/复现或物理安全；当前本方Books锁0。
+
+README六部分现正式归并44新=12I/4E/25Only/3D，合原89共133=45I/21E/60Only/7D；68深入/55标准/3最低关闭/7争议，按实际表行复核。原89整行/日期/评分/小时窗与52857字符连续原§4保持；新增§4缩写标题导致V3同title/URL检查失败，已按排错流程只机械统一新增标题为候选全名同URL，未改公共校验器或旧连续§4，阶段129行V3已通过，133保存态须再检。机构历史slice、HETA/CMAT/CRAFT强链、13175/14149/Leap资格与晚日线索继续精确隔离，不作正面Coverage/Evidence/Books或无遗漏。
+
+133保存态已实际重跑V3通过；133唯一候选与133同URL证据标题一一对应，45I/21E/60Only/7D与68深入/55标准/3最低关闭/7争议实算一致。162本地引用/45独立target零missing，原89全行和52857字符连续§4仍实比保持；README/SUP/Ch26的限定cached与unstaged diffcheck通过。并发会话全仓staged文件计数后由启动19变105，本方未stage/commit/push，不声称index整体未变或仓库clean，也不干预他会话。
+
+有限研究/写入无剩余执行项，不新扩扫描/材料或下一日期；本日仍进行中，仅root六部分DAY及保存完成态FINAL尚待。完成后不自派后日。SUP作者区现交root尾区记录实际独核，不以作者自检替代DAY。
+
 ## Root 独立复核尾区
 
 ### R1. 本日独立恢复边界与原有效层路由
@@ -877,3 +899,37 @@ Golden本人640与SID本人1820同步R51POST后的保存态已实际逐字读回
 三具名项独核尚普通：14121 root实际§3部分、Alg1、F完整TF-IRF公式与定义、K调用费、M pooled统计，已看到per-sample/no-sharedstats与N跨样本定义不一致；尚未完成主对照/必要参数及最终具体Books处置，不能称已通过Source或Only。14125 root实际§4/Eq1–4与§5主对照/异步时延声明、当前virtualview/StageCraft完整局部和A34逐字PRE；尚需关键消融、必要S1a/真实失败及处置终核，未授锁、未写。14140 root实际§3～4构造/单shot预算/主protocol，尚需C直接dependency对照、D限制与具体owner/Only裁决，不把模板/摘要读完当证据完成。必要原件和作者A34已保存，不重做作者有效层或扩全附件。
 
 CMAT5中心容量争议与SpatialEvo6Only在R52实际通过，formal六部分尚待同步；旧89整行/日期/评分、原小时窗和连续原§4继续冻结。13175/14149/Leap资格、held晚日线索与已有中心争议保持隔离，不授正面证据/无遗漏。当前所有Books窄锁释放；后续只在用户明确恢复后从本日A35/R53接续，运行暂停不改变Report未完成状态，不stage/commit/push。
+
+### R54. 明确恢复与 CRAFT 中心冲突的必要独核
+
+用户2026-10-15明确恢复。root非本日报告/Books作者，重读当前合同、保存停点与Books适用约束；复用R1–52身份/版本/采用命题未变的有效层。本次实际重开[CRAFT exact-v1](https://arxiv.org/html/2604.14121v1) §4/Tables2–4、Limitations及I参数，并与R53已实读Alg1/F/K/M合并；不读无关完整附件或current新版。相同backbone主对照有反转，T4消融与T2整套数值不同，短最终trace不等全部调用更便宜；I固定K10/T.7/阈值不消除共享错误。核心TF-IRF人口、group统计与DAG构造含义冲突影响可执行机制身份，作者也明示consensus≠correctness/未验抽图真值。故保2+1+2=5，必要反侧已深入，但最终为**中心争议/暂缓**，不能以Only标签掩盖冲突，更不反向排除实际贡献。Ch66公开trace与终答分账已有具体论证，现不写不确定的CRAFT机制；恢复仅需同版作者对N/IRF/group/有环图处理及实际统计人口的明确说明或可核实现。当前不采用强保证、正面机制或Books，不宣已复现。
+
+### R55. HiVLA 必要Source终核与有限owner/PRE
+
+实际重开[HiVLA exact-v1](https://arxiv.org/html/2604.14125v1) §5/Tables1–4、S1a/Table5与planner Table6：HD crop/位置条件及顺序消融支持有限接口分支，局部任务仍反退；真实3cups6/30、3blocks7/30，非物理安全。S1a披露2H200/BF16/batch64/150K，planner另外210K样本及3epoch，不能省略前置训练；主文与附录norm不一致，不写确定recipe。planner仍需domain FT，未验通用能力无损；异步均值不证明完整freshness/deadline。必要Source支持A34收窄的6分差额深入。root实际顺读Ch26几何/主动视图/virtualview完整段→StageCraft两段，及本章入口、出口与Ch25/27交接；缺的是原图crop同时保留original-image patch位置给action expert，不是泛化“多看图”。A34逐字两段PRE可写virtualview完整段后、StageCraft前＋本人注；仅授该单文件窄位置，保留其他段及staged内容。实际写入/POST未发生前不计整合。
+
+### R56. LongCoT 直接对照与具体Only决定
+
+实际重开[LongCoT exact-v1](https://arxiv.org/html/2604.14140v1) C的同题independent/composed及RLM、D限制，复用R53已核方法/预算。相同leaf计分且tokenusage近似，仍非全部预算/状态严格匹配；provider差异、timeouts待直接重测，公开trace分类非内部真值，RLM子集不证明所有scaffold无效。仅核一般逻辑/math/程序推理，不开启科学应用范围。root实读Ch22相同长度不同information load/有效利用，Ch66公开trace、oracle/readout与输出截点，Ch82 replica与dependency结构分权的具体正文。2+1+2=5标准审阅通过，**仅报告**保留此受限benchmark诊断，不声称精确LongCoT已有覆盖，不采用普遍capacity/单因果/可靠跨provider排名，也无须新增Books段落。
+
+### R57. UMI-3D 真正文与完整邻接实际POST
+
+R52必要Source/date/逐字PRE有效复用，恢复重新授Ch26该位置窄lease后，作者实际写入。root现实际读回TAMEn两完整前邻→UMI两个新段（当前792/794）→多camera完整后邻和后续reset采集链及本人末注；与A33逐字PRE一致。采集label producer与部署policy input分责、时钟/坐标provenance、IK及长程失败/费用/回退均在正文，未将新传感器或局部兼容升为物理保证，顺接采集讨论。真实POST通过；作者只同步本人注为本R57通过并读回，之后释放该窄锁。此为单项真实整合，不代替完整六部分DAY/FINAL。
+
+### R58. 三项有限自然日资格与当前事件说明
+
+root实际读本日SUP_FRESH_DATE_BATCH3中14121/14125/14140的完整原字段：各自Submitted Apr15，v1 Updated及created Apr16；Available只有月份，created/Updated不单独作公开日。另实际核三份官方目标分类页CL750/CV1350/LG950各自ID及标题身份，复用R6已有官方公告批界/永久ID规则与未变本日界限，联合支持Apr16自然日的有据归属，不证明精确首发秒数或逐篇历史membership。当前原abs的版本历史/可见Comments亦实际轻查，分别v5/v2/v1，仅身份，不倒灌新版；未见需隔离的撤回/纠错说明，不为阴性证明遍历版本史。三项可按本日有限date层正式同步；所有有实际延期/早发/字段异常的另列身份不继承该结论，不授全Coverage或无遗漏。
+
+### R59. HiVLA 实际POST及 UMI 本人注 final
+
+root实际顺读Ch26 virtualview完整前邻90→HiVLA两新段92/94→StageCraft两完整后邻96/98及本人末注2489；与A34逐字PRE一致，原图局部细节与global patch坐标、图像接口非米制真值、费用/错误计划/freshness/退路在同链，未采用完整deadline或物理安全。此项真实POST通过，只待作者本人注同步并actual读回后释放窄锁。UMI本人注2487已实际读回含R57通过，正文未再改，其窄锁现释放；单项全链有效，不代DAY/FINAL。
+
+### R60. 本轮六部分 DAY 实际通过
+
+root非本日报告作者，实际阅读保存稿本轮六部分：结论的漏斗/计数，14到期来源的入口/停止边界，44新增完整候选与其证据判断、§5逐项终态重开条件、§6复核权限；旧89未变的必要证据与连续正文按已通过层复用，不无差别重读附件。全部新增准入/必要Source/date/具体Books在R1–59分批实际独核，修订/安全/反侧及具名排除含13804/14147最小消歧、13242/13351/13660/13857/14137/13518具体关闭与withdrawn13871的排除责任均沿原实际层保留，非全月排除全集证明。宽目录/285查询槽未变全文队列，source历史缺段、未知资格和中心争议不算正面Coverage/Evidence或无遗漏。
+
+本次最后CRAFT中心身份冲突已由Only提案改为争议隔离，HiVLA/UMI真实新正文及本人注完整两侧POST/final读回通过，所有指定锁释放；前三十多项未变的具体owner/实际写后层复用。正式44新=12整合/4已有覆盖/25仅报告/3争议，原89合133=45/21/60/7；表内68深入/55标准/3关闭/7争议对应最低投入，三争议不是Source正面通过。来源及研究/Books普通工作0，日期/原源/中心争议保留有明确恢复入口。root另实际重跑V3通过，原89整行/旧窗口与52872字符连续完整原§4实比保持，限定README/SUP/Ch26的cached与unstaged检查通过；42窗口测试通过只证明工具层。并发index已有变化，本方未stage/commit/push、不清理他人修改。**DAY通过**；作者可仅同步完成态、执行时间和当前行政说明，随后root实际读保存态FINAL，不得预签FINAL。
+
+### R61. 保存完成态 FINAL 实际通过
+
+root实际读回13:36:54+08保存完成态的开头、结论、§5及§6行政差额，§3/4与R60已核版本无实质变化；原89/旧window/连续原§4及44新增、133总、12新实际整合与七中心隔离保持。完成态首次工具检查发现复核结论行带括注，作者已移说明至相邻正文，root再次实际读取精确“结论：通过”并重跑V3成功；这只修接口，不补造语义通过。R60完整日级语义依据与所有实际Books POST/final均有效，普通待办0、锁0；外部历史slice、必要资格与中心争议仍不授正面Coverage/Evidence或无遗漏。**保存态FINAL通过，本日增量接纳**。允许作者仅将“FINAL待”替换为指向本R61的已发生状态，不改变研究内容；root据此更新月度路由，下一日期另开fresh独立上下文，本方不stage、commit、push。

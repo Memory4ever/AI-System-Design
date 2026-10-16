@@ -4,9 +4,20 @@
 **窗口：** 2026-04-20T09:00:00+08:00 ～ 2026-04-21T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-27T18:22:39+08:00
+**检查时间：** 2026-10-15T18:21:16+08:00
+**窗口说明：** 用户明确仅补来源遗漏，保留当前原候选整行、日期/评分、原小时窗口与连续原§4；不恢复已有效纠偏的旧V2候选。
+**补充窗口：** 2026-04-20 ～ 2026-04-20
+**冻结候选日期：** [补查前逐字原档案](../_sources/daily-20260421/baseline-before-supplement-20261015.md)
 
 ## 1. 结论
+
+本次只补Apr20北京时间完整自然日来源遗漏，原146个整行/日期评分、小时窗和连续原§4不变。确定新增52家族，全部有非作者实际必要证据与Books处置：15真实整合（30段、8个唯一owner）、8具体已有覆盖、14仅报告、15局部中心争议暂缓；不等52个原始强称全部成立。原层与补充合计198家族，研究、Books与六节独立DAY普通待办0，root实际DAY已通过；本次补查完成，完成态保存后再做字段/冻结最小读回。
+
+新增知识主要落在条件接口与目标分工：历史事件snapshot不等item ID，部件关系/任务对齐必须跟动作一起迁移，shared/private消费受模态可用性约束；content不变性与style预测可以承担不同责任，内部梯度fingerprint也不自动取得意图真值。RL的taskreward与整序列锐化目标、随机latent chart的Itô漂移与重建、局部对象teacher与整体布局teacher分别落入既有owner，保留旧分支、反退和完整费用，不按论文名字增章。
+
+必要公开日保留15372/15632/15589、Seed18292；15589官方Mar24场次只是先事件信号，未冒称March正文已公开或Apr20首次。15748当前家族撤回退出本轮，16087/16239为早PMLR同事件。十五新中心争议只隔精确recipe/保证，有限构造/经验照实保留，不降分、不抹反证，也不写正面Books。来源历史停点与日期推断限制见§2/5，不授全网无遗漏或覆盖通过；全部过程与实际独核见[本日唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md)。
+
+以下保留的统计与完成声明仅属于原146有效层，不替代本次补充验收：
 
 本日已按当前合同重建并通过独立日级验收，旧 V2.1 的完成标签、分母和 Books 断言均不继承。旧正文完整保存在 [原始报告副本](../_sources/daily-20260421/V2_1_README_BEFORE_V3.md)，有效证据没有删除。
 
@@ -16,11 +27,11 @@
 
 ## 2. 来源覆盖
 
-历史停点和 artifact 缺口不据网页可读或空响应宣称“无更新”。
+以下同时保留原小时窗有效边界与本次Apr20自然日补查。未变官方目录的具名相邻日期覆盖整个Apr20时直接复用；OpenAI新增Hyatt原文、Seed日历桶身份和arXiv Apr20早批另按自然日处理，不把Apr21条目挪入新增。历史停点和artifact缺口不据网页可读或空响应宣称“无更新”。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | [News RSS](https://openai.com/news/rss.xml) 1,230项，本窗 `2026-04-21T00:00:00Z` 企业Codex合作核心说明已读，采用/咨询/伙伴扩展前分母关闭 | 受阻 | Research/Index当前可读，但4月历史分页停点未闭；RSS不替代Research |
+| SRC-OPENAI | [News RSS](https://openai.com/news/rss.xml)原1,230项停点复用；本次补Apr20的[Hyatt原文](https://openai.com/index/hyatt-advances-ai-with-chatgpt-enterprise/)（RSS Apr20 00Z）核心实际已读，企业部署/培训不提供新模型或受控机制，具体贡献前关闭。原Apr21企业Codex合作只属原层，不计新增 | 受阻 | Research/Index可读但4月历史分页未闭，RSS不替代Research；不据商业名称硬排或声称零更新 |
 | SRC-ANTHROPIC | [Research](https://www.anthropic.com/research) 原始publishedOn邻界04/14T13:01Z→04/22T14:12Z/14:27Z | 已检查 | 限官方公开研究目录，本窗无条目 |
 | SRC-GOOGLE-AI | [Research Blog](https://research.google/blog/) 4月九条，ReasoningBank链接旧家族2509.25140，无已识别重要修订；[DeepMind page3](https://deepmind.google/blog/page/3/) 04/15→04/22跨窗 | 受阻 | [Publications](https://research.google/pubs/) 年度入口未形成历史日停点，不能据此说本窗零论文 |
 | SRC-META-AI | [Research](https://ai.meta.com/research/) 无有效历史提取；Blog page1/2实际04/06、04/08→03/27 | 受阻 | Blog不替代Research历史目录，后者未闭 |
@@ -29,17 +40,21 @@
 | SRC-MOONSHOT | [Kimi Blog](https://platform.kimi.com/blog) 26条，所见最新2025-11-07 | 受阻 | 不能证明2026本窗完整目录；组织artifact停点未闭 |
 | SRC-TENCENT-HUNYUAN | 官方POST publicList，pageNum1/pageSize100/renderType0，9/9；displayPublishTime邻界04/23→02/13 | 受阻 | 全部可见目录无本窗项；组织artifact停点未闭，不宣称未列原文不存在 |
 | SRC-ZAI | [Research](https://www.zhipuai.cn/zh/research) 15条04/29→04/07→04/01；[release notes](https://docs.z.ai/release-notes/new-released) 06/16→04/07→02/12 | 受阻 | 可见目录无本窗项；组织artifact停点未闭 |
-| SRC-BYTEDANCE-SEED | 官方get_article_list_v2，type1/count20/page_token20，header US；total242,next40，04/22→04/20→04/16；ID1635指向2604.18292；官方abs/项目页及仓库替代已定点核 | 受阻 | Agent-World目录仅日历日，项目页无精确首发，仓库公开说明为08/10；v1 Updated跨截点不单证定晚发。日期精确隔离，组织artifact历史停点未闭 |
+| SRC-BYTEDANCE-SEED | 官方get_article_list_v2 type1/count20/page_token20、header x-tt-locale:US，本次真实20/20、total246/next40；04/22→04/20→04/16，ID1635/Agent-World指2604.18292，[原响应](../_sources/daily-20260421/SUP_SEED_PAPER_page20_20261015.raw.json)；Blog邻界04/23→04/09→04/01有效复用，不扩全年 | 受阻 | PublishDate Apr20只是日历桶，ArticleID/UpdateTime July2回填；原文首公开关系未证，项目无日期、仓库08/10不补证。必要日级资格隔离（不追精确时刻）；组织artifact历史停点未闭 |
 | SRC-BAIDU-ERNIE | [Blog](https://ernie.baidu.com/blog/zh/) 首十项04/30→04/15→02/06→2025-11，停止于左边界之前 | 已检查 | 仅官方可见技术博客，不声称作者论文全覆盖 |
 | SRC-XIAOMI-MIMO | [Paper/Blog](https://mimo.xiaomi.com/) Paper八条06/29→03/13→02/03；Blog十四条没有充分历史日期 | 受阻 | Paper已检查；Blog日期与组织artifact停点未闭 |
 | SRC-MINIMAX | [EN](https://www.minimax.io/blog) 十二条05/26→03/18、[CN](https://www.minimaxi.com/blog) 十三条04/27→03/18、[Agent Tech](https://agent.minimax.io/docs/techblog) 一条05/13 | 受阻 | 可见技术目录跨窗；组织artifact停点未闭 |
-| SRC-ARXIV | [官方公告规则](https://info.arxiv.org/help/availability.html) +已有OAI/永久ID分配/v1 processing组合；宽库存只作主题查漏，270完整题摘的原有有限信号已逐家族裁决，175家族必要/最小处理 | 已检查 | 组合推断非submitted/Updated孤证；有具体更早正文或跨截点例外均具名隔离，不宣称全网无遗漏 |
+| SRC-ARXIV | 原146层的270题摘/175必要与最小处理有效复用；新增只查Apr20正常早批15314–16299，CL/LG官方月页各100标题、四主题API完整返回483/55/108/375而仅实际浏览目标段去重207标题，精确v1题摘/有限EX见[SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md)。58潜力扣2旧PMLR/2弱日/1撤回，再隔新发现15589会议早事件资格，确定52；公告规则+本身份版本processing/DOI/OAI联合日期已非作者核 | 已检查 | 52中15条无Apr20本身份OAI，依历史processing+DOI+正常批联合推断，非逐篇直接公告证书；Submitted非公开日。15372/15632/15589日期隔离、15748撤回、16087/16239旧PMLR不计新候选；另15704同DOI的TKDE May2025出版方注册字段关闭早同事件。宽列表非全题摘/全文队列，不宣称全网无遗漏 |
 
-八机构GitHub有界API各两次403，替代网页200只给lastUpdated与当前分页，没有created/重要release历史停止点；不能补造零更新。实际14源与首批15个完整题摘的作者外复核见 [独立有界审计](../_sources/daily-20260421/V3_SOURCE_ADMISSION_INDEPENDENT.md)。
+本次arXiv四主题是模型（CL/LG/AI的language/foundation model、Transformer/MoE/RL）、系统（DC/AR/PL/OS/PF的GPU/training/inference/kernel/language）、多模态（CV/RO的vision-language/worldmodel/foundation/VLA/diffusion）和Agent（AI/IR/MA的language model/agent/retrieval/memory）。API submittedDate Apr15–17仅找正常批/hold线索，不当公开日；均start0/max1000、返回与total一致，实际只浏览15314–16299段的207去重标题后停止，CL/LG月页各100标题为有限新命名补检。原始查询/URL与响应保存在[主题导航](../_sources/daily-20260421/SUP_TOPIC_NAV_20261015.json)，并非1021份题摘或全文已读。
+
+八机构GitHub有界API各两次403，替代网页200只给lastUpdated与当前分页，没有created/重要release历史停止点；不能补造零更新。实际14源与首批15个完整题摘的作者外复核见 [独立有界审计](../_sources/daily-20260421/V3_SOURCE_ADMISSION_INDEPENDENT.md)，这里只复用原层；本次新的准入/代表负项实际范围见§6/SUP R1–R5，不把旧审计标签当新52完成。
 
 ## 3. 候选与判断
 
 作者侧冻结146个候选家族，每项有必要证据与真实处置；最终独立复核若发现具体误收/漏收则定点重开，不继承旧101项。公开范围来自官方永久ID公告分配规则、相邻批界与本家族v1 processing/OAI组合，有限推断04/21早批08:00～09:00，不把submitted或Updated单证改名首发；例外单独隔离。
+
+本表前146个原行保持逐字冻结，后52行为Apr20自然日补充；本次新增独立复核通过。58份有限潜力经实际准入/日期/当前notice核后，3份必要日期隔离（15372/15632/15589）、2份早PMLR同事件（16087/16239）、1份当前家族撤回（15748）不列本表；15704与16111始终为窗外同事件导航，不进入58分母。新增52均按精确v1审阅，公开日采用本身份历史processing+DOI created+官方正常batch/ID与主题列表的有限组合推断，37另有own OAI Apr20；15较弱组15650/15652/15762/15770/15838/16113/16207/16242/16243/16254/16272/16278/16286/16287/16299无本身份Apr20 OAI佐证，不伪装逐篇直接公告或Submitted孤证。全部非作者日期层/精确版本/必要Source已实际核；15整合、8已有覆盖、14仅报告、15局部中心暂缓，本次六节DAY已实际通过，完成态保存后仅作字段/冻结读回。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -189,6 +204,58 @@
 | [Different Perspectives of Memory System Simulation](https://arxiv.org/html/2604.16965v1) | 2026-04-21T08:00:00+08:00 ～ 2026-04-21T09:00:00+08:00 | 组件时钟换算与依赖请求因果提交分账；2+2+2=6 | 深入完成 | 整合：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；具体机制已入正文，root实际写后通过 |
 | [On Safety Risks in Experience-Driven Self-Evolving Agents](https://arxiv.org/html/2604.16968v1) | 2026-04-21T08:00:00+08:00 ～ 2026-04-21T09:00:00+08:00 | 固定backbone良性外部经验读取的行为安全切片；2+2+2=6 | 深入完成 | 整合：`PLATFORM-SECURITY` [Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)；具体机制已入正文，root实际写后通过 |
 | [MCPO: Mastery-Consolidated Policy Optimization for Large Reasoning Models](https://arxiv.org/html/2604.16972v1) | 2026-04-21T08:00:00+08:00 ～ 2026-04-21T09:00:00+08:00 | 零相对信号过滤与已掌握行为保持的不同职责；2+2+2=6 | 深入完成 | 整合：`TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md)；具体机制已入正文，root实际写后通过 |
+| [One-Shot Cross-Geometry Skill Transfer through Part Decomposition](https://arxiv.org/html/2604.15455v1) | 2026-04-20 | 部件形状与关系约束改变单示范跨几何迁移；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-EMBODIED-VLA` [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；部件形状与关系约束改变单示范跨几何迁移，实际POST通过 |
+| [Evaluating LLM Simulators as Differentially Private Data Generators](https://arxiv.org/html/2604.15461v1) | 2026-04-20 | DP统计保真与LLM persona模拟效用分离；2+1+2=5 | 深入完成 | 整合：`TRAIN-DATA` [Ch27](../../../../books/part-04-training-system/27-data.md)；DP统计保真与LLM persona模拟效用分离，实际POST通过 |
+| [ProtoTTA: Prototype-Guided Test-Time Adaptation](https://arxiv.org/html/2604.15494v1) | 2026-04-20 | 原型激活entropy与可靠样本过滤替代输出entropy TTA；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；原型激活entropy与可靠样本过滤替代输出entropy TTA，实际POST通过 |
+| [Brain Score Tracks Shared Properties of Languages: Evidence from Many Natural Languages and Structured Sequences](https://arxiv.org/html/2604.15503v1) | 2026-04-20 | BrainScore可受训练结构与评价协议共同改变；2+1+2=5 | 标准完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；构念/评价协议与机制解释分开 |
+| [Learning Affine-Equivariant Proximal Operators](https://arxiv.org/html/2604.15556v1) | 2026-04-20 | 平方神经构造→精确等变prox的条件桥；2+1+2=5 | 深入完成 | 暂缓：practical平方凸性→exactprox，有限有效层保留，不正面Books |
+| [ShapeGen: Robotic Data Generation for Category-Level Manipulation](https://arxiv.org/html/2604.15569v1) | 2026-04-20 | function-alignment与动作校正共同承载形状扩增；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-EMBODIED-VLA` [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；function-alignment与动作校正共同承载形状扩增，实际POST通过 |
+| [Learning Behaviorally Grounded Item Embeddings via Personalized Temporal Contexts](https://arxiv.org/html/2604.15581v1) | 2026-04-20 | 个人时间支持与连续decay的精确有界性；2+1+2=5 | 深入完成 | 暂缓：localdecay有界/单调kernel，有限有效层保留，不正面Books |
+| [Sample Is Feature: Beyond Item-Level, Toward Sample-Level Tokens for Unified Large Recommender Models](https://arxiv.org/html/2604.15650v1) | 2026-04-20 | 历史事件snapshot与当前query表示分工；2+1+2=5 | 深入完成 | 整合：`MODEL-EMBEDDING` [Ch12](../../../../books/part-02-model/12-embedding.md)；历史事件snapshot与当前query表示分工，实际POST通过 |
+| [Towards Realistic Open-Vocabulary Remote Sensing Segmentation: Benchmark and Baseline](https://arxiv.org/html/2604.15652v1) | 2026-04-20 | 冻结双encoder条件化扰动扩展dense匹配支持；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；冻结双encoder条件化扰动扩展dense匹配支持，实际POST通过 |
+| [HyCal: A Training-Free Prototype Calibration Method for Cross-Discipline Few-Shot Class-Incremental Learning](https://arxiv.org/html/2604.15678v1) | 2026-04-20 | 原型校准的distance-to-score读出边界；2+1+2=5 | 深入完成 | 暂缓：distance→score/argmax精确recipe，有限有效层保留，不正面Books |
+| [The Price of Paranoia: Robust Risk-Sensitive Cooperation in Non-Stationary Multi-Agent Reinforcement Learning](https://arxiv.org/html/2604.15695v1) | 2026-04-20 | 风险更新与协调阈值的理论区别；2+1+2=5 | 深入完成 | 暂缓：协调阈值移动/风险推导，有限有效层保留，不正面Books |
+| [P3T: Prototypical Point-level Prompt Tuning with Enhanced Generalization for 3D Vision-Language Models](https://arxiv.org/html/2604.15703v1) | 2026-04-20 | 坐标prompt追加与语义一致目标的受限适配；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；坐标prompt追加与语义一致目标的受限适配，实际POST通过 |
+| [RefereeBench: Are Video MLLMs Ready to be Multi-Sport Referees](https://arxiv.org/html/2604.15736v1) | 2026-04-20 | 识别、规则时序与negative误报分验；2+1+2=5 | 标准完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；success轴、规则时序与negative人口分验 |
+| [Collective Kernel EFT for Pre-activation ResNets](https://arxiv.org/html/2604.15742v1) | 2026-04-20 | 高斯随机网络闭合可保均值却丢V4/source；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Multi-objective Reinforcement Learning With Augmented States Requires Rewards After Deployment](https://arxiv.org/html/2604.15757v1) | 2026-04-20 | ESR policy冻结不删除部署累计reward输入；2+1+2=5 | 深入完成 | 整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；ESR policy冻结不删除部署累计reward输入，实际POST通过 |
+| [Zero-Shot Scalable Resilience in UAV Swarms: A Decentralized Imitation Learning Framework with Physics-Informed Graph Interactions](https://arxiv.org/html/2604.15762v1) | 2026-04-20 | 有限邻域policy与全局N独立放大保证分离；2+1+2=5 | 深入完成 | 暂缓：共享中心全局N独立放大界，有限有效层保留，不正面Books |
+| [Closing the Theory-Practice Gap in Spiking Transformers via Effective Dimension](https://arxiv.org/html/2604.15769v1) | 2026-04-20 | spike有效维度的必要与充分资源桥；2+1+2=5 | 深入完成 | 暂缓：足够时步/分类精度桥，有限有效层保留，不正面Books |
+| [PLAF: Pixel-wise Language-Aligned Feature Extraction for Efficient 3D Scene Understanding](https://arxiv.org/html/2604.15770v1) | 2026-04-20 | 共享区域feature与pixel/point索引改变存储代价；2+1+2=5 | 标准完成 | 已有覆盖：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；共享feature/索引与mask及原视图回退 |
+| [PIIBench: A Unified Multi-Source Benchmark Corpus for Personally Identifiable Information Detection](https://arxiv.org/pdf/2604.15776v1) | 2026-04-20 | PII label支持与exact-span构念限定；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [CroSatFL: Energy-Efficient Federated Learning with Cross-Aggregation for Satellite Edge Computing](https://arxiv.org/html/2604.15779v1) | 2026-04-20 | 受限拓扑调度不自动保全局样本均值；2+1+2=5 | 深入完成 | 暂缓：全局samplemean保持，有限有效层保留，不正面Books |
+| [EVIL: Evolving Interpretable Algorithms for Zero-Shot Inference on Event Sequences and Time Series with LLMs](https://arxiv.org/html/2604.15787v1) | 2026-04-20 | 搜索期学习推断程序与部署执行分账；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Scattered Hypothesis Generation for Open-Ended Event Forecasting](https://arxiv.org/html/2604.15788v1) | 2026-04-20 | validity门控组内/组间多样性reward分责；2+1+2=5 | 标准完成 | 已有覆盖：`TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md)；validity sensor与多样性objective分责 |
+| [Watching Movies Like a Human: Egocentric Emotion Understanding for Embodied Companions](https://arxiv.org/html/2604.15823v1) | 2026-04-20 | native内容与真实screen-view传感域不能混作同接口；2+1+2=5 | 标准完成 | 已有覆盖：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；camera/input-label与旧新consumer身份 |
+| [Reversible Residual Normalization Alleviates Spatio-Temporal Distribution Shift](https://arxiv.org/html/2604.15838v1) | 2026-04-20 | 严格可逆normalization依赖实际inverse迭代；2+1+2=5 | 深入完成 | 暂缓：严格inverse/无损recipe，有限有效层保留，不正面Books |
+| [Robust Multispectral Semantic Segmentation under Missing or Full Modalities via Structured Latent Projection](https://arxiv.org/html/2604.15856v1) | 2026-04-20 | availability-gated共享/相关private路由到decoder；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；availability-gated共享/相关private路由到decoder，实际POST通过 |
+| [DiZiNER: Disagreement-guided Instruction Refinement via Pilot Annotation Simulation for Zero-shot Named Entity Recognition](https://arxiv.org/html/2604.15866v1) | 2026-04-20 | 分歧驱动instruction修改而非只投票；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Polarization by Default: Auditing Recommendation Bias in LLM-Based Content Curation](https://arxiv.org/html/2604.15937v1) | 2026-04-20 | objective×provider×platform可翻转毒性方向；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [SENSE: Stereo OpEN Vocabulary SEmantic Segmentation](https://arxiv.org/html/2604.15946v1) | 2026-04-20 | stereo几何进入开放词表densegrounding；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [MATRIX: Multi-Layer Code Watermarking via Dual-Channel Constrained Parity-Check Encoding](https://arxiv.org/html/2604.16001v1) | 2026-04-20 | 双通道水印的检测取舍与ECC保证分开；2+1+2=5 | 深入完成 | 暂缓：ECC唯一纠错/联合安全，有限有效层保留，不正面Books |
+| [A Wasserstein Geometric Framework for Hebbian Plasticity](https://arxiv.org/html/2604.16052v1) | 2026-04-20 | 概率网络表示与几何强必要推论分离；2+1+2=5 | 深入完成 | 暂缓：强必要快慢时标推论，有限有效层保留，不正面Books |
+| [DINOv3 Beats Specialized Detectors: A Simple Foundation Model Baseline for Image Forensics](https://arxiv.org/html/2604.16083v1) | 2026-04-20 | LoRA/FullFT与容量/数据交叉反退；2+1+2=5 | 标准完成 | 已有覆盖：`TRAIN-LORA` [Ch30](../../../../books/part-04-training-system/30-lora.md)；冻结/rank归因及容量/评价人口预算 |
+| [Stylistic-STORM (ST-STORM) : Perceiving the Semantic Nature of Appearance](https://arxiv.org/html/2604.16086v1) | 2026-04-20 | content对比不变性与style预测目标分工；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；content对比不变性与style预测目标分工，实际POST通过 |
+| [Co-Design of CNN Accelerators for TinyML using Approximate Matrix Decomposition](https://arxiv.org/html/2604.16113v1) | 2026-04-20 | 稀疏Po2多factor与硬件时间复用共设计；2+1+2=5 | 深入完成 | 整合：`INFER-TENSORRT-LLM` [Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)；稀疏Po2多factor与硬件时间复用共设计，实际POST通过 |
+| [Beyond One-Size-Fits-All: Adaptive Test-Time Augmentation for Sequential Recommendation](https://arxiv.org/html/2604.16121v1) | 2026-04-20 | persequence八operator选择与多view聚合；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [AIFIND: Artifact-Aware Interpreting Fine-Grained Alignment for Incremental Face Forgery Detection](https://arxiv.org/html/2604.16207v1) | 2026-04-20 | anchor/distill/head组合不等严格保旧决策；2+1+2=5 | 深入完成 | 暂缓：head/feature严格旧决策保持，有限有效层保留，不正面Books |
+| [OT on the Map: Quantifying Domain Shifts in Geographic Space](https://arxiv.org/html/2604.16220v1) | 2026-04-20 | 地理embedding OT作为transfer proxy而非验收；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Optimizing Korean-Centric LLMs via Token Pruning](https://arxiv.org/html/2604.16235v1) | 2026-04-20 | script输出支持与tokenizer/head联合产物；2+1+2=5 | 标准完成 | 已有覆盖：`MODEL-TOKENIZER` [Ch11](../../../../books/part-02-model/11-tokenizer.md)；联合tokenizer-ID-checkpoint与输出支持 |
+| [Detecting and Suppressing Reward Hacking with Gradient Fingerprints](https://arxiv.org/html/2604.16242v1) | 2026-04-20 | response-NLL梯度fingerprint是独立监测入口；2+1+2=5 | 深入完成 | 整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；response-NLL梯度fingerprint是独立监测入口，实际POST通过 |
+| [Find, Fix, Reason: Context Repair for Video Reasoning](https://arxiv.org/html/2604.16243v1) | 2026-04-20 | 教师观察补丁与teacher轨迹重放分责；2+2+2=6 | 标准完成 | 已有覆盖：`TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md)；保条件ratio、反馈人口与全部rollout费用 |
+| [Joint-Centric Dual Contrastive Alignment with Structure-Preserving and Information-Balanced Regularization](https://arxiv.org/html/2604.16247v1) | 2026-04-20 | jointanchor目标不自动保真实MI与完整信息；2+1+2=5 | 深入完成 | 暂缓：真实MI/essentialinfo保证，有限有效层保留，不正面Books |
+| [ArtifactNet: Detecting AI-Generated Music via Forensic Residual Physics](https://arxiv.org/pdf/2604.16254v1) | 2026-04-20 | 跨codec检测漂移不等普遍RVQ物理定律；2+1+2=5 | 深入完成 | 暂缓：普遍RVQ/不可擦signature，有限有效层保留，不正面Books |
+| [Do Vision-Language Models Truly Perform Vision Reasoning? A Rigorous Study of the Modality Gap](https://arxiv.org/html/2604.16256v1) | 2026-04-20 | 等信息text/image比较与逐cell测量人口；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Beyond Distribution Sharpening: The Importance of Task Rewards](https://arxiv.org/html/2604.16259v1) | 2026-04-20 | 相同RL更新分离taskreward与sequence锐化目标；2+2+2=6 | 深入完成 | 整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；相同RL更新分离taskreward与sequence锐化目标，实际POST通过 |
+| [Information Router for Mitigating Modality Dominance in Vision-Language Models](https://arxiv.org/html/2604.16264v1) | 2026-04-20 | prefusion列能量混合与语义补信息保证分离；2+1+2=5 | 深入完成 | 暂缓：跨长度mix/信息补足保证，有限有效层保留，不正面Books |
+| [VEFX-Bench: A Holistic Benchmark for Generic Video Editing and Visual Effects](https://arxiv.org/html/2604.16272v1) | 2026-04-20 | source/instruction/edit三输入与ordinal读出分责；2+1+2=5 | 深入完成 | 暂缓：ordinal期望score/校准，有限有效层保留，不正面Books |
+| [No Universal Courtesy: A Cross-Linguistic, Multi-Model Study of Politeness Effects on LLMs Using the PLUM Corpus](https://arxiv.org/html/2604.16275v1) | 2026-04-20 | 礼貌效果依赖语言/模型/显式history；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Learning to Reason with Insight for Informal Theorem Proving](https://arxiv.org/html/2604.16278v1) | 2026-04-20 | technique/sketch/proof逐stage SFT监督；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Geometric regularization of autoencoders via observed stochastic dynamics](https://arxiv.org/html/2604.16282v1) | 2026-04-20 | latent chart的切向噪声与Itô漂移责任分离；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-WORLD-MODELS` [Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)；latent chart的切向噪声与Itô漂移责任分离，实际POST通过 |
+| [ASMR-Bench: Auditing for Sabotage in ML Research](https://arxiv.org/html/2604.16286v1) | 2026-04-20 | 代码审计detect/proposed-fix双评价；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [NaijaS2ST: A Multi-Accent Benchmark for Speech-to-Speech Translation in Low-Resource Nigerian Languages](https://arxiv.org/html/2604.16287v1) | 2026-04-20 | S2TT与speech终端排序/ASR构念分验；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Phase transitions in Doi-Onsager, Noisy Transformer, and other multimodal models](https://arxiv.org/html/2604.16288v1) | 2026-04-20 | circle meanfield中线性阈值与global相变分开；2+1+2=5 | 标准完成 | 仅报告：有限实例/理论未改变现有长期取舍，具体理由见§4 |
+| [Repurposing 3D Generative Model for Autoregressive Layout Generation](https://arxiv.org/html/2604.16299v1) | 2026-04-20 | 自产累积state下step/terminal teacher可见性分工；2+2+2=6 | 深入完成 | 整合：`MULTIMODAL-GENERATIVE-PARADIGMS` [Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)；自产累积state下step/terminal teacher可见性分工，实际POST通过 |
 
 ## 4. 证据与知识整合
 
@@ -838,9 +905,230 @@ III/IV-B/C/E/V-A实际核：lowering、simulation、FPGA不同幸存分母，con
 
 III/IV-B TablesI–III实际核：pilot选三模型扫108配置，best-grid与默认排名预算不matched，pass@5/HQI上界不等单次交付；弱rank相关不等完全无预测力。5标准已有覆盖，`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)完整subject明确runtime/decoding/adapter，ObservedCapability/ElicitationCeiling与pipeline分母已有正文。仅新增受限RTL证据，不泛化全部最佳温度或服务吞吐因果；详[必要记录](../_sources/daily-20260421/V3_BATCH_17097_17108.md)。
 
+<!-- supplement-apr20-evidence:start -->
+### 2026-04-20自然日补充：逐项证据与最终Books处置
+
+下列52项不改前述连续原§4。均为exact-v1必要机制、关键评价/反侧及相应Books判断；非作者分批actual范围和原文未披露字段保存于[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md)，不把摘要或prepared称为Source完成。15实际整合均有正文、完整邻接与本人末注的非writer POST/root接纳，全部窄锁已释放；其余具体已有覆盖/Only与15局部暂缓也已实际独核。未核代码、未复现实验、未授生产/安全保证；各性能数字仅绑定原文披露的人口/模型/配置，缺少的完整费用、硬件或precision记录为Not Disclosed，理论项不套不适用的GPU模板。
+
+### [One-Shot Cross-Geometry Skill Transfer through Part Decomposition](https://arxiv.org/html/2604.15455v1)
+
+采用exact-v1，III–IV/TablesI–II：part CPD/PCA与关系描述保留，人工分割/跨类对应、稀疏薄柄和小规模枚举限制；非自动语义或安全保证。 Books：整合：`MULTIMODAL-EMBODIED-VLA` [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；部件形状与关系约束改变单示范跨几何迁移，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A4/R2/A6/R3；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Evaluating LLM Simulators as Differentially Private Data Generators](https://arxiv.org/html/2604.15461v1)
+
+采用exact-v1，§2–5/Table1：源Kaggle本身合成，user/transaction保护单位与训练量不等，不能把效用差唯一归LM prior；DP后处理亦有前提。 Books：整合：`TRAIN-DATA` [Ch27](../../../../books/part-04-training-system/27-data.md)；DP统计保真与LLM persona模拟效用分离，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A4/R2/A6/R3；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [ProtoTTA: Prototype-Guided Test-Time Adaptation](https://arxiv.org/html/2604.15494v1)
+
+采用exact-v1，§2–3/AppC/F/H：过滤和轻量更新有反侧，主实验跨corruption reset；仅一Gaussian连续序列，VLM代理不授人类解释真值。 Books：整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；原型激活entropy与可靠样本过滤替代输出entropy TTA，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A4/R2/A6/R3；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Brain Score Tracks Shared Properties of Languages: Evidence from Many Natural Languages and Structured Sequences](https://arxiv.org/html/2604.15503v1)
+
+采用exact-v1，§3–4/Tables2–3：embedding适配、最佳层及Exp2/3改变排序；p>.05非等价，高分不证明人脑机制；现Ch66构念/协议身份具体覆盖。 Books：已有覆盖：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；构念/评价协议与机制解释分开。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A4/R2/A6/R3；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Learning Affine-Equivariant Proximal Operators](https://arxiv.org/html/2604.15556v1)
+
+采用exact-v1，§2–3/Lemmas1–2：Ψ凸齐次不保Ψ²凸；零均值三维合法反例已独核，conditional convex-h lemma与有限经验保留。 Books：暂缓：practical平方凸性→exactprox，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R2/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [ShapeGen: Robotic Data Generation for Category-Level Manipulation](https://arxiv.org/html/2604.15569v1)
+
+采用exact-v1，III–IV/TableV：模板warp与后续刚体任务对齐分开，hang 0/20或4/20对full9/20；人工关键点/扫描/标定与静态刚性物体限定。 Books：整合：`MULTIMODAL-EMBODIED-VLA` [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；function-alignment与动作校正共同承载形状扩增，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A4/R2/A6/R3；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Learning Behaviorally Grounded Item Embeddings via Personalized Temporal Contexts](https://arxiv.org/html/2604.15581v1)
+
+采用exact-v1，§3–5：IQR分段机制与有限排序保留；标准化z可负/奇点，w=2反例使local有界单调kernel不能采用，非全部推荐实验无效。 Books：暂缓：localdecay有界/单调kernel，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [Sample Is Feature: Beyond Item-Level, Toward Sample-Level Tokens for Unified Large Recommender Models](https://arxiv.org/html/2604.15650v1)
+
+采用exact-v1，§4–5/Tables2–6：slot RVQ/history row-column分工不等item pooling；item-only还关TokenMixer，237倍为索引算术非无损/全费。 Books：整合：`MODEL-EMBEDDING` [Ch12](../../../../books/part-02-model/12-embedding.md)；历史事件snapshot与当前query表示分工，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A8/R4/A13/R5/R6；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Towards Realistic Open-Vocabulary Remote Sensing Segmentation: Benchmark and Baseline](https://arxiv.org/html/2604.15652v1)
+
+采用exact-v1，III/V/VI：视觉µ/σ扰动与文本残差目标可采；text-only反退、10run与单值不混，eval禁噪/折叠未披露，不能写仅训练使用。 Books：整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；冻结双encoder条件化扰动扩展dense匹配支持，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A8/R4/A13/R5/R6；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [HyCal: A Training-Free Prototype Calibration Method for Cross-Discipline Few-Shot Class-Incremental Learning](https://arxiv.org/html/2604.15678v1)
+
+采用exact-v1，§3–5/App7/12：Eq11正距离与Eq13正加argmax未统一；有限经验仍成立，部分slice/存储反侧保留，不自改负号成已核recipe。 Books：暂缓：distance→score/argmax精确recipe，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [The Price of Paranoia: Robust Risk-Sensitive Cooperation in Non-Stationary Multi-Agent Reinforcement Learning](https://arxiv.org/html/2604.15695v1)
+
+采用exact-v1，§3–7/Eqs9–14：合法mean-baseline/logit特例正τ只改幅度不移零点，表数/风险命名冲突；有限单游戏作者观察不补证明。 Books：暂缓：协调阈值移动/风险推导，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [P3T: Prototypical Point-level Prompt Tuning with Enhanced Generalization for 3D Vision-Language Models](https://arxiv.org/html/2604.15703v1)
+
+采用exact-v1，III–IV/TablesI–VI：低贡献patch经EdgeConv坐标变形后追加原patch；source/target取舍和fewshot不稳，不保证几何保持或全3D泛化。 Books：整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；坐标prompt追加与语义一致目标的受限适配，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/R8/A15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [RefereeBench: Are Video MLLMs Ready to be Multi-Sport Referees](https://arxiv.org/html/2604.15736v1)
+
+采用exact-v1，§3–5/Tables3–6：QA仲裁/MCQ/单模型textblind筛与视频音频路径分别声明；现Ch66成功轴/SAFER与时间/关系反证具体覆盖，非体育部署证书。 Books：已有覆盖：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；success轴、规则时序与negative人口分验。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A17/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Collective Kernel EFT for Pre-activation ResNets](https://arxiv.org/html/2604.15742v1)
+
+采用exact-v1，§2–3/5–6：exactGaussian increment不等G闭合，U1与V4反例明确；有限宽度/无训练模型不据类比写成Transformer设计规则。 Books：仅报告：随机初始化高斯网络的闭合反例值得记录，但尚无与实际Transformer同对象的可移植设计条件，不将其当一般训练规则。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Multi-objective Reinforcement Learning With Augmented States Requires Rewards After Deployment](https://arxiv.org/html/2604.15757v1)
+
+采用exact-v1，§1–4/Fig2：非线性utility的已实现随机reward不能由完美条件均值替代；SER/确定性/终端reward例外保留，非所有RL都需同接口。 Books：整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；ESR policy冻结不删除部署累计reward输入，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A15/R8；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Zero-Shot Scalable Resilience in UAV Swarms: A Decentralized Imitation Learning Framework with Physics-Informed Graph Interactions](https://arxiv.org/html/2604.15762v1)
+
+采用exact-v1，III–V/Props1–3：共享virtualcenter列度随N，谱范数至少√N；有限单agent输入与2D模拟保留，安全间隔是假设非已达保证。 Books：暂缓：共享中心全局N独立放大界，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [Closing the Theory-Practice Gap in Spiking Transformers via Effective Dimension](https://arxiv.org/html/2604.15769v1)
+
+采用exact-v1，III–X/Th13：d47/ε.05公式给43240非4–8；Ω下界不授足够T/分类精度，保有限GPU训练观察与模型化能耗。 Books：暂缓：足够时步/分类精度桥，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [PLAF: Pixel-wise Language-Aligned Feature Extraction for Efficient 3D Scene Understanding](https://arxiv.org/html/2604.15770v1)
+
+采用exact-v1，III–IV：0.11%/0.14%只是指定布局算术，region均值有损/依赖mask，完整query吞吐未测；Ch23 OpenVoxel共享字典/原始视图回退具体覆盖。 Books：已有覆盖：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；共享feature/索引与mask及原视图回退。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A11/A15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [PIIBench: A Unified Multi-Source Benchmark Corpus for Personally Identifiable Information Detection](https://arxiv.org/pdf/2604.15776v1)
+
+采用exact-v1，PDF pp4–12：1398records/3383mentions与48类映射有混杂、rare→O；源内split非leave-source-out，F1低不唯一证域失配，不把坏taxonomy归一变新平台规范。 Books：仅报告：当前标签支持与taxonomy映射混杂，有限benchmark结果不足改写PII的shared-support验收或背书该归一方案。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R6/A15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [CroSatFL: Energy-Efficient Federated Learning with Cross-Aggregation for Satellite Edge Computing](https://arxiv.org/html/2604.15779v1)
+
+采用exact-v1，III–V/Eq37–38：三master链从1/3到5/18反证rowmix普遍无偏；StarMask/skip-one有限模拟提案保留，非在轨/零通信时延。 Books：暂缓：全局samplemean保持，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [EVIL: Evolving Interpretable Algorithms for Zero-Shot Inference on Event Sequences and Time Series with LLMs](https://arxiv.org/html/2604.15787v1)
+
+采用exact-v1，§3–8/AppC：每task一NumPy程序，ordinary targettrain与严格syntheticprior分开；三task实例未给新controller/stop规则，不能从异硬件局部速度泛化总成本。 Books：仅报告：每task搜索出可复用NumPy推断函数是具体替代实例，尚未改变现程序搜索controller、停止条件与独立评价职责。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R6/A17/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Scattered Hypothesis Generation for Open-Ended Event Forecasting](https://arxiv.org/html/2604.15788v1)
+
+采用exact-v1，§3–5/AppA：groundtruth embedding相似不是未来可行性或概率校准，部分Pass反退；Ch33质量sensor/多样性目标与判据身份具体覆盖。 Books：已有覆盖：`TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md)；validity sensor与多样性objective分责。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R6/A15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Watching Movies Like a Human: Egocentric Emotion Understanding for Embodied Companions](https://arxiv.org/html/2604.15823v1)
+
+采用exact-v1，§3/5/AppD2：viewer-affect加权标签非校准概率，FPV同test有限域适配；test选择独立性未清；Ch23 Fisheye/mixedrig输入/监督坐标和旧新consumer具体覆盖。 Books：已有覆盖：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；camera/input-label与旧新consumer身份。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A14/R7/A19/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Reversible Residual Normalization Alleviates Spatio-Temporal Distribution Shift](https://arxiv.org/html/2604.15838v1)
+
+采用exact-v1，§4–6/Alg1：所印x←x−G(x)在G=.5x收敛0非2z/3；γ/graphnorm未闭，有限预测/误差经验不升exact无损保证。 Books：暂缓：严格inverse/无损recipe，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [Robust Multispectral Semantic Segmentation under Missing or Full Modalities via Structured Latent Projection](https://arxiv.org/html/2604.15856v1)
+
+采用exact-v1，III-F/G/IV：private源自cross-modal相关增强非纯净分解；full/missing与per-mask训练都有反退，线性BCE probe不等真实MI保持。 Books：整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；availability-gated共享/相关private路由到decoder，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A14/R7/A19/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [DiZiNER: Disagreement-guided Instruction Refinement via Pilot Annotation Simulation for Zero-shot Named Entity Recognition](https://arxiv.org/html/2604.15866v1)
+
+采用exact-v1，§3–4/AppA：top3为model-iteration测试成绩平均非部署ensemble，agreement相关非因果；已有规则提案/独立回归职责不由固定NER实例改变。 Books：仅报告：固定NER schema的分歧改写仍缺独立标签锚定/匹配搜索预算，未改变现规则提案与独立回归的具体取舍。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A16/R8/A19/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Polarization by Default: Auditing Recommendation Bias in LLM-Based Content Curation](https://arxiv.org/html/2604.15937v1)
+
+采用exact-v1，§3–5/AppA/C：540k是候选presentations/54k selected，informative与engaging方向反；属性/scorer与重复pool限制，有限审计不新增通用策展修复规则。 Books：仅报告：目标条件下的毒性方向翻转是有限审计，不提供新的策展训练/推荐机制或经本证据支持的修复规则。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R7/A19/R9；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [SENSE: Stereo OpEN Vocabulary SEmantic Segmentation](https://arxiv.org/html/2604.15946v1)
+
+采用exact-v1，§3–8/App10：SIEF/外部disparity调制是有限融合实例；concat/层数反侧、matcher及fullscene多query成本不应删除，未改变现几何消费/回退取舍。 Books：仅报告：具体stereo融合对照未改变现几何实际消费、原2D回退及完整matcher/多query成本取舍，不重复写同一原则。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R7/A23/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [MATRIX: Multi-Layer Code Watermarking via Dual-Channel Constrained Parity-Check Encoding](https://arxiv.org/html/2604.16001v1)
+
+采用exact-v1，III–V：所示四码字dmin2无法唯一纠一错，边缘MI不等联合泄漏界；仅可嵌集合/OR-AND与重写后TPR反侧保留。 Books：暂缓：ECC唯一纠错/联合安全，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R7/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [A Wasserstein Geometric Framework for Hebbian Plasticity](https://arxiv.org/html/2604.16052v1)
+
+采用exact-v1，§5.7/6.2：MD是由已知nextstep反推的表示性构造非新高效optimizer；F≡0/非恒ψ合法反例隔Cor6.13强必要性，有限框架保留。 Books：暂缓：强必要快慢时标推论，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A16/R8/A19/R9/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [DINOv3 Beats Specialized Detectors: A Simple Foundation Model Baseline for Image Forensics](https://arxiv.org/html/2604.16083v1)
+
+采用exact-v1，§3–5：同LR不等各自最优，全test选checkpoint/onlytampered不授独立泛化或clean FPR；Ch30冻结/rank归因与容量/人口预算具体覆盖。 Books：已有覆盖：`TRAIN-LORA` [Ch30](../../../../books/part-04-training-system/30-lora.md)；冻结/rank归因及容量/评价人口预算。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A18/R9/A22/R13；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Stylistic-STORM (ST-STORM) : Perceiving the Semantic Nature of Appearance](https://arxiv.org/html/2604.16086v1)
+
+采用exact-v1，IV–VII：随机伪域、maskedteacher/var-cov与重建不形式解耦，融合切片反退/162M联合训练费保留；不同信息保留目标是窄差额。 Books：整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；content对比不变性与style预测目标分工，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A18/R9/A22/R13；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Co-Design of CNN Accelerators for TinyML using Approximate Matrix Decomposition](https://arxiv.org/html/2604.16113v1)
+
+采用exact-v1，III–V：标签子集搜索/RTL综合非无数据或实板，ResNet energy427.66>8bit314.98µJ；factor/index/scale与全IO/BRAM成本不能由少乘法抹去。 Books：整合：`INFER-TENSORRT-LLM` [Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)；稀疏Po2多factor与硬件时间复用共设计，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R8/A23/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Beyond One-Size-Fits-All: Adaptive Test-Time Augmentation for Sequential Recommendation](https://arxiv.org/html/2604.16121v1)
+
+采用exact-v1，§3–6：PPO用targetitem非无标签online学习，5run无CI/部分混合反退，推理可比TNoise慢2.7–3.3倍；有限selector实例不改既有提案/实际质量职责。 Books：仅报告：八operator选择是有限新实例，未改变现有限arm/可信反馈与真实任务-总费用分验的职责，不冒充无标签online适配。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A23/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [AIFIND: Artifact-Aware Interpreting Fine-Grained Alignment for Incremental Face Forgery Detection](https://arxiv.org/html/2604.16207v1)
+
+采用exact-v1，§3–4：t=cos范围/θ极值未闭，SLERP保norm可换类别、旧feature可漂移；保有限作者经验与实际遗忘，不自补ADH几何保证。 Books：暂缓：head/feature严格旧决策保持，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R8/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [OT on the Map: Quantifying Domain Shifts in Geographic Space](https://arxiv.org/html/2604.16220v1)
+
+采用exact-v1，§3–6/AppA–C：坐标encoder含视觉预训练，Δ仍需目标labels/model，pair归一/弱R²和pool反退保留；不把有限排序当独立transfer校准。 Books：仅报告：location+OT排序仍未闭独立proxy校准，有限排序未改变数据提案与实际transfer验收分工，不把相关升为验收。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R8/A23/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Optimizing Korean-Centric LLMs via Token Pruning](https://arxiv.org/html/2604.16235v1)
+
+采用exact-v1，§3–5：物理重排区别logitmask，positional/special/fallback未闭；部分语言质量退步、词表63.9%与局部.89%测时分开；Ch11具体joint迁移/质量成本覆盖。 Books：已有覆盖：`MODEL-TOKENIZER` [Ch11](../../../../books/part-02-model/11-tokenizer.md)；联合tokenizer-ID-checkpoint与输出支持。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A20/R11/A22/R13；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Detecting and Suppressing Reward Hacking with Gradient Fingerprints](https://arxiv.org/html/2604.16242v1)
+
+采用exact-v1，§3–5/AppA–B：两簇/LM语义标记、transductive与专家/反事实不一致保留；距离不校准hack概率，过滤RFT仍低clean，不授内部intent或全loop安全。 Books：整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；response-NLL梯度fingerprint是独立监测入口，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A20/R11/A22/R13；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Find, Fix, Reason: Context Repair for Video Reasoning](https://arxiv.org/html/2604.16243v1)
+
+采用exact-v1，§3–4/D2/E1：保patch条件ratio非原prompt无偏，200例零泄漏非形式保证；same32B50.7→54有均益但VSI/LV反退；Ch33保条件revision人口/费用已具体承载。 Books：已有覆盖：`TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md)；保条件ratio、反馈人口与全部rollout费用。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A21/R13/A25/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Joint-Centric Dual Contrastive Alignment with Structure-Preserving and Information-Balanced Regularization](https://arxiv.org/html/2604.16247v1)
+
+采用exact-v1，§2–5：CKA可含shortcut、两个InfoNCE bound差不等真MI平衡，Eq1/4精确语义未齐；有限对齐提案/正反结果保留。 Books：暂缓：真实MI/essentialinfo保证，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R10/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [ArtifactNet: Detecting AI-Generated Music via Forensic Residual Physics](https://arxiv.org/pdf/2604.16254v1)
+
+采用exact-v1，PDF §3–5/Tables1–9：Phase2 CNN冻结、UNet BCE steer；所引StableAudioOpen是连续VAE，普遍RVQ反例成立。codec经验/实际FPR保留，不升未来不可擦保证。 Books：暂缓：普遍RVQ/不可擦signature，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) A21/R13/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [Do Vision-Language Models Truly Perform Vision Reasoning? A Rigorous Study of the Modality Gap](https://arxiv.org/html/2604.16256v1)
+
+采用exact-v1，§3–5：250core×4style非1000独立题，OCR作者校验/错误teacher路径和decoding差别不唯一识别视觉reason；有限加图反退/有标签修复结果不授新通用训练规则。 Books：仅报告：配对题库与加图反退保留，但OCR/读入、reasoning与训练人口未被分离，不能据此改写视觉推理解释或训练修复选择。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A25；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Beyond Distribution Sharpening: The Importance of Task Rewards](https://arxiv.org/html/2604.16259v1)
+
+采用exact-v1，§2–4/Table2/AppA：整序列π₀^α非逐token温度，EOS训练/评价支持需分；固定长度锐化仍竞争，likelihood↑可伴taskaccuracy崩，不授所有RL必要。 Books：整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)；相同RL更新分离taskreward与sequence锐化目标，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A25；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Information Router for Mitigating Modality Dominance in Vision-Language Models](https://arxiv.org/html/2604.16264v1)
+
+采用exact-v1，§3–4：Sd为uncentered列L2能量，跨长度Eq3对齐未披露；表中Acc/rank/dominance直接反退，有限混合提案保留，不自修通用recipe。 Books：暂缓：跨长度mix/信息补足保证，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [VEFX-Bench: A Holistic Benchmark for Generic Video Editing and Visual Effects](https://arxiv.org/html/2604.16272v1)
+
+采用exact-v1，§3–5/必要附层：保IF/RQ/EE分验；条件qk直接求和对均匀等级给2.9167非2.5，GTtie/eval拟合非部署校准，精确期望score保证隔离。 Books：暂缓：ordinal期望score/校准，有限有效层保留，不正面Books。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A24；精确未决与重开条件见A24/§5，未以降分或EX代替反证。
+
+### [No Universal Courtesy: A Cross-Linguistic, Multi-Model Study of Politeness Effects on LLMs Using the PLUM Corpus](https://arxiv.org/html/2604.16275v1)
+
+采用exact-v1，III–IX/AppD：CQS八proxy非事实效用，多个方向反退/interaction不显著；不签固定礼貌诀窍，也不把history当权重学习，不改真实任务/反馈分验职责。 Books：仅报告：具体语言/tone/history排序和CQS构念限制未改变现按真实任务/固定反馈检验改写的规则，不添礼貌口诀。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A25；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Learning to Reason with Insight for Informal Theorem Proving](https://arxiv.org/html/2604.16278v1)
+
+采用exact-v1，v1 §4–7/AppC–E无RL/InsightPO；3/6/9ep及4096/8192预算不等，部分三stage低two；有限typed监督实例不改已有关键步/轨迹/原回退判断。 Books：仅报告：层级监督实例保留，未匹配stage/token预算的有限结果不改变现关键步骤、typed轨迹监督与原轨迹回退的取舍。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A25；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Geometric regularization of autoencoders via observed stochastic dynamics](https://arxiv.org/html/2604.16282v1)
+
+采用exact-v1，§2–6/Alg1：三stage chart/drift/diffusion，oracle b/Λ、单chart/导数条件保留；T/F不消cycle-Hessian，重建好不直接控随机过程，非实际控制安全。 Books：整合：`MULTIMODAL-WORLD-MODELS` [Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)；latent chart的切向噪声与Itô漂移责任分离，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R12/A25/R15；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [ASMR-Bench: Auditing for Sabotage in ML Research](https://arxiv.org/html/2604.16286v1)
+
+采用exact-v1，§2–5/必要附层：9codebase/11sabotage，fix为文字建议rubric非patch已执行；不等预算/人机差异ns，未给新修复controller/testedensemble，不加同义原则。 Books：仅报告：有限审计难度与monitor反侧可报，proposed-fix并非已执行patch，未提出新可验证修复controller或实测ensemble。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R14/A26；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [NaijaS2ST: A Multi-Accent Benchmark for Speech-to-Speech Translation in Low-Resource Nigerian Languages](https://arxiv.org/html/2604.16287v1)
+
+采用exact-v1，§3–7/AppC：pipeline多切片更高，Gemini亦text+TTS；ASR换模型同输出分数可变，版本/预算不等，有限语言排序不新增生成接口或部署最佳路径。 Books：仅报告：语言切片排序与ASR读出偏差可报，但没有新生成/表示路径或改变现双终端质量、原声和scorer人口职责。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R14/A26；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Phase transitions in Doi-Onsager, Noisy Transformer, and other multimodal models](https://arxiv.org/html/2604.16288v1)
+
+采用exact-v1，§1–3/Th1.1/1.9：条件Fourier/β分界有效，驻点唯一仅K≤.5；globalminimum非任意flow收敛，不套learnedQKV/noise训练温度配方。 Books：仅报告：新数学阈值结果有效，但circle meanfield相互作用不是learnedQKV logit对象，不由同名温度/phase映射改写训练recipe。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R14/A26；不把本项结果扩大成未验证的跨模型/生产保证。
+
+### [Repurposing 3D Generative Model for Autoregressive Layout Generation](https://arxiv.org/html/2604.16299v1)
+
+采用exact-v1，§3–4/6/8：object-aware stepteacher读同student context，textonly终局teacher另负整体；detach不授长梯度，semantic反退/64³/ICP与双teacher全费保留。 Books：整合：`MULTIMODAL-GENERATIVE-PARADIGMS` [Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)；自产累积state下step/terminal teacher可见性分工，实际POST通过。必要证据位置、实际独核与采用边界见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md) R14/A26；不把本项结果扩大成未验证的跨模型/生产保证。
+
+<!-- supplement-apr20-evidence:end -->
+
 ## 5. 缺口与下一步
 
-**可执行普通工作：** 无。有限题摘、必要证据、Books及非作者日级验收均已收口；146=33整合+14已有覆盖+81仅报告+18窄争议，普通Books0。33项均有真实正文与具名写后记录。阶段数字与运行中断记录保存在[对账前日志](../_sources/daily-20260421/V3_SECTION5_STAGE_LOG_BEFORE_RECONCILIATION.md)，不是当前状态。
+**本次补充可执行普通工作：** 无。52确定家族的准入/日期/必要Source/具体Books处置已由非作者分批实际完成，15真实整合均实际POST/root接纳且窄锁释放，研究、Books写入、单篇复核与六节DAY普通待办0；有效层见[唯一SUP](../_sources/daily-20260421/SUP_SOURCES_20261015.md)，不重复原146或未变附件。root实际日级验收已通过；下列仅本窗安全终态保留项，缺失层不支持正面证据/Books/无遗漏，以后定点重开。
+
+**本次补充日级资格保留：** 15372（本身份v1 processing June12/OAI缺Apr20）与15632（processing/OAI Apr21）虽DOI created Apr20，组合弱于52确定项，未列确定本窗候选/评分/NC统计或写Books；两项已读必要Source仍有效。恢复只需各本身份Apr20官方公告/原始公开记录，不追秒或重扫历史。15589新增[官方Mar24同题同作者场次](https://easychair.org/smart-program/ICCCBE2026/2026-03-24.html)早事件信号，但未恢复完整正文首公开关系，必要日资格隔离；需本身份proceedings/原稿公开记录或官方明确March仅摘要、body Apr20，保已读Source不先评分/NC/Books。15748当前家族withdrawn，本轮不selected/不评分/不Books，保v1可读与后版撤回原语；原146/现Books无其正面依赖。16087/16239 PMLR及15704出版方注册May2025为早同事件，不回填本窗。Seed Agent-World18292仍按下文具名项隔离。
+
+**本次补充十五受影响保证保留：** 15556 practical平方凸性、15581 localdecay支持/奇点、15678 distance→score、15695协调阈值、15762共享中心全局放大界、15769足够时步/精度桥、15779全局samplemean、15838严格inverse、16001 ECC/joint安全、16052强必要推论、16207 head/feature旧决策、16247真实MI/精确算式、16254 universalRVQ/不可擦signature、16264跨长度mix/语义信息及16272 ordinal期望score。原5及有限有效层不变，受影响纠错深入均已actual独核，只隔这些命题，不否整个family。共同当前处置是不正面Books、不支撑性能/安全/无遗漏，具体反例、必要缺少什么与每项可接受的勘误/说明和定点重开条件见[SUP A24](../_sources/daily-20260421/SUP_SOURCES_20261015.md#a24-十五项受影响中心命题的books暂缓提案)。修订到达仅重开该保证，不靠扩大代码/证明替作者补缺。
+
+**原146有效层的普通工作：** 无。146=33整合+14已有覆盖+81仅报告+18窄争议，原层普通Books0，不代表本次补充已完成。33项均有真实正文与具名写后记录。阶段数字与运行中断记录保存在[对账前日志](../_sources/daily-20260421/V3_SECTION5_STAGE_LOG_BEFORE_RECONCILIATION.md)，不是本次补充完成状态。
 
 本轮23項实际采用覆盖Ch11/21/23/24/26/29/33/36/45/49/66/70/72/76/81，具体机制、条件和反例见§4与[root写后复核](../_sources/daily-20260421/V3_ROOT_ACTUAL_WRITE_AFTER.md)。EvoComp仅细化selector构造/训练/部署；BranchBench仅细化creation与active execution capacity，不重复计原有机制。评分未抬升，未扩大270题摘/175必要范围或重读未变化附件。
 
@@ -859,6 +1147,21 @@ III/IV-B TablesI–III实际核：pilot选三模型扫108配置，best-grid与�
 146分母已冻结并通过最终非作者日级验收，普通Books0；本节外部限制与争议是终态保留项，不支持正面证据、Books或无遗漏断言，定点重开条件见各项。历史协调运行中断已恢复，不是primary材料缺失，不改变日期、范围和完成条件。
 
 ## 6. 复核
+
+**本次自然日补充实际DAY：**
+
+复核者：root（非报告作者）
+结论：通过
+
+root实际读取新§1/2全部14源及限制、§3说明/52新行与原146冻结、完整52新§4逐段、§5/6；旧146有效证据/POST按未变层复用。15真实整合/8具体NC/14Only/15局部中心暂缓与实际Source、POST相符，无研究/Books普通待办。14处Only自指已仅改为本身份具体理由，root逐句实际读回通过；不重Source、不改评分。supp_apr21_review_fresh与supp_apr18_evidence分批实际层有效复用，最后PRE中的FFR均值、ArtifactNet Phase2与AE三stage误读均已原位纠正。
+
+root本次另独立分层实际读取六份完整AB：15388训练数据/testbench、15472通用压缩、15642 RTL搜索、15841评估任务、16043通用编程、16263多机器人接口，维持具名pre-denominator关闭；安全、撤回、早发、修订信号项由既有非作者层逐项处理。六样本不冒充全90条关闭、207宽标题或全网审计。保存完成态后的实际FINAL字段/冻结/V3读回另按真实结果记入唯一SUP，不预支未发生的验收。
+
+新补充的准入校准/排除分层范围：supp_apr18_evidence实际首9与next45精确v1题摘/必要版本差额，代表负项实际完整AB共20个——A2的15329/15388/15472/15533/15594，以及A3的15607/15633/15642/15654/15687/15739/15837/15857/15916/15950/15961/16043/16170/16263/16298。其他明确EX只理由层核，不冒充全部36份AB独核。15371/15593两个准入决定门、15959/15998两个含糊贡献门有实际最小core，具体关闭不因小模型、理论、旧模块或应用领域硬排。root实际A7十份完整AB及其有限决定门，fresh实际A9十二完整AB（含八具名EX）与2504.04843同事件消歧；16111/15704只补早正式同事件身份即停。15748当前家族撤回、15372/15632/15589必要公开日与15争议均按风险信号全覆盖至具体安全终态，不把其余宽标题浏览冒充逐篇题摘或全部附件审计。
+
+当前机器检查：V3接口一致性通过；198表行中前146整行及原日期评分逐字相同，66839字符连续原§4与原小时窗逐字保持；所有本地相对引用存在。当前保存README/SUP及八Books文件的限定unstaged diffcheck通过。并发index保留MM/AM：限定cached检查仅报SUP旧暂存快照第512行EOF空白格式警告，当前SUP已续至R16且保存文件检查通过；本方未stage或改index，不冒称该旧snapshot cached零警告。机器不代语义验收，未变化的旧证据与真实POST无需再重读同附件。
+
+**以下为原146有效层复核（冻结复用，不是补充DAY）：**
 
 复核者：root（非报告作者）
 结论：通过

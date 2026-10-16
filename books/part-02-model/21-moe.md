@@ -62,6 +62,8 @@ y = sum_(e in S(x)) g_e(x) * Expert_e(x)
 
 `g_e(x)` 是选中 expert 的路由权重，可能在 top-k 集合内重新归一化。不同架构可使用 top-1、top-2 或其他 routing，稳定问题都是“谁被选中、权重多少、负载怎样”。
 
+固定 linear router 还允许一项更窄的输入诊断：把当前 hidden state 分成 router 权重列空间中的分量和其正交补，后一分量乘当前 router 矩阵为零，因此只沿该补空间改变输入，不改变这一层、这一接口的 raw logits。这个代数不认证“content”与“control”的唯一语义分区：两部分可统计相关，expert 输出仍读完整输入，后续层的 hidden state 与 router 又会改变。[有限路由表示分析](https://arxiv.org/html/2604.17837v1)中的线性 probe、路径聚类和自动语义解释应保留其 layer/token/Top-1 人口，不把可预测或少数高幅值坐标称作已干预证明的因果充分性，更不能由几何正交推出行为互不干扰。SVD、activation采集、probe和跨层回归付费；需要改变模型或执行选择时，仍回到原 Top-k/输出和独立任务、负载验收，而非用一层 nullspace 批准全路径语义。<!-- source-family:SF-2026-ARXIV-2604-17837 -->
+
 产生 expert logits 也不一定需要新增 `W_r`：当 expert 数为 E 时，可以将当前 hidden state 最后 E 个坐标直接作为路由分数，继续执行原 Top-k 和权重聚合。省掉的是独立 projection 的参数，backbone 仍端到端更新这些坐标，因此无参数 router 不等于 routing 没有学习；content representation 同时承担选择信号，也使两种用途更紧地耦合。<!-- source-family:SF-2026-ARXIV-2604-00421 -->
 
 这条有限替代在小型 GPT-2、8 experts/Top-2 和无 auxiliary loss 的训练对照中可以工作，但固定随机 projection 也有竞争力，WikiText perplexity 27.4 仍高于 learned router 的26.7。省下的约0.07M参数只占约520.81M模型很小一部分；较高的跨token路由entropy不是每batch负载、capacity admission 或通信均衡的保证，早期仍可能集中于少数 experts。训练预算、选择统计和完整 dispatch 成本需分别验收；hidden 坐标耦合、负载或质量回归时，保留独立 linear router、均衡约束与原容量限制，不由移除一层参数签发部署收益。<!-- source-family:SF-2026-ARXIV-2604-00421 -->
@@ -715,6 +717,8 @@ selector evidence 不足时，完整 standard MoE 仍是更稳妥的旧方案。
 checkpoint、corpus、task 与 validation contract 下支持“小 expert subset 可以保留更多任务表现”，不证明
 experts 已成为 faithful capability modules，也不证明 latency 会随参数子集同比下降。
 
+模态相关的路由也可以面向设备组形成，而不先把 token 硬分成真 text 或真 image。一条受限多模态分支用 attention 与 residual norm 传播模态比例代理，或以 Gaussian EMA 估计代理，再按 expert 的近期 text 偏好排序分组，以跨组 mutual information 与组内负载约束共同训练。[必要软/硬代理及分组对照](https://arxiv.org/html/2604.23996v1)中，更高的硬模态 specialization 指标仍可伴质量下降，不能把代理分离当语义真值；分组后的部署去重也不改变 expert 的数学贡献。统计、排序、训练与设备通信都付费，作者同步 baseline 对异步新路径的时延差同时包含 placement、去重和 overlap，不可全归 MI。模态代理、设备映射或质量失配时，保留原 router、固定 placement 与普通 balance，分别验质量和真实执行负载，不由 specialization 自签吞吐或无损。<!-- source-family:SF-2026-ARXIV-2604-23996 -->
+
 ### Routing Overlap 也限定 Post-training 的参数更新域
 
 可部署子集与可安全更新子集不是同一个问题。即使没有改变原 objective，也可以先按目标语言、层级和任务记录 expert 的经验激活频次，再依据语言specificity ratio、共享频次的变异系数与绝对频次选择更新域：浅深层较独有的 routes 与中层共享 routes，应承担不同的更新预算，再冻结未选 experts 与 router。此时 selector 只提出待更新域；“偏向某语言”并不赋予 expert 独占该语言能力的语义身份。<!-- source-family:SF-2026-ARXIV-2604-03592 -->
@@ -956,6 +960,8 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-23996` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23996v1)§3.2–3.5/4.1/4.3/4.5/T2–6必要层，2+2+2=6，具体owner接口深入。softmodality代理→devicebins/MI与withinbin balance，不授modality真值或把异步时延全归MI；root必要Source/actual owner/逐字PRE通过；root非writer实际新增正文、完整前后邻接与本人注POST通过，指定窄lease释放，作者仅同步已发生行政状态。全费/反退/退路近文，未核实现/复现，不授DAY。
+
 - `SF-2026-ARXIV-2604-04356` — Daily2026-04-08补Apr07；[REAM exact-v1](https://arxiv.org/html/2604.04356v1) §4–5，2+2+2=6，permutation-aligned artifact合并与逐层校准差额深入。非runtime裁route/无损/稀有任务importance；singleton、calibration人口/MC生成前沿、匹配重校准和回归费用保留。supp_apr08_reader必要Source/日门与真实正文、完整局部POST通过；本注待其实际读回，未核实现/复现。
 
 - `SF-2026-ARXIV-2602-21626`：[v1 Algorithm 3 / §IV–V](https://arxiv.org/html/2602.21626v1)。fixed-anchor affinity pool + remaining greedy load，不采 MILP 全局最优；vLLM 0.9.1/0.9.2 差异、主性能 prefix cache disabled 与独立 ShareGPT hit 人口保留。非原 packet 作者必要原证/owner PRE 后窄写；root已实际顺读正文、完整邻接与自身末注，POST通过，未复现。
@@ -1081,3 +1087,5 @@ Primary-source 校验入口：
 
 - `SF-2026-ARXIV-2610-13370` — Daily2026-10-13，窗10-12；[exact-v1](https://arxiv.org/html/2610.13370v1)必要位置、采用边界与actual-owner差额见[本日模型证据](../../papers/2026/10/_sources/daily-20261013/model-evidence.md)。today_models必要Source与逐字PRE经root独立定点通过后授本局部/本人末注窄锁，today_models已最小写入；root已实际顺读新增正文、完整邻接、diff及本人末注，nonwriter POST通过，窄锁释放，不授DAY。保正文category preferred share非配额、强bias拔除失配与推理负载代价，必要位置与采用命题仅按本日对应family记录，未核代码、复现或生产SLO。
 - `SF-2026-ARXIV-2604-08541` — [exact-v1](https://arxiv.org/html/2604.08541v1) §3–5/Limit；domain-reference expert-frequency提案与small softbias，保hard/mismatch/Top1反退、layer强度搜索和费用；JSD非因果，不授固定语义expert/感知纠错，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-17837` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17837v1) §2–5与A/B/C/Dsetup/E/F/H必要，2+1+2=5。只采用当前linearrouter input正交补对rawlogits的代数性质；Top-1 probe/路径聚类非因果充分或全路径语义唯一，shape/precision/population与SVD/probe费用近文。fresh实际必要Source与root actual owner/A50单段逐字PRE通过，作者按窄lease保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，未核代码/复现或DAY。

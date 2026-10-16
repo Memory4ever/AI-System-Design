@@ -49,3 +49,63 @@ root实际读回Ch63末区SF-2025-GOOGLE-LAVA-OCT17本人完整note，已准确�
 本日§1–5有效，LAVA正文POST4及本人注同步5已闭合。十三机构SOURCES§2–4其余有限层尚待独核；root先前实际读Qwen40/60、DeepSeek完整newsJS和More，确认LPLB原2025-11不可由renderer补Nov1，此发现已交Nov18并保存，不冒全部Source通过。arXiv五主题编排在网络调用前缺URLSearchParams，五请求未发出；不记失败/扫描完成。新发现/current/必要日期、最终Source表及README六节仍未完成，恢复从作者顶部精确停点继续，不第三写LAVA或重已核域。
 
 Dec17 Alignment的必要Source与reader逐字PRE§5有效，root虽已实际读必要原域及现Books邻接，仍未授任何写锁或批准，作者未写Ch31，不把准备读回当POST。仅保存上述路由和State暂停，不stage、commit、push、改模型或日常自动化。等待用户明确恢复。
+
+## 7. 2026-10-15恢复：其余机构有限字段独核
+
+用户明确恢复，root实际重读AGENTS/当前Research与Report合同、Sources使用说明/Daily/arxiv/按需恢复、Prompt、全ROADMAP/State、本日完整README及SOURCES§1–4。旧§1–5真实有效层按身份/命题复用，不第三次LAVA Source/PRE/正文审批；新writer Godel只接未做arxiv差额/current/date及six，root独核机构包，避免重复。
+
+Google实际重新打开官方October Blog190–207，12日期/标题、1of2，目标Oct17只有LAVA可见；DeepMind Publications两原URL实际各30、265精选、P1止Nov4/P2起Oct30到Mar28，Oct17无字段只这60目录层。Pubs当前可读壳与未选2025 facet不代过滤结果；SOURCES§2记录的旧UI超时及Mac锁定只当时操作域，不在本次重试或当网站永不可用。Meta原零正文/两窄域空检只是有限缺段，没有原目标历史列表或研究原发布，不授零研究；原query记录未由root再次执行，不倒填独立查询。
+
+root从本日saved raw实际结构化读取Qwen retrieval40全部title/extra.date及HTML published_time、legacy config60全部title/date：17项日期值冲突实际匹配，TTS meta2025Mar24对extra2026Jan22近文保两值；没有按便于落窗者择日。40/60只目录字段、不是100篇正文；config邻Sep24→Nov13，未见Oct17字段不证删除史/全历史。Kimi26个h3/time实际全读，25article加changelog聚合；另changelog h2日期Nov6→Oct27→Sep5等，聚合Nov7不等其中每项变化日。ERNIE十加六完整卡片日期/题名与页2nav实际读，页2只有prev/1of2，目标邻Nov7→Oct16→Sep12，不重新采用前日Paddle事件。DeepSeek本日完整newsJS/g31/More原字段及LPLB仅2025-11角色承此前root实际读域，不第三次解析31；前端补日不具有真实发布日权限。
+
+root实际解析Hunyuan两原JSON：zh11/total11、en9/total9，每项id/title及publicAt/publishedAt/displayPublishTime分别转BJT，全部2026；语言集合、三时间角色不混。旧UI恢复实见tab但超时/锁机不是本次成功AX或2025历史字段；不继承Nov18权限拒绝来改本日旧UI事实。Seed三JSON的全部18/18/15条ArticleMeta ID/PublishDate/IsPinned和正确SubContent.Title实际读；94/45/49 total、next20/has_more=true，非pinned Oct22/23→Sep22/Sep09，首片不是耗尽total/全历史全文；被pin打乱顺序和total实数差保留，不认证全学科召回。
+
+Zai本日首屏15及P2累计18实际visible目录全部日期/题名、末Dec7与“没有更多”读回；另Release八个真实id/date/model层读取，2025Dec22/Sept30之间无Oct17字段只该列表。第一次NextFlight宽抽对象主要取得updatedAt并不是发布字段，未拿它授日期；已用visible目录纠正，不用selector空授零研究。MiniMax EN12/CN13完整卡片title/date实际读取，EN止Oct27/CN另Jan15；Agent真实三个h2/h3日期Oct08/Sep22/Sep19全部2026，不把dateModified当各文首次公开。MiMo实际完整读39632 More函数（本地state/slice/hidden map，没有历史fetch）和caller初显8/15Blog题名，以及八paper slug/date；39632是module ID而非字节数，undated Blog缺段不被Paper日字段关闭。以上仅必要目录/函数，不运行JS/读所有未来正文。
+
+上述SOURCES§2–4准备的有限字段/停止与历史缺段分责可供writer归并；未恢复的Google Pubs过滤/Meta/Hunyuan2025/Zai/MiMo undatedBlog/MiniMax历史按各原入口精确隔离，不据失败或无字段授全Coverage。原请求/时间仅作者执行记录，root没有重跑或倒填本轮独立fetch。十四源最终表、arxiv有界新差额/当前信号/日门、六节DAY/保存完成态FINAL仍未完成；90/132不含Oct18。
+
+## 8. arXiv首六新题摘实际准入校准
+
+root完整读SUP_ARXIV_20261015§1–3，实际从五个NARROW原HTML用lxml逐result读取首六身份的完整title/abstract-full/Submitted/v1submitted/originallyannounced/comments：16295v2、16138v2、15596v3、16292v1、17858v1、15047v2。不是只读作者摘要表或将所有173导航变为逐项Evidence队列。标题substring误取list-title已由正确title域恢复，原most-recent与后original提交字段不能互换；三组有尾页、两组已止尾的数量角色匹配。月份与提交只是发现/身份字段，五PUBLIC零result页不授当日无论文。
+
+六项窄潜力通过校准：OpenLVLM-MIA实际新增member/nonmember分布混杂与三阶段真值的隐私评价反证；NAMEx提出Nash权重及complex-momentum专家合并，不能因game theory名词采收敛；PRISM组合依赖上的operator时延分布，不把p95误差/64K数字授受控普效；QSVD提出joint QKV低秩/rank配置与量化，KV/端到端节省仍需必要机制；Flow shortcut新增velocity-field在线self-distillation避专用step embedding；SPA在RL前用自身经历监督state/transition，模型仅初始化而非推理planner，不把Pass@k相关归因当四因素普遍因果。原问题→具体增量→待修正选择成立，当前均非已确证Oct17候选，不评分、不写Books；四current后版本不反填历史v1，Accepted/版本号本身不触发全稿深审。
+
+作者可按校准后理由继续有限标题差额及含糊者完整题摘、具名纠错/安全信号和必要日期出口，不要求140新导航全AB/六全文/所有版史。潜力清楚仅可信度待核进入相应门，不用少实验、非LLM或Books主题已有排除。必要未知公开日和具体范围关闭分责；准备新批即核，不等待所有目录/方法。此节仅准入校准，不是六份Source/Books、整日DAY或FINAL。
+
+## 9. 第二批十二完整题摘actual / current与日期范围
+
+root实际读SUP_ARXIV更新§3–6，再从各NARROW/P2原HTML完整读14826/15020/14865/14751/14961/14557/14392/14024/13668/13334/13161/13626的题名、abstract-full、原日期/comments。十二窄P准入通过：工具交互外存对固定状态的长度泛化、coverage与后训练可达性、midtraining的时机/混合交互、future-summary辅助目标、recurrent-depth并行latent精炼、MX outlier exponent改mantissa、prefill/decode公平容量、抢占下context生命周期解耦、decode剩余长度驱动重调度、KV聚合极端风险、双向异构speculation、七轴VLA鲁棒性评价，均有实际可继续核的增量，不以HPC科学应用标题取消独立LLM状态机制或把负面/局部结果排除。
+
+这些只校准原文提出了什么，不采用必要假设未核的充要/expressivity/worst-case保证、SLO/低开销、95到30或跨硬件加速数字；所有current后稿不反填v1。十八新完整题摘与旧81 arxiv/另LAVA合100已读身份，不是当天100篇或100份Evidence。199新题名导航并非199逐项关闭队列，未选题名不冒完整贡献判断。
+
+作者六current及四具名abs准备的可见说明/日期角色已读：duplicate15430v2只撤该重复entry，canonical09201后版不反改已读v1；TokenTiming15545v4/DSSmoothing15303v4的发表/版本号不解除原具体正确性禁界，也不证明新全文仍有同问题。后续只据具体新更正重开采用域，不因version机械双版diff。三新身份原history晚于Oct17的边界只排相应arxiv首公开事件，不能据此证明不存在另一个更早作者artifact/原发布；其余未知first须精确隔离，不用旧搜索页与history不同日期择便落窗。
+
+机构Source§7、新题摘18、轻量current与有界日期出口准备已到可归并范围；作者下一保存六节，明确旧冻结§4中的时刻门/0整合口吻为历史、LAVA正式6分/实际Ch63整合1、其余未知采用禁界与精确重开条件。root仍须真实DAY及保存完成态FINAL，不由本节预签90/132增加。
+
+## 10. root实际完整六部分DAY通过
+
+root实际从开头至末尾读保存态Oct18 README（检查时间2026-10-15T13:29:13+08:00、进行中），分1–35/35–98及末段完整读取，无未补的截断。查询/主题边界首先核：五标题主题249出现/232导航与199新导航不是全文/候选配额，原宽查询已停止，必要18题摘实际校准§8–9；来源十三机构§3/7与旧必要层只在对应身份/版本/命题复用，未把每周源/全分类纳日级任务。
+
+实际候选只有LAVA机构Oct17披露一族/6分/必要部署与恢复域深入，Ch63具体gap/PRE及真实正文POST4/本人注5保持；旧paper与机构事件分责，VM证据不授GPU最优或孤立倍率，binary/cache原事实与版本/保守退路推断近文。旧81加新18与LAVA合100不同审阅层，旧78潜力/3C、新18窄P不被改作全部Evidence；三新arxiv后界只排相应事件，余15/旧未知日及更早artifact权限精确隔离，不造本窗零事件或搬日期。
+
+root为完成该受影响current/日期门，另实际从全部十个SUP_CURRENT原abs完整读dateline/comments/submission-history，并读canonical/duplicate、TokenTiming与DSSmoothing当前完整AB。MIA/QSVD原history/citation Oct18与搜索Oct17差异、NAMEx BJT Oct18后界均属原字段，提交不作公开时刻；duplicate明确W只禁该entry/不另计family，canonical v5不反填原v1；其余接受/新版本与当前AB没有指向原具体争议的明确更正，不据此宣current全文仍错。旧27必要反侧与3/3关闭AB的Cicero有效层复用，未第三读全部方法/版史或回填后稿。
+
+逐节完整判断自洽：十四来源表自包含入口/停止/历史缺段；§3候选表一族与§1漏斗相同；连续旧§4保留、外侧及新增LAVA小节明确覆盖旧时刻hold/0书写；§5将每个旧/新具名日期、历史子入口与中心争议隔离，不支持正面Evidence/Books、Coverage无遗漏或安全性能保证，给出对应原材料和局部重开条件；§6root非报告作者、旧Cicero署名与本轮范围分开。没有未做普通研究伪成外部，剩作者完成态行政保存及actualFINAL。
+
+**本轮实际DAY通过。** root实际V3 exit0，H1一/H2六/围栏完整；17本地引用11目标缺失0、原窗口保持、相对HEAD连续旧§4完整987字符prefix保持，新增候选不覆盖旧完整行。限定cached及unstaged diff-check均exit0，不称新raw/全仓clean。此为语义通读加限定检查，而非机器替语义；作者可只同步真实DAY与完成态/检查后交root实际FINAL，尚未保存前不预签日级接纳或增加90/132。
+
+## 11. root实际保存完成态FINAL通过 / Oct18接纳
+
+作者实际保存后，root实际读回README完成态检查时间2026-10-15T13:38:21+08:00、§1/5/6全部行政差额与SCOPE顶部实际检查说明，复用§10完整six DAY及§1–9有效研究，不重Source/题摘/正文。状态完成、复核通过、普通研究/书写待办无，外部保留项继续禁正面采用/无遗漏；LAVA一族6分/Ch63整合1与三新arxiv后界/其余未知事件、旧反側均保持。原90快照是writer保存时点，不据此回退已接纳Nov18的91。
+
+root针对保存完成态重跑V3 exit0，限定cached/unstaged diff-check均exit0；DAY已实际核原window/连续987字符旧§4/引用及H1六节，完成差额未变该层。作者README加两SUP三文件21引用/11目标是不同检查对象，不冒root全raw检查；本轮未stage、commit或push，已有并发index快照保护、不声称无暂存或全仓clean。
+
+**完成态actualFINAL通过并接纳Oct18，总92/132、40待。** 所有原日期/评分/window/连续§4保持；本次是补遗漏、安全终态而非互联网无遗漏证明。作者仅同步已发生FINAL11及root接纳行政指向，然后fresh已有Oct19/只补Oct18自然日，先重读AGENTS及当前适用合同/来源/Prompt/ROADMAP与本日停点，不搬本日100/18/232池或继承Source成功，不重复LAVA。共享Books/State/index仍root协调，连续推进不因单日接纳结束。
+
+## 12. 五个PUBLIC原响应的具体错误纠正（不重全日）
+
+在相邻Oct19同参数请求发现实际表单错误后，root只定点解析本日五个`SUP_ARXIV_<组>_PUBLIC_20261015.raw`的完整main，五份均明确`Whoops! Something went wrong`、`End date must be later than start date`且0个result节点。此前§8及作者包将其简记“零result/空搜索页”不准确：HTTP200只是成功返回错误表单，不是合法日查询的零命中，官方说明announcement只支持year/month粒度。该层应撤销为有效结果查询/日期覆盖的任何依据；保留原raw，不重试无效参数、不补提交日为公开日。
+
+本次仅纠正该可判定来源权限，五主题original-submitted窄结果及全部尾页、232导航/18新题摘、旧必要反侧与LAVA原Oct17官方事件/真实Ch63整合均不依赖这五个无效PUBLIC结果，继续有效。先前报告本就未由这些页面认定零论文/当窗日期或无遗漏，因此不撤销其它有效层或重复计日。作者只改SUP对应一行与README来源表/缺口的当前说法，root实际读回差额后确认闭合；不动原window/候选/评分/连续原§4及书稿，不以该窄修重跑整日。本时点跨日总93/132，Oct18不再次增加。
+
+随后root实际读回作者保存的SUP表PUBLIC原行与README SRC-ARXIV完整行/缺口，两处均已明确HTTP200表单错误、结果查询未执行、非成功零命中及年月粒度，submitted/18题摘/LAVA不受影响。限定三文件diff-check通过；本次是来源权限的具体窄修，原冻结字段和采用链未变，§12所述差额闭合，不另重研究或计数。raw原件与§8早先说法按历史保留，以本节具体纠正为准。

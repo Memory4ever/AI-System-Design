@@ -225,6 +225,10 @@ Decoder-only 模型使用 causal mask 阻止位置 `i` 读取未来位置 `j>i`�
 
 Mask 首先约束可见性，它不直接提供一张可控的距离编码表。不过，不对称的可见集合会影响聚合后的 hidden state，因此“没有显式位置编码”并不等于“没有任何顺序信号”。双向模型也需要某种位置来源，不能仅靠 token 内容恢复次序。
 
+双向读入也可以有意保留方向不对称，而不把整个模型改为causal。一个受限attention分支把每个head的Q/K/V通道拆成两组：一组只读past与self，另一组只读future与self，各自softmax后拼回输出。Self进入两边、两份归一化也不等于原full-attention的无损拆分；顺序信号来自两个可见集合，模型仍可同时使用RoPE，不能把mask名称解释为已拥有精确距离编码。
+
+[Dual Triangle Attention的自然语言MLM对照](https://arxiv.org/html/2604.18603v1#Sx4.SSx2)只支持受测结构的顺序偏置；RoPE组合更强而NoPE外推仍可退步，不批准取消所有位置编码。两组子head宽度、训练目标和kernel实现须共同核算，单kernel可实现也不自动等同更快的完整训练或推理。方向分组限制跨通道匹配的自由度；顺序/长距质量或净费用失配时，保留普通双向attention、显式RoPE与原head布局，不从局部结果推出任意长度泛化。<!-- source-family:SF-2026-ARXIV-2604-18603 -->
+
 ### 局部混合可以产生隐式位置，但读取它仍有条件
 
 显式编码的优点是位置关系由设计者指定，容易检查和控制；代价是频率、窗口与数值实现必须和训练一致。另一条条件分支不在 global Attention 中额外加入编码，而是在此前的 sliding-window Attention 或递归混合中形成与距离相关的状态。相邻位置读取重叠的局部历史，hidden state 因而可能比远端更相关；固定局部窗口也使这一相关结构不必随总序列长度增长而被平均稀释。
@@ -341,6 +345,8 @@ Transformer 取消递归后获得并行性，也失去了天然顺序。Position
 Learned 与 sinusoidal absolute encoding 在输入端加入位置，relative representation 直接改变 pair 交互，RoPE 则用旋转让点积依赖相对位移。它们解决“模型如何看到位置”，不单独解决“模型能否有效使用任意长上下文”。
 
 ## Review notes
+
+- SF-2026-ARXIV-2604-18603 — Daily2026-04-23补Apr22；[exact-v1](https://arxiv.org/html/2604.18603v1#Sx4.SSx2) Methods attention/position/architecture/training/eval、Results argmax/自然语言MLM与Discussion/limitations，2+1+2=5，为方向可见集合/双softmax长期差额深入。保128→64子head/普通64head差异、RoPE拆前施加、NoPE外推反退/长对照p=.15，不授无损full attention或单kernel端到端加速。root必要Source/11日期与18603官方OAI组合/实际owner/修正锚PRE通过，按窄lease保存本人两段及本注；root非作者实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步并读回，未核artifact/复现，不授DAY。
 
 - `SF-2026-ARXIV-2603-11611` — Daily补查 `2026-03-14`；[exact-v1](https://arxiv.org/html/2603.11611v1) §3–6、A/B/C与Table4；2+1+2=5。root 非准备者实际必要原证、Ch13完整局部/Ch12–14交接及逐字PRE通过；root窄写后，非写入者 mar14_supplement 实际顺读新增/完整邻接及本人末注并回对原证，POST通过，窄锁释放，不授DAY。只采旋转子空间容量分配与从头训练 stability/quality 分账；不采通用一成最优、已有checkpoint删维等价、KV/整机显存或服务时延收益。受限训练/任务反侧近文，未核代码或复现实验。
 

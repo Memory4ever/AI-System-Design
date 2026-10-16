@@ -2,44 +2,57 @@
 
 **规范：** V3
 **窗口：** 2025-11-19T09:00:00+08:00 ～ 2025-11-20T09:00:00+08:00
+**窗口说明：** 用户授权已有2025 Daily遗漏补查；原候选完整行/日期/评分、原窗口与连续原§4冻结，旧完成层不代本轮验收。
+**补充窗口：** 2025-11-19 ～ 2025-11-19
+**冻结候选日期：** [本轮运行前基线](../_sources/daily-20251120/baseline-before-supplement-20261015.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T18:48:00+08:00
+**检查时间：** 2026-10-15T17:28:26+08:00
 
 ## 1. 结论
 
-本日有限来源、准入、必要证据与反侧、具体OnlyReport及六部分由root在2026-10-04T18:46:20+08:00实际独立通过；普通待办0，按非作者结论同步完成。14每日入口均实际检查到具名停止点，5行当前可见边界已检查、9行历史切片/必要日期受阻，受阻项不授正面Coverage或无遗漏。未扫Weekly、未扩大其他月份，原始材料均在本日_sources。
+本轮作者Noether、独立reader Ohm，仅补Nov19完整BJT自然日；fresh上下文与原稿冻结见[SUP_SCOPE](../_sources/daily-20251120/SUP_SCOPE_20261015.md)。Ohm30已在17:26:49 BJT真实完整顺读六节并保存DAY通过，本稿据此同步完成态；普通研究/Books待办0，四处整合与本人注行政全闭合。Ohm31完成态actualFINAL已通过，[root§9](../_sources/daily-20251120/ROOT_INDEPENDENT_REVIEW_20261015.md)已真实完整接纳Nov20，累计100/132；此处仅同步已发生事实。旧完成/普通0和小时窗秒门不代本轮验收，不继承邻日池或Source成功。
 
-确定落窗入选1个external-testing公开说明家族：方法自主、checkpoint/轨迹访问、公开权限并非同一个评价条件。附录是范例条款且存在公开模型信息等例外，不证明所有合作采用同一合同，也不作安全效果或法律保证。2+2+1=5准入、受安全约束影响的必要核心深入审阅及仅报告由root实际通过，Books写入0，无POST。官方RSS完整本窗切片有4项，不是Nov19自然日的3项；2框架/产品项及1科学应用范围项关闭通过，理由与原core见[RSS单项包](../_sources/daily-20251120/RSS_DATE_AND_INCREMENT.md)。
+正式表保原external-testing完整行并新增四个已核Nov19机构家族，合5家族；不是各论文首次公开。S2ST5分、SAM3 5分、Objects6分已各按root窄锁真实写入，Ohm7/14/17实际POST、ROOT2/4/6接纳释放及本人注行政读回均闭合，三项不再有待办。Body受限静态接口/5分/唯一Ch23差额与逐字PRE已Ohm20/26/root通过，按ROOT7窄位[真实保存/self-read](../_sources/daily-20251120/SUP_BODY_PRE_20261015.md)，Ohm28/root8已实际POST接纳释放及本人注行政闭合。原external-testing必要条款/5分/具体仅报告有效复用，无新增书写；详细边界见§4。
 
-另有Google S2ST、Meta SAM3/SAM3D Objects/Body四个官方方向及两批arXiv的28个潜在论文方向，完整题摘/必要决定性core与理由已保存并获准入校准；不是32个确定当窗家族或已完成Evidence。两批另有LAUD、15005理论的2个代表性关闭通过，理论关闭依据是必要公式反侧而不是无实验。2602.00003的arXiv公告月份与Nov提交字段矛盾经root实际官方规则定点核，精确隔离；其余首次公开边界仍未确认，不能把Submitted改作public。所有潜在贡献保留，不为date-isolated展开全实验/owner或按名称制造Books缺口。详见[首批](../_sources/daily-20251120/FIRST_BATCH_CALIBRATION.md)、[arXiv14](../_sources/daily-20251120/ARXIV_FIRST_CALIBRATION.md)、[尾部16](../_sources/daily-20251120/NARROW_TAIL_CALIBRATION.md)与[来源停点](../_sources/daily-20251120/SOURCE_PROGRESS.md)。
+arXiv七主题220出现/126身份只作发现，原30有效题摘按精确身份/版本/命题复用；新增首14＋窄10＋主题15＋晚版4的43份贡献层已Ohm10/13/21/22真实核为36P7C，不等43个当窗事件或Evidence。后[五安全身份](../_sources/daily-20251120/SUP_ARXIV_SAFETY_TAIL_20261015.md)4P1C、[TOPIC4](../_sources/daily-20251120/SUP_ARXIV_TOPIC4_20261015.md)13P8C（GEN3D最小门已Ohm29通过）、[TOPIC5](../_sources/daily-20251120/SUP_ARXIV_TOPIC5_20261015.md)13P6C＋14661当前撤回事件隔离均已Ohm24/25/27核/root实际读回。GEN3D已按指定域补读[MINIMUM4§6](../_sources/daily-20251120/SUP_MINIMUM4_20261015.md)，最小更新/消费域已Ohm29实际通过，不重已核四门。
+
+[题名／日期包](../_sources/daily-20251120/SUP_ARXIV_TITLE_DATE_20261015.md)保存有限139身份并集、121题摘/18题名分层及95潜力＋24C＋2当前撤回事件隔离，均已Ohm29/root实际核；95加LPLB另1为96必要日期责任，不由算式授Coverage/Evidence。M-CALLM当前v2因重复撤回、15083当前v2理论flaw撤回均不采用/评分/Books，不宣所有历史版本被撤回或结果造假；VLM3D早SDS核心与新feed-forward分支、MAIF/nnMIL具名修订和七具名search/abs原日期冲突各保角色，不全版本全文比较。
+
+十四来源的实际入口、停止与限制自包含于§2，[SOURCE§9](../_sources/daily-20251120/SUP_SOURCE_20261015.md)有限收口已Ohm23/26/29核。未确认首次公开/重要修订资格的潜力不进正式候选或Books，不为日期缺失扩大实验/全文；外部历史缺段不支持零论文、全Coverage或无遗漏。原有效研究/反侧与修订脚注保留于当日原包，不拿旧Weekly反推或用新统计改旧候选日期/评分。
 
 ## 2. 来源覆盖
 
+以下为本轮fresh有限检查；原执行的来源数字/秒门已由本表覆盖，旧原件仅按有效身份/版本/命题复用。实际原件及已核范围见[SUP_SOURCE§1–9](../_sources/daily-20251120/SUP_SOURCE_20261015.md)、[Ohm§8/9/18/23/26](../_sources/daily-20251120/SUP_INDEPENDENT_20261015.md)；有限字段与历史缺段分账，不由局部独核授全覆盖。
+
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research当前入口、Nov19官方域有限搜索；原RSS按UTC Nov19 01→Nov20 01过滤4项，三篇核心及科学范围实际核，两个Codex入口00Z单列窗前。raw与请求见RSS包 | 受阻 | 当前feed切片已处理，但不能恢复全部目标历史Research索引/未列项；需该目标原列表，不由4条授历史无遗漏 |
-| SRC-ANTHROPIC | 本日原HTML/receipt200，Flight publicationList.posts171，只筛日期/身份，本窗0，相邻Nov21→Nov12；停目标区间，不读171份题摘 | 已检查 | 只支持当前目录目标段，历史删除/未列/原版本不认证；先前current十条不是全部目录 |
-| SRC-GOOGLE-AI | DeepMind/Research pubs当前入口；2025 Blog页1共12条Dec18→Nov12、9页停1；S2ST原core；2直抓及1浏览器有限失败、两轮官方timestamp首页无恢复 | 受阻 | 相关发布自然日未定窗；pubs目标历史段未恢复，博客不替代全部publications；具名重开见§5 |
-| SRC-META-AI | Research动态0行；publications page4 Nov19三SAM→Nov18→Nov11后混旧年，blog page2非单调，停4/2；完整题摘/相关core及两次直抓、日期补检 | 受阻 | 目录非严格排序不授全历史；SAM自然日未定窗。SAM3.1 Mar2026同URL更新已隔离，不反填原版 |
-| SRC-QWEN | 旧站Sep23及以前，Research实际qwen.ai/research 0行、HTML200动态壳；本日CUA83.9458秒超时/reset未返回tab/DOM，见浏览器停点 | 受阻 | 不是浏览器看见零条目；需本窗官方原列表/响应，停相同空路径，不授Coverage |
-| SRC-DEEPSEEK | 官方home More→news，研究可见Nov27→Nov1、动态Dec1→Sep29，停可见边界；查看全部button未操作 | 已检查 | 仅可见目标段，不认证隐藏/删除项或全部artifact；不把未操作button称分页耗尽 |
-| SRC-MOONSHOT | Kimi Blog当前列表及changelog，Nov7/Nov6→Oct27，停可见边界 | 已检查 | 不由当前Blog断言GitHub全部组织无事件或历史删除无遗漏 |
-| SRC-TENCENT-HUNYUAN | 首查Research 0行/HTML6893字节；CUA50秒超时；实际POST publicList page1/size20/renderType0，total9/list9全2026，stop1 | 受阻 | 实际API响应不是2025 Research替代；需本窗Research历史列表/快照，不遍历未知参数 |
-| SRC-ZAI | 原Research15条，实际前端page.js核page+1；GET?page=2累计18条hasMore=false/next3，最早Dec7且非单调，stop2；release notes另核Dec8→Sep30 | 受阻 | 当前页已耗尽但11月历史未恢复；release notes不能替代Research，不再请求第3页 |
-| SRC-BYTEDANCE-SEED | 实际API type1/2、year2025/count20/order_desc、US header，page_token0→20；pinned分离，regular Oct22/Oct23后更早，stop20，next40/has_more仍true | 已检查 | 仅当前2025可见目标边界，不假称all pages耗尽。type1论文94/type2 Blog45，raw文件名反置已纠正，不按文件名错认材料 |
-| SRC-BAIDU-ERNIE | 中文Blog页1十条至Nov21，页2六条Nov11→Jun30，实际2/2，stop2 | 已检查 | 当前两页目标边界已核，不认证删除或未列材料 |
-| SRC-XIAOMI-MIMO | Paper8条Jan8,2026→Oct21,2025；Blog15标题无日期、有More，有限停点 | 受阻 | Paper边界不替代有日期的Blog目标More段；最小恢复请求见§5 |
-| SRC-MINIMAX | EN12/CN13模型Blog Dec23→Oct27；独立Agent Tech本日HTML/Markdown/index实际核，只列May13,2026一项，停止该当前目录 | 受阻 | 2025 Agent Tech目标段缺失，模型Blog不代替；上游站内原链接不当本地缺文件 |
-| SRC-ARXIV | 系统13/Agent22相关标题；learning107、多模态45先首25即收窄；narrow44首25/22、focus7；CL标题只skip800锚点和skip650/700各50，stop750；30 exact-v1完整题摘、30current信号轻检 | 受阻 | submitted查询只发现；28潜在/2关闭请求不是确定候选，精确公开时间仍缺。未扩全月1527、整类题摘或全文；Chronology纠错已定点隔离 |
+| SRC-OPENAI | Research→index当前9卡/Load more；fresh官方RSS1293仅投影Nov19 BJT七项。external-testing及两原C有效复用，Codex两入口同原已处理事件定点去重；Scania/Teachers与Nov19 GPT5.1Pro/custom MCP company knowledge核心具体C已Ohm核 | 受阻 | RSS当前切片已处理，不认证Research目标历史未列/删除完整性；需目标原目录/快照。Teachers RSS2027/当前正文2028差异不授机制/价格历史结论 |
+| SRC-ANTHROPIC | fresh原Research HTML结构化publicationList.posts176，逐日期/题名/slug；November五条25/24/21/12/4，目标BJT无返回，停止该目标字段层 | 已检查 | 当前列表不认证删除/未列历史，其余176题摘/未来正文未读，不由search空返回作零论文证明 |
+| SRC-GOOGLE-AI | fresh DeepMind Research/News当前页、Research pubs年份字段、Blog官方2025/11月归档全部十日期题名。唯一Nov19 S2ST日期/core/实际Ch23整合已核，非论文first | 受阻 | Blog月页不替pubs/DeepMind目标历史；需相应原目标切片/快照，不重S2ST或再求精确秒 |
+| SRC-META-AI | Research0行，旧publications?page4本轮不可达；fresh Blog?page2十二非时序项→真实Publications results第一页混2026/旧2016–2020。SAM3/Objects/Body三Nov19机构门及各受限必要Source/实际整合已核 | 受阻 | 非严格排序不以老条当耗尽。目标历史切片未恢复；Body仅采静态接口不采训练/纠错效果，不用SAM3.1/未来版本倒填 |
+| SRC-QWEN | 本日各一次官方retrieval en-US articles40与research-list zh-cn60，全部题名/原date字段已Ohm核；Nov当前仅DeepResearch，原Nov13+08/Nov12Z同一时刻，无Nov19字段 | 已检查 | 只当前40/60字段目标层，不认证未列/删除/全部历史；无total/pagination envelope，未重试失败en-US config/猜bundle，未读content |
+| SRC-DEEPSEEK | fresh home More→news、实际page JS Research31；Research ViewAll为本地数组展开；News props16全部题名/date/slug、ViewAll本地切片已Ohm核。LPLB另读官方repo完整必要README及一次repo metadata | 受阻 | 列表当前边界无Nov19字段不认证全历史。LPLB原date仅2025-11；repo created/pushed Nov19不证明当时public，必要精确公开资格仍保留，不评分/Books |
+| SRC-MOONSHOT | fresh Kimi Blog26标题及changelog；最新Nov7/6→Oct27，停止当前目标边界 | 已检查 | 不由当前Blog/changelog声明GitHub全组织零事件或删除历史完整 |
+| SRC-TENCENT-HUNYUAN | 本日首查Research0可读行；保原已拒绝UI分支不重试/绕过，没有新legacy或旧2026 API成功继承 | 受阻 | 需Nov2025原Research列表/官方快照。0行不是零论文，不遍历未知参数或重相同空路径 |
+| SRC-ZAI | fresh Research首15/More→实际?page2全部18题名/id/createAt，非时序、hasMore=false/next3，最早Dec7 16Z即Dec8BJT；Ohm18已核。另fresh官方release notes八日期题名，Dec22,2025→Sep30边界 | 受阻 | 不请求page3；createAt非公开日。Nov2025 Research历史缺失，release页不补Research；未采用未来content/模型正文 |
+| SRC-BYTEDANCE-SEED | fresh type2 Blog/type1 Paper，2025/count20/order_desc/US，各0→20；返回18/18与18/20，total45/94，pinned分离，regular最新Oct23/22、页20June18/20，Ohm9全部字段已核 | 已检查 | 停20仅越目标有限边界，next40/has_moretrue，不称all45/94耗尽或历史未列完整；没读未来pinned正文 |
+| SRC-BAIDU-ERNIE | fresh中文Blog页1十条至Nov21，实际Next页2六条Nov11→June30，2/2止 | 已检查 | 当前两页目标边界不认证删除或全部组织artifact，无Nov19返回不宣网络无遗漏 |
+| SRC-XIAOMI-MIMO | fresh首页Paper8日期题名、Blog15完整标题；后7已在blog-more本地隐藏，More不是未抓网络页，Ohm18已核该角色。只有限读当前index/4752chunk，不扩全bundle | 受阻 | Blog15均无日期，Paper不补Blog日门；需Nov2025有日期Blog原列表或具名公告/快照，不以当前undated标题授零发布 |
+| SRC-MINIMAX | fresh EN12/CN13模型Blog Dec23→Oct27，Agent Tech与原llms index当前为三个2026Sep/Oct条目，不是旧May一项，停该当前目录 | 受阻 | 2025 Agent Tech目标段缺失，模型Blog不替代；只标题/日期，不读未来正文或把上游相对链接当本地缺文件 |
+| SRC-ARXIV | fresh五主题155出现/115身份，两收窄查询34/31只增11，合七查询220出现/126身份；与原30重17，并集139＝121题摘＋18范围题名。新91题摘67P22C2当前撤回，加原30得95P24C2当前撤回；有限CL月650/700各50题名不含逐日公告，Ohm29实际核 | 受阻 | 95潜力的Nov19首次公开/重要修订资格不足，必要替代见§5；七具名search/abs日期冲突保原值。18题名未冒AB，两撤回不采用/评分/Books。有限日期隔离不授Coverage/Evidence或无遗漏，未扩全月1527/全池全文 |
 
-完整请求/分页、raw与原字段定位见[来源停点](../_sources/daily-20251120/SOURCE_PROGRESS.md)。本日没有新会议发布批次/注册按需release触发，未扫每周来源。pi.website仅具名论文必要表外原源，直抓429，不由二手发布日期补造归属。
+本日未触发新会议/每周扫描或协议全站补检；custom MCP/company knowledge只是已发现Nov19具名变更的必要原源，明确C后停止。Body精确初始artifact及Objects后稿只是具名单篇证据恢复，不把整个GitHub组织变每日队列；Hunyuan拒绝分支、旧legacy失败均未重试。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Strengthening our safety ecosystem with external testing](https://openai.com/index/strengthening-safety-with-external-testing/) | 2025-11-19T20:00:00+08:00 | 第三方方法自主不等于模型/轨迹访问与结果披露自主；公开范例/例外限定评价证据能支持什么。2+2+1=5，不给一般原则或机构声誉加分 | 深入完成 | 仅报告：root实际通过；具名版本案例，不改长期机制，Ch66具体对读见§4 |
+| [Real-time speech-to-speech translation](https://research.google/blog/real-time-speech-to-speech-translation/) | 2025-11-19 | 三层对齐产生训练loss监督mask与选择lookahead等待预算不是同一权限。2+1+2=5，具体接口缺口深入 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION`，[Ch23流式监督段](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；Ohm7/root2实际POST接纳及末注admin闭合 |
+| [SAM 3: Segment Anything with Concepts](https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/) | 2025-11-19 | 图级存在与条件定位读出/监督人口及合成评分须分验。2+1+2=5，具体接口缺口深入；后Nov20v1仅补证 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION`，[Ch23存在/定位段](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；Ohm14/root4实际POST接纳及末注admin闭合 |
+| [SAM 3D: 3Dfy Anything in Images](https://ai.meta.com/research/publications/sam-3d-3dfy-anything-in-images/) | 2025-11-19 | 不能编辑/构造的择优拒绝协议存在all-fail支持缺口，需分流直接构造与D+/r/D-/scene alignment消费者。2+2+2=6；后Nov20v1仅补证 | 深入完成 | 整合：`TRAIN-DATA`，[Ch27采集协议段](../../../../books/part-04-training-system/27-data.md)；Ohm17/root6实际POST接纳及本人注行政读回均闭合 |
+| [SAM 3D Body: Robust Full-Body Human Mesh Recovery](https://ai.meta.com/research/publications/sam-3d-body-robust-full-body-human-mesh-recovery/) | 2025-11-19 | 上一轮估计条件token不同于residual数值初值，点/mask与分组rig输出各有消费职责。2+1+2=5，只采必要静态接口 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION`，[Ch23几何接口段](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)；Ohm20/26与ROOT7通过后真实保存，Ohm28/ROOT8实际POST接纳释放及本人注行政闭合 |
 
 RSS原值 `Wed, 19 Nov 2025 12:00:00 GMT`；转换为上表BJT时刻，字段是当前官方发布声明，不是测量首次可访问。作者及root实际必要核心/安全受影响条款已深入，单项准入、Evidence与Books决定通过不代表日级通过。自然日相交或Submitted字段未确认的潜在项置§5，不先增加确定当窗分母；明确贡献关闭只留原筛选记录。
 
@@ -53,27 +66,44 @@ L56–61的独立lab自选方法仍依赖被提供的checkpoint、mitigated/help
 
 owner为 `PLATFORM-EVALUATION-SYSTEM`。[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)实际开篇、subject identity不变量及小结已对读：claim/evidence/inference/decision、checkpoint/runtime/tool权限分层，条件证据不能越权获得发布结论。Ch65资源admission交接与Ch67 observed-health边界已读，不迁移owner。一般原则已存在但不冒称具体NDA协议逐字覆盖；该版本实例未修正现有正文解释，OnlyReport由root实际对读后通过，不因关键词缺位制造整合需求。必要原段/反侧与具体重开位置见[单项ready包](../_sources/daily-20251120/RSS_DATE_AND_INCREMENT.md)。共享Books写入0，无POST，单项不代表日级。
 
+### [Real-time speech-to-speech translation](https://research.google/blog/real-time-speech-to-speech-translation/)
+
+原Nov19机构说明及必要核心/三图由本日有效独核复用，不认证论文最早公开。三层源speech→text→translated text→target speech重叠关系生成训练loss mask，而目标右移lookahead另外选择语序重排等待；不能把mask有效当部署片段已到达或零延迟。内部约两秒之外仍有推理耗时，ASR/TEXT BLEU不合并，过滤难对齐样本改变训练人口。ASR/翻译/TTS、对齐/清洗/训练都计费，cascade仍用于覆盖退路。具体差额、已核5分、原证位置和Ch23完整邻接/PRE/真实保存/POST见[S2ST包](../_sources/daily-20251120/SUP_S2ST_PRE_20261015.md)，Ohm6/7与ROOT1/2均已发生，末注admin已root读回闭合；未核实现/复现或生产SLO。
+
+### [SAM 3: Segment Anything with Concepts](https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/)
+
+Nov19原机构AB已披露presence/定位分工；精确2511.16719v1是Nov20后补证，不声称当日完整loss/乘积recipe已公开。采用受限global presence与conditional object query读出、分开监督人口及推理乘积分数；负图不是所有loss零梯度，乘积不是事实或校准概率。Table9联合乘积设置并非更差，短训练presence消融又有pmF1 65.4→63.4反退；positive定位指标、IL_MCC与合成cgF1不能互代，Gold最好标注协议不等唯一真值。partial PDF/HTML不冒全文，必要节点已实际恢复；费用/OOD/简单phrase/逐对象成本和条件分割退路近正文。必要证据/5分/Ch23具体差额与实际写入链见[SAM3 Source](../_sources/daily-20251120/SUP_SAM3_SOURCE_OWNER_20261015.md)、[PRE§7–8](../_sources/daily-20251120/SUP_SAM3_PRE_20261015.md)和Ohm11/12/14、ROOT3/4，均已按实际层通过/行政闭合；未核代码/制品或复现。
+
+### [SAM 3D: 3Dfy Anything in Images](https://ai.meta.com/research/publications/sam-3d-3dfy-anything-in-images/)
+
+Nov19原机构披露人机协作3D监督；后Nov20精确2511.16624v1的triage/阈值/Algorithm1只补证，不倒填同bytes。只能择优/拒绝而不能编辑/构造的协议无法在全候选失败人口产生合格正例，更严quality bar不补该支持；原允许另给答案的人工仲裁不受此限制。将部分真失败分类/去重交专业构造，D+/独立r/关联D-分别交SFT/偏好消费者，scene alignment另取估计point cloud监督。专家未知几何靠上下文/对称等假设，shape先normalize/ICP的指标不授layout/物理接触；Table4后DPO vIoU .2337→.2311反退及阶段预算混杂保留，不将全收益归专家或采5:1普效。多候选/人审/专家/对齐/各轮训练评估全计费。必要证据/6分/唯一Ch27差额见[Source包](../_sources/daily-20251120/SUP_OBJECTS_SOURCE_OWNER_20261015.md)，实际正文/邻接/本人注POST及root接纳释放见[PRE§7–8](../_sources/daily-20251120/SUP_OBJECTS_PRE_20261015.md)、Ohm15/16/17和ROOT5/6；本人note行政差额亦已root读回闭合，无待办/锁。原PDF零bytes失败不作证，未核代码/制品或复现。
+
+### [SAM 3D Body: Robust Full-Body Human Mesh Recovery](https://ai.meta.com/research/publications/sam-3d-body-robust-full-body-human-mesh-recovery/)
+
+采用原Nov19机构事件披露的受限骨架/表面与提示路线，同初始commit README/head/encoder/decoder和主调用方只补静态接口，不由git时刻授各blob当日公开同bytes，不使用后2602.15989未来正文倒填。点与上一轮估计各作条件token，run_keypoint_prompt明确init_estimate=None，不能把上一预测当递归数值初值；mask在特定配置下另加图像支，返回prompt_mask也不等当前调用已传attention mask。参数分块不保证独立控制/统计独立，face置零/单位/相机和配置边界保留，不采SOTA、纠错效果、训练采样或运行/权重验收。图像复用仍有提示/decoder/rig读出费用，失配/遮挡保留原图、多视角/专用拟合和人工核验。必要证据/直接反侧、5分与Ch23实际sidecar/part-codec邻接差额已Ohm20/root通过，见[BODY_RECOVERY§7–8](../_sources/daily-20251120/SUP_BODY_RECOVERY_20261015.md)；Ohm26逐字PRE与ROOT7窄位后已实际写入单段/本人注并完整self-read，见[BODY_PRE§6](../_sources/daily-20251120/SUP_BODY_PRE_20261015.md)，Ohm28/ROOT8真实POST接纳释放及本人注行政读回均闭合，不冒日级完成。
+
 ## 5. 缺口与下一步
 
-普通待办：0。最终有限来源与六部分日级、Chronology精确修订脚注及2602编号规则由root实际通过，见[DAY_REVIEW](../_sources/daily-20251120/DAY_REVIEW.md)。首批准入、external-testing必要Evidence/OnlyReport、15005中心数学反侧、LAUD及RSS框架/产品关闭见[独立校准](../_sources/daily-20251120/INDEPENDENT_CALIBRATION.md)。28论文潜力和四公告的日期有限隔离获接受，不要求所有date-isolated实验/owner；以后具体反馈只重开受影响项，不推倒已有效结果。
+普通待办：0。GEN3D指定最小更新/消费域、题名尾/两个当前撤回/nnMIL修订及互斥日期责任已Ohm29真实核/root实际读回；四项Books正文/POST/admin全闭合，无锁/待办。Ohm30真实完整DAY、Ohm31完成态actualFINAL及root§9本日接纳均已发生，无剩余本日接纳程序；累计100/132，不重研究或把外部终态保留当已证明。
 
-以下是有限恢复后的本窗终态保留项，不支持正面Coverage/Evidence、Books或无遗漏：
+以下为已独核可安全归并的本窗终态保留范围；均不用于正面Coverage、确定候选/评分、采用Evidence、Books或无遗漏：
 
-- S2ST、SAM3/SAM3D Objects/Body：官方Nov19自然日但没有时区/精确时刻；Google两次curl/一次CUA、Meta两次curl和两轮官方域精确timestamp搜索后仍未取到完全落窗界。最小替代为对应官方推出时刻/可靠首次公开上下界；只重开该命题。SAM3.1未来版本收益不采用，原3D训练core仅潜在准入，不把datehold变全部论文附件队列。
-- arXiv两个包逐ID精确v1：[14方向](../_sources/daily-20251120/ARXIV_FIRST_CALIBRATION.md)、[尾部16](../_sources/daily-20251120/NARROW_TAIL_CALIBRATION.md)保留完整原字段与最小核验。Submitted/API published不认证public；官方原abs/current仅给提交史，[availability原说明](../_sources/daily-20251120/WEB_OFFICIAL_DATE_BOUNDARY.json)确认moderation和公告区别，不用schedule补09:00。最小请求对应v1实际官方公告/作者首公开快照，或完全落窗的可靠上下界。28潜在方向仍保留，2关闭请求不扩日期附件。
-- 2602.00003：官方原帮助明确编号月份属首次arXiv公告且不可backdate，支持arXiv事件不在2025年11月；与v1字段Nov18的差异不被自动“修正”。root实际定点核此权限边界；较早其他渠道首次公开仍未核，最小请求对应原稿官方首次公开身份/日期，当前v2标题/机制不回填v1。
-- pi-star原blog的日期恢复：web未取正文、curl429、官方域二次搜索只给原题与二手日期，不能采用二手Nov17作官方首公开。原文v1/v2提交史不代公告；只待该具名原发布快照，不扩Pi整站。
-- Chronology explicit v2 corrected footnote：已精确核v1/v2仓库脚注差额，只支持所见链接变动；提交17:19Z不认证公开事件，不断言全稿无变。其他晚版仅版本变化，不回填v1。15005决定性数学反侧已由root实际通过，关闭依据为公式不产生所称变化，不由原“理论”名称或无实验自动关闭。
-- OpenAI历史Research、Google pubs、Meta非单调目录、MiMo有日期Blog More、Qwen动态目标、Hunyuan2025 Research、Z.ai2025 Research、MiniMax2025 Agent Tech：各有限尝试/实际停止与最小替代在[来源停点](../_sources/daily-20251120/SOURCE_PROGRESS.md)。当前入口、API成功或无结果不授历史完整性；只在官方目标段/可核原响应到达时定点重开，不重复空路径。
+- arXiv必要资格：本日主题发现、有限CL月页100题名及原abs/current只恢复提交史/公告月，[原官方日期规则](../_sources/daily-20251120/WEB_OFFICIAL_DATE_BOUNDARY.json)不允许把Submitted/API published/citation_online_date当实际公告。按[日期包§4](../_sources/daily-20251120/SUP_ARXIV_TITLE_DATE_20261015.md)逐身份保原字段，保95潜力资格隔离，而非采用95份性能结论；最小替代是精确版本官方公告/具名作者首次发布或完全落Nov19的可靠日期界。七具名search/abs冲突保双方原值，不概括全Submitted18、不求精确秒或重试旧legacy。未确定日门不展开全池实验/owner。
+- 具名first/revision分责：2602.00003、2602.18437与2512.08943的arXiv公告月分别后2026Feb/2025Dec，不由早提交移当窗，较早其它原发布仍未知；Chronology已核v2脚注修正但修订公开资格未知；VLM3D先稿SDS核心不当Nov首创，新feed-forward分支的重要修订/资格另责。pi-star原blog失败不重试、不采二手Nov17。只在相应原稿/官方发布快照到达时重精确事件，不搬归属或扩整月。
+- LPLB单独一个artifact：原Research只2025-11；本日fresh repo创建/推送Nov19及当前public不证明当时公开。Ohm23已核必要LP机制/反侧和日期角色，缺具名首次public事件/官方Nov19公告或可靠全落窗日期界；不评分/Books，不从其它Daily借归属。与arXiv95合96资格责任已Ohm29核，只是日期恢复范围，不是Evidence。
+- 八历史Source缺段：OpenAI Research、Google pubs/DeepMind、Meta非时序目录、DeepSeek历史及LPLB、Hunyuan2025 Research、Z.ai2025 Research、MiMo有日期Blog、MiniMax2025 Agent Tech，实际入口/停止与替代见§2及[SOURCE§9](../_sources/daily-20251120/SUP_SOURCE_20261015.md)。当前字段、RSS、Blog月页或成功响应不拼成全机构历史；只待对应目标原列表/快照定点恢复。Qwen40/60本轮字段已核，不再沿用旧动态未解析待办；DS/MiMo More为已读本地内容，不造未抓网络页。Hunyuan拒绝分支不重试/绕过。
+- 版本/安全采用限制：当前撤回14661v2、15083v2退出本窗采用/评分/Books，不借旧v1/后替代稿绕回，不宣所有历史版撤回或造假；MAIF引用修订、nnMIL issues/results修订只核受影响必要域，不采强安全/临床/性能或完整纠错已闭合，精确重开域见日期包§3与各原题摘包。用户提示/2D或LP/probability等均不获真值/执行安全权限。
 
-窗外身份线索：Codex release及card入口RSS均为Nov19 00Z/BJT08:00，早于本窗起点，20不计候选。card入口发布仍不能证明card正文首次同刻。已向root交具名归属核验请求，不扩19重审或将该线索变成本窗普通待办。
+四个机构Nov19 date-only门已经解除，不再列缺时刻请求。Codex两入口在补充自然日内，但与已有精确同事件有效审阅去重，不重复评分；旧小时窗“早08:00窗外”说明不控制这次补窗，亦无新跨日重审请求。晚发现的其它月份原件只作身份/修订线索，不扩大本窗或把未来正文当Nov19已公开。
 
 ## 6. 复核
 
-复核者：root（非作者）；作者Dalton不自审。
+复核者：Ohm（非本轮作者）；root协调最终接纳与共享写。
 
 结论：通过
 
-root在2026-10-04T18:40:20+08:00实际读30份exact-v1完整题摘（截断者单独补齐）、四官方潜力、S2ST/Agent-R1/DataSage必要核心、15005数学反侧、external-testing全部必要段与Ch66/65/67；准入、有限日期隔离、必要Evidence/OnlyReport与LAUD/15005/RSS负侧通过。见[INDEPENDENT_CALIBRATION](../_sources/daily-20251120/INDEPENDENT_CALIBRATION.md)。18:46:20实际顺读六部分与有限来源/停点，新增核Chronology v1/v2脚注、2602官方编号权限、完整RSS本窗4项、七份主题Atom的query/停止、Seed原接口身份/receipt及独立Agent原Markdown，日级通过见[DAY_REVIEW](../_sources/daily-20251120/DAY_REVIEW.md)。全部拟采用及必要安全/数学/修订反侧已核，其他按应用、科学范围、晚版与理由分层抽检；未全量检查宽标题题摘、实验附件/代码，未部署或复现。Books实际写入0，无POST；外部保留不支持正面采用或无遗漏，普通0。
+实际已读回的[Ohm§1–31](../_sources/daily-20251120/SUP_INDEPENDENT_20261015.md)中，§30在17:26:49 BJT完整读17:22:36保存稿全部六节及DAY包，真实DAY通过，不以prepared/机器pass/局部ready代实读。§1–29覆盖fresh范围/有效层复用、四机构日期、全部五正式家族必要Source/评分/Books决定、四处真实整合POST、十三机构字段/LPLB及全部新拟入方向和必要安全/纠错/撤回/设计反侧；121题摘95P24C2当前撤回、18题名、96资格隔离均已核。其它明确范围退出按来源/主题/理由分层核，未全读126全文或全部实验/代码，不授全Coverage或全部论文贡献成立。完成态差额见[DAY包](../_sources/daily-20251120/SUP_DAY_PACKAGE_20261015.md)；Ohm31在17:36:06 BJT实际读回完成态并通过actualFINAL，root§9已真实完整接纳，累计100/132，不以DAY替代FINAL。
 
-完成态同步后实际V3、8份自写Markdown的57处本地引用、围栏/行尾空白/no-index及限定diff-check通过；原源Markdown上游站内相对链接不当作者本地缺文件，root独立notes不当作者改写文件。机器检查只证明结构与可判定一致性，不替代语义验收；未stage/commit/push，不改共享文件或root独立notes。
+四处实际整合的root接纳释放为ROOT2/4/6/8，全部本人注行政读回亦闭合，无锁/待办；Body实际链见[BODY_PRE§6–7](../_sources/daily-20251120/SUP_BODY_PRE_20261015.md)，不重正文或外部并发P3T。原作者Dalton与非作者root的30题摘/必要core、LAUD/15005数学反侧、external-testing具体OnlyReport、Chronology脚注与编号规则有效层按原身份/版本/命题复用，见[原独核](../_sources/daily-20251120/INDEPENDENT_CALIBRATION.md)、[原DAY](../_sources/daily-20251120/DAY_REVIEW.md)；旧日级标签/普通0不代本轮，未把原root独核改成Ohm自审。
+
+当前17:28:26完成态实际复跑V3通过；43处引用中33处本地引用/25唯一路径全部存在、围栏成对、原唯一完整候选row/旧window与连续1191字符原§4逐字保持，限定report/SUP及本report cached diff-check无诊断。工具只证明结构和可判定一致性，不代语义实读。Books本窄位写前32新增/cached14到本人保存36/cached14的保护/限定检查有效，之后外部P3T并发不计本人差额或冒全仓clean。未stage/commit/push，无普通会话消息或共享State/index写。

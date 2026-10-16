@@ -141,6 +141,10 @@ sentence embedding     为句子或文档任务构造的整体表示
 
 Pool 会丢失局部顺序和细节，扰动又改变 server 的输入分布，因此带宽减少与任务效用必须联合验收。[PPFT 的必要接口与有限对照](https://arxiv.org/html/2604.06831v1#S3)只支持所测 encoder/decoder 和 QA 人口下的适配分支，未传原始 prompt 不等于没有语义、输出或 label 泄漏；server 仍接收可能敏感的明文 target label，局部 inversion attacker 的重构分数也不是完整隐私保证。Client 编码、两阶段训练、pool/projector 与完整 decoder 都付费，降序列长度不是端到端等比例加速。表示版本、精确数字/单位、噪声分布或效用不合格时，保留已验收的原文本/连续输入接口与更小压缩，并由安全 owner 独立决定跨信任边界的暴露资格。
 
+初始表示的单位还可以从静态实体编号改为一次历史交互的快照。只用item ID最简单，适合身份本身已包含足够预测信息的序列；若同一对象在不同时间面对不同用户、场景和交互条件，单一lookup却不能在入口保留当时状态。一条受限分支把历史事件的user、item、context及cross字段按组拆为多个slots，经分组残差量化存成离散indices；当前请求不必走同一个离线量化过程，而以训练过的投影进入相同slot空间。后续网络再分别混合一次事件内的字段和跨事件的历史，把“历史记录的单位”与“怎样读取时间关系”分开，而不是只增加item序列长度。<!-- source-family:SF-2026-ARXIV-2604-15650 -->
+
+[SIF的受限对照](https://arxiv.org/html/2604.15650v1#S4)支持这条输入表示分支，不证明量化无损或所有收益都来自snapshot：item-only消融同时取消字段混合，分组数量与跨表GAUC口径也有不一致，不能照抄完整精确配方。只存indices的算术比例不含码本、离线特征制作、存取、当前投影、两轴attention和训练全费；业务A/B亦不是通用语言模型质量或服务SLO。字段/schema、事件时间、slot/codebook与当前投影应作为同一输入产物验收，检查真实可用历史、信息损失与最终任务；兼容或预算不合适时，保留item ID加少量可信特征、连续事件表示及原序列模型，不为“sample token”名称扩张输入复杂度。<!-- source-family:SF-2026-ARXIV-2604-15650 -->
+
 ## 参数量与 Tokenizer 的联动
 
 Embedding table 参数量为：
@@ -291,6 +295,8 @@ EmbeddingMemory 的受限案例给出了理论动机和多个语言模型及下�
 
 逐层读取单个符号的身份，并不等于直接表示多个符号的组合。普通 lookup 给每个 token 一个初始向量，组合关系交给后续网络计算；这避免了为大量组合另存参数，在内存受限时尤其合理。但如果常见局部组合占用了很多学习与计算预算，就可以追问：是否应为这些组合另外保留可查表的容量？
 
+组合的容量也可以放在一个受监督的小网络，而不先为每种组合建立词表。对具有已知书写结构的语言，旁路先把字符拆成有序部件，例如韩语音节的初声、元音与可空末辅音，经序列/组合网络形成字符表示，再在原subword边界读出，以原token embedding作query融合；PLM仍消费原token数，但其输入已经改变。[SCRIPT的有限韩语对照](https://arxiv.org/html/2604.12377v1)支持比较这种结构先验与普通查表，不证明结构分解是内部语义真值或适用于所有语言。旁路尺度、subword边界和融合规则都是模型资产；强行匹配norm也可伤原分布，character粒度及部分任务反退。部件分解、GRU/卷积与融合、适配训练和原能力回归均付费，序列等长不等零额外计算，实测训练时间也更长。书写结构、边界或质量预算失配时，保留原embedding、普通tokenizer和独立适配，不让组合表示给无遗忘或跨语兼容签字。<!-- source-family:SF-2026-ARXIV-2604-12377 -->
+
 `n-gram` 是连续 `n` 个 token 的局部组合。以序列 `A B C` 为例，在 `C` 所在位置可以读取以它结尾的 `B C`、`A B C`；自回归路径只使用当前及过去 token，不能提前读取未来。组合数量很大，逐项建立独立词表代价高，因此可以用 hash 将组合映射到有限表的行，用多路 hashed lookup 读出并聚合。但查到局部模式，不等于它适合当前上下文；融合可以发生在输入端，也可以成为指定层的旁路：
 
 ```text
@@ -341,6 +347,8 @@ u_t = alpha_t v_t
 `d_model` 是每行存储的坐标数；“内在维度”则试图描述点集或分布局部变化需要多少维。一个平面可以放在三维坐标里，坐标数与平面的维度并不相同。但模型的表示分布不是一个已知平面，只能从有限样本估计，而且必须先说明估计的数学对象。
 
 因此还要进一步分清三件事：估计器在有限样本上的**读数**，对某个测度或支持集所定义的**数学维度**，以及模型在任务中的**可用能力**。测度描述概率质量如何分布，支持集描述分布可能出现的位置；它们的维度定义也不能任意互换。维度读数可以提出容量假设，却没有直接给出任务能力或可删除的参数数目。
+
+希望一份 embedding 在多个前缀宽度都可用时，应把这种可截断性写进训练，而不是从较低维度读数直接批准删坐标。一条受限分支让完整 CLS 表示提出 token 重要性，为更短前缀选择更小的嵌套 top-k token 集，约束其 attention 关系与表示相似性；再以相邻层、相邻宽度 checkpoint 的对比目标逐级传递监督。[必要组件和宽度对照](https://arxiv.org/html/2604.24374v1)支持这一接口，不证明所选 token 就是真实语义骨架或完整信息已无损保留；原文中心化矩阵的形状写法未闭合，这里不照录为已核实现公式。更多 alignment/InfoNCE 显著降低所测训练吞吐，移除辅助 projector 只说明部署图没有它，不是实测零延迟。层位、宽度、top-k 与训练/评价人口必须联合验收；短前缀、迁移或总成本不合适时，保留原完整 embedding、较宽前缀和独立任务质量，不让 CKA 或压缩率替能力签收。<!-- source-family:SF-2026-ARXIV-2604-24374 -->
 
 ### 为什么最近邻读数会受少数行支配
 
@@ -399,6 +407,8 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-24374` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.24374v1)§3/5/T3–5/7必要层；2+1+2=5，nestedwidth×depth监督具体差额深入。仅teacherCLS importance/top-k关系约束及相邻depth/width对比接口，Eq8/9维度/记号不照recipe；训练吞吐反退、费用与完整embedding退路近正文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
 - `SF-2026-ARXIV-2604-02324` — Daily2026-04-04补Apr3；[GTI exact-v1](https://arxiv.org/html/2604.02324v1)必要§2–4.3/6/7.2–7.4，2+1+2=5，newrows paired语言grounding具体差额深入。保tie别名/额外stage预算与公共指标反退，原main/A配方不齐不作复现recipe或纯init因果，geometry不授语义。supp_apr04_reader actualSource/Ch12逐字PRE通过，root授两body/本人note窄锁，作者实写顺读；supp_apr04_reader已实际新增两body/完整局部邻接及本人note nonwriterPOST通过，作者同步实读，窄锁释放；未核代码/复现。
 
 - 对话增量审计（2026-10-10）：[Engram exact-v1](https://arxiv.org/html/2601.07372v1) §2.1–2.5/Eq1–6 支持确定性读出、上下文门控和指定层 residual 注入；正文采用单分支解释，不展开 mHC。回对[官方演示代码](https://github.com/deepseek-ai/Engram/blob/main/engram_demo_v1.py)时注意其 gate 另有 signed-square-root 变换，且 Attention/MoE 为 mock，不当作论文公式逐项等价或生产实现。未运行代码、复现实验或确认任何闭源产品采用；性能数字与通用收益未纳入正文。
@@ -438,3 +448,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-00007` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00007v1)§3.1/4.2/7.1/Table9及必要Table11，2+2+2=6，仅expanded-vocab old/new embedding/head rows与同形参数merge来源分责；保Stage1/shared-row反侧、ASR/TTS退步与全部stage费用，不授零遗忘或全模态最优，未核实现/复现。
 
 - [PPFT exact-v1](https://arxiv.org/pdf/2604.06831v1) p3–4/§3.1–3.4及§4.1–4.3；深入，仅采用 pooled continuous prefix 及两阶段参数/消费兼容边界，不采完整隐私保证或全费加速；必要证据、逐字正文与实际写后独立复核通过，未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-06831 -->
+
+- `SF-2026-ARXIV-2604-12377` — Daily2026-04-16补Apr15；[exact-v1](https://arxiv.org/html/2604.12377v1) §3/Eqs1–4/§4/T1–4/Limitations与C/E.2/T7/J.1–2，2+1+2=5。结构部件旁路→原subword读出/embedding融合，非tokenizer替换；norm/粒度/任务反側、等长非免费与适配费用近文。R101Source/R86date与resume_apr16_review实际A48逐字PRE通过，root授本窄位置；resume_apr16_review实际真实正文/完整邻接/本人注POST通过；作者仅同步此注并实际读回，不授全语言/无遗忘/复现或DAY。
+
+- `SF-2026-ARXIV-2604-15650` — Daily2026-04-21补Apr20；[SIF exact-v1](https://arxiv.org/html/2604.15650v1) §4.1–4.4/Eqs1–19、§5.1–5.5/Tables2–6，2+1+2=5，event-snapshot/历史量化与当前投影同slot输入接口差额深入。保item-only双变化、T/字段/GAUC口径矛盾与索引非无损/非全费，不授通用模型提升或SLO。fresh必要Source/A13实际owner及修订PRE通过，root授本窄lease；fresh非writer实际真实正文/完整邻接/本人注actualPOST通过，root接纳窄lease释放；作者仅行政同步，不授日级完成，未核artifact/复现。

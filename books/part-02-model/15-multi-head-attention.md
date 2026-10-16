@@ -124,6 +124,8 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 
 因此，多头结构提供的是**可分化的表达路径**，不是 `H` 份必然有效的独立能力。已有剪枝研究表明，特定训练模型和任务中的一些 heads 可在较小质量变化下移除；这能证明冗余可能存在，却不能推出所有层、所有输入都有同一组“无效 heads”，也不能把 post-hoc 分析直接等同于生产加速。真正跳过 head 需要训练期 pruning、gating 或稀疏执行 contract，并让 checkpoint、kernel 与评估共同支持。
 
+固定总容量H之外，还可以让输入决定当前启用多少head、以及启用哪些head：用globalpooling分别产生预算标量与head排序，训练先加权全部head，推理再只消费硬选集合。预算与身份是两项接口，不由较小权重证明对应计算已跳过，也不由平均pooling获得token级难度真值。[BudgetFormer的受限encoder提案](https://arxiv.org/html/2604.22583v1)恰有soft训练与hard推理的资格差：原文entropy项符号与探索/稀疏解释相反，最少一head与纯floor写法也冲突，未核实现前不照录完整recipe。全部训练head、selector、Q/K/V/O及FFN仍计费，按head比例估FLOPs/碳不代表真实时延、显存或能耗；测试兼作validation及任务退步也限制泛化。预算、mask、稀疏kernel或质量未验时，保留固定MHA/GQA与已验静态剪枝，不让head少或热图更集中签发全模型加速及语义必要性。<!-- source-family:SF-2026-ARXIV-2604-22583 -->
+
 BOS 上的注意力概率质量集中只是一个诊断模式，移除某个 head 对当前任务影响小，也不证明它永远没有可训练容量。资源允许时，可以把定点恢复作为 pruning/gating 之外的替代分支：重初始化选中 head 的 Q/K/V 投影，将其 output projection 置零以降低初始残差扰动，再冻结其他参数，只对目标参数短训。[BLOOM 的受限实验](https://arxiv.org/html/2603.09616v1#S3)支持这条方法分支，而不证明所有 sink 都源于同一位置病因或所有被剪 heads 都值得恢复。冻结权重也不冻结共享 residual stream 的输入，目标头改变后，未改头的 attention 行为仍可能漂移，因此干预验收不能只看选中 heads。<!-- source-family:SF-2026-ARXIV-2603-09616 -->
 
 恢复的诊断容量与最终任务效用必须分账：按 BOS mass 阈值重新变“健康”，不等于 held-out 质量、语言分布和真实任务保持。该实验的完整手术只在 BLOOM-1b7 上验证，出现 held-out perplexity 上升和生成语料印记；额外健康头的单 seed、单列瞬时训练 loss 改善也不能签发通用收益。训练语料、阈值、短训预算与全模型回归均有成本，原文斜率公式/表与“高索引斜率更陡”的归因冲突不在这里采用。质量回退或预算无法摊销时，保留原 heads，或继续采用已验证的 pruning/gating 与实际执行路径，而不是用一张 head-health 图替代质量验收。<!-- source-family:SF-2026-ARXIV-2603-09616 -->
@@ -346,6 +348,8 @@ Multi-Head Attention 让多个投影子空间并行构造上下文路由，再�
 MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换取更低 KV Cache 和 memory bandwidth。这条模型架构选择会在第19章变成具体推理容量。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22583` — Daily2026-04-28补Apr27；2+1+2=5，R28.25实际IV～VI必要Source/date；howmany预算与whichhead、soft全算训练/hard推理消费资格，entropy符号/最少一head/全FLOPs和碳代理冲突隔离，固定H与真实kernel/质量回退近文。reader actual owner/逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接；reader R28.39实际非writer POST通过，root接纳并释放指定窄lease，仅行政同步本人注。未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2603-11332` — 2026-03-14 补查；[exact-v1 PDF](https://arxiv.org/pdf/2603.11332v1) §2.1–2.2/Definitions2.7–2.8、Theorems3.1/4.4/5.1、必要梯度抽取接口、§6与AppendixC。2+2+2=6，具体长期缺口定点深入；sum/concat宽度重参数化、1/(10N)逐项误差、可变W/X、exact-real eAC及减项保留，不授causal/GQA、Word-RAM、硬件延迟或固定checkpoint保证。mar14_supplement 必要Source/实际owner提案与root实际独立原证/完整H选择至MHA邻接通过后窄写；mar14_supplement 已实际回对必要原证并顺读新增正文、完整局部邻接及本人末注，非writer POST通过、窄锁释放，不授日级完成。未核代码或复现，不重复推导全部证明。
 

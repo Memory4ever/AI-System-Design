@@ -164,6 +164,8 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 
 第 46 章 continuous batching 是 application scheduling，不是 cluster GPU sharing。二者都提高利用率，但作用层不同。
 
+共享还需单独验数值资格：fractional GPU 额度只是 placement 记账，MPS 并发也不认证输出正确。应把实际 model-forward batch、dtype、GPU/driver 与 client active-thread 设置绑定后，分别比较输出和共置吞吐；低 utilization 或没有 NaN 都不足以放行。[UniRL 作者的 H20/535.247.01 受限对照](https://github.com/Tencent-Hunyuan/UniRL/pull/492)中，轻量 scorer 可能受益，瓶颈 scorer 或小 batch 也会变慢，低于 100% active-thread 的半精度结果还出现有限但错误的输出。这不是所有 MPS 配置的定律；其合入配置也没有 PR 正文声称的 dtype/scorer 硬拒绝，文档建议不能替代执行约束。逐配置 parity、warm-up、共置测量与恢复检查都有成本；版本、负载或输出资格未知时，应退回已验证 profile 或独占，不把作者局部实验写成通用共享收益或安全保证。
+
 硬分区的容量可预测，也可能把“只差一点显存”的任务推到下一档更大的 compute/memory profile。一个有条件的折中是保留小 MIG 实例，将超出 HBM 的部分工作集放在 cache-coherent host memory，由实际访问频率与链路成本决定是否值得；调度器选择的是已经验证的 profile 与 offload policy，不是只看占用率。[Grace Hopper 的受限对照](https://arxiv.org/html/2604.08451v1)中，Llama3 的 FP16 offload 并不在偏重性能的策略下胜出，短内存突发的 FAISS 更有利，不能把更少空闲容量当作更高吞吐。Host 容量与 C2C 带宽、allocator/spill、跨实例链路竞争和共享功率都进入费用及干扰账；无法满足实际质量与 SLO、链路不可用或数据访问过频时，应保留更大 profile、原 HBM placement 或独占。分区的地址与算力边界不签发功率、端到端能耗或时序隔离保证。<!-- source-family:SF-2026-ARXIV-2604-08451 -->
 
 计算分割也不自动形成时间隔离：即使按 SM 划分进程的执行范围，共享的功率上限、频率变化与其他资源压力仍可能改变共置后的完成时间。验收时因此要同时记录 SM 布局、功率与时钟状态、并发模型和到达负载，而不能把独占条件下测出的稳定提交频率当成 deadline 合同。有限样本中没有 timeout，只支持该 profile 人口下的观察，不是 worst-case execution time 证明；边缘 GPU 上六个分类模型的共置结果尤其不能直接外推到 LLM Serving。更高功率余量与更大内存带宽同时变化的设备对照，也不能只归因于其中一个因素。这条责任链增加遥测、并发对照、重新校准与保守 headroom 成本；若共置后仍不能满足时间预算，应降低并发、调整布局或退回独占，而不是从计算分区推导未测得的时序或安全保证。<!-- source-family:SF-2026-ARXIV-2601-07600 -->

@@ -125,6 +125,8 @@ loss ~= -log(0.646) ~= 0.437
 
 若 chosen/rejected relative log-ratio 顺序反过来，`u<0`，loss 增大。DPO 优化的是相对 margin，不要求 chosen 的绝对 log probability 在每一步都上升。
 
+相对 margin 增长之外，还可在同一固定模型/样本上检查 winner 与 loser 的两条 score gradient：更新是二者带激励系数的差，只有它们的夹角、范数比和系数比相容时，局部梯度流才同时增加 chosen、降低 rejected。[RC 的有限诊断与校正](https://arxiv.org/html/2604.18239v1)据此用 stop-gradient 的反向缩放分别调整两项，forward loss 数值可以不变，实际梯度已经改变。这个条件带只属于单 pair、正激励和相应夹角下的理想连续更新，不自动覆盖 mini-batch 交叉项、AdamW 预条件或有限步；output-head 范数、EMA 和 clipping 只是廉价近似，不保证每 pair 都留在真实全参数条件带。梯度统计、训练和超参搜索都付费，初始弱基线恢复也不等充分训练后普遍增益；代理漂移、强基线无益或实际更新不相容时，保留原 DPO/偏好目标、独立 chosen/rejected likelihood 与 held-out 行为验收，不由 ratio 控制名称授予全程单调性。<!-- source-family:SF-2026-ARXIV-2604-18239 -->
+
 ## Sequence Log Probability 怎样得到
 
 对 response `y=(y_1,...,y_T)`：
@@ -282,6 +284,8 @@ Fine-tuning loop 不再需要：
 
 第一，preference data quality。错误、表面化或单一人群偏好会直接进入 objective。
 
+评价维度还可以先决定一对回答是否有资格进入训练，而不直接改写DPO梯度：对同一实例保留 essential 与 additional criteria，先检查 chosen 在必要项上达到声明的 full／partial 门槛，rejected 至少一项不合格或多项仅部分满足，再在获准人口内按加权评分差和重复使用上限选择 pairs。有可信 reference 的实例与无答案实例要保留不同的 rubric 来源；多次评分的 median 只降低部分波动，不把派生准则变成独立真值。[视觉rDPO的有限对照](https://arxiv.org/html/2604.13029v1)中，criteria用于外部数据构造，并未逐项进入梯度或执行GRPO；最大margin也不是全部切片最优，部分通用judge和知识指标仍退。多模型分歧种子、rubric聚合、候选rollouts、重复评分、SFT/DPO与reference更新全部计费，三份数据分阶段使用也不自动等于每轮fresh on-policy采样。必要项含糊、来源不可信或held-out行为退化时，保留经审校的普通pairs、原reference policy与独立评价，不让高分差替代标签真实性。<!-- source-family:SF-2026-ARXIV-2604-13029 -->
+
 开放式任务没有可靠规则 verifier 时，pair judge 可以先读取一份独立参考答案，再比较当前 policy 的多个候选；这份 **reference answer** 提供内容与指令遵循的锚，工程上不应把它直接误用为逐字或风格复制的要求，也不是 DPO 的 **reference policy**。后者仍是冻结 SFT policy，负责定义 likelihood ratio 与 KL 坐标；更新候选来源、改变判分依据和移动 policy anchor 是三个不同选择。参考答案应绑定 teacher、生成协议与审校身份，因为 teacher 错误和风格偏好仍会进入 pairs；换用弱 reference 后收益缩小，参考锚的收益也随任务类型与模型后训练程度变化，有限分类实验中 creative 上的收益对 Qwen 较弱而对 Llama 仍明显。受限的 [RefEval 实验](https://arxiv.org/html/2602.16802v1)先用强 teacher 的60K答案做 SFT，再为每题生成5个当前-policy候选并比较10对，不是免费自改善；参考生成、judge调用、SFT/DPO及参数选择都要计费，最终 judge win rate 也不认证事实或安全。reference 不可靠、域外校准失败或总预算不合算时，保留独立审校的普通 pairs、人工/可执行 verifier，而不是让同一答案锚独占训练标签与发布真值。<!-- source-family:SF-2026-ARXIV-2602-16802 -->
 
 这里的数据质量还包括 chosen 与 rejected 的相对来源分布：即使逐条回答表面中性，由不同 teacher 系统性生成的两侧仍可能携带隐性行为差异，成为对比训练的信号。因此清洗显式迎合措辞不能替代 teacher/pair provenance 与独立行为验收；交换来源或修复 pair 后也要复测基础能力和格式，不能假定去偏没有代价。
@@ -301,6 +305,12 @@ Fine-tuning loop 不再需要：
 相对质量也不能把多个目标压成同一个胜负标签：按 helpfulness 排出的 chosen，可能反而不如 rejected 安全。一条受限分支重新收集当前模型暴露的攻击与 responses，按帮助性组成 pairs，同时独立保存两侧 safety score 的有符号差，在 policy/reference 的 preference margin 中加入额外目标项。这里，pair 的排序依据、辅助目标的方向与权重、训练 judge 和独立评价者各有自己的身份；“chosen”不能自动解释为各维度都更好，训练 judge 的高分也不是发布安全性。<!-- source-family:SF-2026-ARXIV-2603-07017 -->
 
 [小模型的多目标对照](https://arxiv.org/html/2603.07017v1#S4)只支持这一条件接口，不支持免费自对齐或普遍安全恢复。原文 unsafe 阈值方向在正文与附录不一致，应先消歧，不能直接抄入筛选器；去掉目标中的权重分母又改变 sigmoid 的有效尺度，需与前面的 preference/optimization scale 分责一起检验，而不是当作保持原目标的稳定化。实验先用有害 QA 弱化拒答，不证明安全先验全部消失，部分正常问题帮助性和人工安全评估仍有反退；减少 preference 条数也没有计尽 reset、攻击生成、judge 与训练成本。目标冲突、score 漂移或回归失败时，保留独立审校的普通 pairs、明确安全约束与固定 reference，不让同一闭环同时定义标签和最终真值。<!-- source-family:SF-2026-ARXIV-2603-07017 -->
+
+多个偏好目标还可以分别计算梯度，再求组合系数，而不先把标签压成一个总分。这里必须区分求系数的几何与实际参数更新：先用各目标梯度除以相应 loss 来求 simplex 上的系数，再将系数用于原始梯度，已经不是在同一归一化空间执行共同下降；loss 数值也不是距各目标最优解的距离。[受限多目标偏好对照](https://arxiv.org/html/2604.20685v1)支持把系数选择与应用分开作为实验分支，不授予原归一化 MGDA 的共同下降或 Pareto 保证。各属性的 pair 人口、重采样、loss 尺度、组合状态与最终 optimizer 都须保留；Gram 矩阵、额外梯度和多维 judge 同样计费。总体 judge 分提高仍可伴随单属性退步，自动 judge 的合成参照也不是真实人类 Pareto frontier；目标尺度或独立质量失配时，保留固定权重、原归一化组合与分维验收，而不靠组合系数替代发布约束。<!-- source-family:SF-2026-ARXIV-2604-20685 -->
+
+若固定辅助权重不能表达各类安全目标的不同缺口，可以另存每类非负控制系数，按离线 pair 的 policy/reference margin 构造 violation proxy，再反馈调整各类训练压力；目标也可以选择当前最大的加权项，而非把所有项直接求和。这样增加的是带类别身份的训练 controller，不是从偏好标签直接得到部署安全约束。最大项聚合与标准求和 Lagrangian 不是同一目标，少量系数也不自动形成所需的慢时间尺度；局部梯度解释不能签发收敛、KKT 或每步可行性。<!-- source-family:SF-2026-ARXIV-2604-17299 -->
+
+controller 必须保留测量人口与分母：类别和不安全事件的联合质量不等于给定该类别的不安全率，`1−sigmoid(β margin)` 也只是离线 pair proxy，不是当前 policy 的真实 unsafe 概率。[受限类别反馈对照](https://arxiv.org/html/2604.17299v1)仍有安全、能力与过度拒绝的切片取舍，不能由平均改进推出各类阈值已满足。类别标注、一致性过滤、reference/控制状态、更新和独立行为校准均计费；proxy、类别支持或 held-out 质量失配时，保留可信普通 pairs、固定权重与独立安全评价，真实工具权限和高风险 effect 仍交确定性 gate，而不让离线 controller 批准部署。<!-- source-family:SF-2026-ARXIV-2604-17299 -->
 
 这种相对质量还要拆成**生成器能力差**与**同一 pair 内的质量差**。用更强模型生成 chosen、更弱模型生成 rejected，可以扩大两侧差距，却同时改变来源、风格和推理分布；仅凭最终答案对错也不能描述 pair 的全部信号。一条受限的数据选择分支先冻结 generator identity、共同 prompts 和 verifier，再用独立 judge 比较 factuality、step coherence 等维度，选择差距明确的 pairs，同时保留正确/错误方向、随机同预算子集和域外 outcome 对照。
 
@@ -484,6 +494,8 @@ reference lineage 与历史 response lineage 也不是同一个对象。一个 s
 
 reference-free objective 免去 reward 中的反复 reference forward，缓存初始 proto 则为历史比较增加存储；每轮仍要生成当前 negatives，整条 acquisition 成本没有消失。固定 gold 分布又可能与新任务漂移错位；作者五轮、50k标注的配方与200k SFT不是总生成/训练 tokens匹配，局部任务也存在退步。因此应独立检查当前质量、历史比较标签、proto版本与完整预算；偏好关系失真、漂移或更新无净收益时，停止 self-play 并补新标注，保留固定-reference DPO 或 SFT，而不是仅靠历史第二项维持迭代。
 
+可执行 verifier 也只认证它所检查的层：formal tactic 通过类型检查，不等于这一步帮助完成证明。一条受限 proof-search 分支把成功证明路径的状态转移排在“仍合法、但本次搜索预算内未完成”的 sibling 之前，再将明确报错项放在更低层；这给偏好标签增加 progress 的人口身份，而非把所有合法步骤当等价成功。[必要排序对照](https://arxiv.org/html/2604.23712v1)中的预算耗尽不证明状态不可解，生成整条证明与局部 step-search 的采样次数也不是相同 compute。按 perplexity 加权 token 只是另一优化代理，不沿用正规 sequence-probability 的全部 DPO 推导；相关正文方向记号尚需消歧，不发布完整配方。搜索、证明验证、pair 构造与训练均付费；进展标签、预算或外域质量失准时，保留已验证成功轨迹、普通 DPO/SFT 与更宽搜索，不由形式合法性代签最终可解或通用推理进步。<!-- source-family:SF-2026-ARXIV-2604-23712 -->
+
 ### Preference Pair 需要先验证事实关系
 
 若 rejected response 在事实层面正确、只因风格被偏好系统压低，DPO 会把错误信号写进 policy。训练前应验证 pair 的 factual relation，并在证据支持时反转、降权或丢弃；格式、长度与内容偏好必须分账。<!-- source-family:SF-2026-ARXIV-2609-16532 -->
@@ -491,6 +503,8 @@ reference-free objective 免去 reward 中的反复 reference forward，缓存�
 pair validation 增加 judge 和标注成本，judge noise 也可能制造新偏差。两个 benchmark、8B 以内模型与 LLM judge 不证明普遍收益；证据不闭合时回退 verified preference pairs、CPT/SFT 或保留不更新。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23712` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23712v1)§4.2/4.3/5.2/5.6；2+1+2=5。formal-valid/预算内stagnant/成功proof人口分账，不把预算耗尽判不可解；Eq7方向冲突/非正规seqprob完整recipe不采，费用与旧路径近文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-04410` — Daily2026-04-08补Apr07自然日；[RDRO exact-v1](https://arxiv.org/html/2604.04410v1) §2.2/§3.1–3.4/§5/F，2+1+2=5，relative mixed-density目标差额深入。混合权重0<α<1；ratio≤1/α不授参数梯度或训练轨迹有界，population expressibility、UF-G/MIX反侧与搜索/训练全费保留。supp_apr08_reader必要Source/日门及实际正文、完整局部邻接POST通过；本注同步尚待其实际读回，未核代码或复现。
 
@@ -566,3 +580,11 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-22601` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22601v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。
 
 - FedPDPO `arXiv:2603.19741v1`：[§3–5/Alg1与必要D配置](https://arxiv.org/html/2603.19741v1)，supp_mar24实际必要原证、两head/共享本地目标、单机模拟与费用反侧。仅采用明确参数和合成margin分责，不采用§4完整理论soundness、factor平均权重等价、真实端到端通信、无泄漏、独立reward truth或生成安全；保offline PPO/extraepochs/test-round选择人口及大本地head成本，未复现/全附件。
+
+- `SF-2026-ARXIV-2604-13029` — Daily2026-04-16补Apr15；[exact-v1](https://arxiv.org/html/2604.13029v1) §4.1–4.3/Eq7/Rules1–5、§5.1–5.3/T1–4/§6，2+2+2=6。只essential full/partial资格→加权margin组pair与reference来源分责；不采用§3.2 MPO梯度recipe。judge/知识/random-margin反側、阶段人口与全费近文。R87必要Source/R64date与R123修订后逐字PRE通过，root授此窄位置，resume_apr16_review实际真实正文/完整邻接/本人注POST通过；作者仅同步此注并实际读回，不授DAY或真实onpolicy因果。
+
+- `SF-2026-ARXIV-2604-17299` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17299v1)§3/Eq4–13/Alg1、§4/T1–3、A4–5/C2/Limit。2+2+2=6安全受影响深入；只采用类别反馈的offline pair proxy/联合与条件分母/max与sum目标区别，不采约束达标/KKT/收敛。安全能力反退/overrefusal、所测配置和全费保报告；root必要Source/逐字PRE与实际正文/完整局部邻接/本人注非作者POST通过，窄lease释放；本注仅同步已发生结果，不授实现/复现或DAY。
+
+- `SF-2026-ARXIV-2604-18239` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18239v1)必要Source与本日SUP有效，2+2+2=6，具体接口差额必要深入。采用上述受限机制，不授完整概率路径等价、语义真值、全任务质量或服务SLO；支持、反侧与全费近正文。root实际owner/逐字PRE、保存正文完整两侧及本人注POST均通过，窄lease释放；作者仅行政同步并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-20685` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20685v1)必要层，2+1+2=5，loss-normalized系数用于raw gradients的具体差额深入，保共同下降/Pareto桥不继承、单属性反退与全部梯度/judge费用；未核代码/复现。root非作者实际必要Source/owner/逐字PRE通过并授单段与本注窄lease，作者已写入并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步，不授DAY。

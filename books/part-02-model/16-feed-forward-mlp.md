@@ -21,6 +21,8 @@ Attention 的核心输出是 Value 的加权组合。即使 Q/K/V projection 是
 
 模型还需要在每个位置上产生新的非线性特征：放大某些组合、抑制另一些组合，并把上下文证据映射到下一层更有用的表示。
 
+非线性变换出现的位置也需要随输入粒度检验，而不只是统计一共多少个 FFN。当一个符号被展开成多个空间 token，首轮 Attention 接收到的可能仍是尚未形成局部特征的线性输入；在聚合前先做逐位置非线性变换，是不同于只在聚合后处理的设计假设。[有限视觉算术 diffusion 对照](https://arxiv.org/html/2604.17673v1)中，单层 Attention→FFN 在较细 tokenization 下失败，前置 FFN 或加深到两层可以恢复；它不证明所有 Transformer 都必须采用 FFN sandwich，也不由 Fourier 表征吻合推出唯一因果电路。输入拆分、深度、参数/训练和采样预算、独立任务结果应一起比较；更细 token 与额外变换都付费，原 tokenization 或更多层已够用时仍可保留标准交替，不按这一合成任务的成功直接替换生产 block。<!-- source-family:SF-2026-ARXIV-2604-17673 -->
+
 朴素方案是继续堆叠更多 Attention。这样能反复交换信息，却不一定提供足够的逐位置非线性容量。Transformer 因而交替使用两类操作：
 
 ```text
@@ -370,3 +372,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-17231` — [EmotionNeurons exact-v1](https://arxiv.org/html/2603.17231v1)必要§3/Eq1–8、§4/T1、§5/T2–6与直接迁移/内容反侧、§6。仅成功人口→postactivation gate稀疏地址→生成控制的接口与分验；保伴随text WER非audio转录、judge/人选差别、强度/迁移反退和全费，不授语义纯净、唯一因果、内容正交/无损或完整部署保证，未核代码/复现。
 
 - `SF-2026-ARXIV-2604-02990` — 04-07补04-06自然日；FedSQ exact-v1 III-A/B/Alg1、IV/T1。仅采用固定input gate下输入affine与joint参数平均分离，5x/4x为本章公式的数学推断，不是论文保证；DualCopy存储与trainable分账、binary surrogate、central schedule及CNN反退保留，不授Transformer迁移或联邦收敛。root非作者已实际核必要Source、具体owner/逐字PRE与写后正文/完整邻接/本人note，POST通过；作者同步本记录后释放窄锁。未核artifact/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2604-17673` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17673v1) §3–4及AppA/C/E/G/H必要，2+1+2=5。仅采用输入粒度×首轮聚合前非线性/深度的有限替代检验；toy无序operandpair划分、Fourier吻合非唯一因果、classifier与训练/heldout分母边界保报告，额外token/训练/采样全费。fresh实际必要Source及root actual owner/A49单段逐字PRE通过并授窄lease，作者写入并顺读局部；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，不授实现复现或DAY。

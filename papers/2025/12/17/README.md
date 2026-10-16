@@ -4,17 +4,17 @@
 **窗口：** 2025-12-16T09:00:00+08:00 ～ 2025-12-17T09:00:00+08:00
 **补充窗口：** 2025-12-16 ～ 2025-12-16
 **窗口说明：** 用户授权2025已有Daily仅补遗漏，原window/candidate完整行/date/score/连续原§4冻结；新增只前一完整BJT自然日。旧完成和无TZ/hour日期hold为原时点，不代本轮验收，旧材料只作精确去重。
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-14T18:14:05+08:00
+**检查时间：** 2026-10-15T13:51:23+08:00
 
 ## 1. 结论
 
-2026-10-14 fresh补查进行中，只Dec16完整BJT自然日，root已验90/132、42待，本日不计。原Seedance官网Blog一完整候选行及6分/日期/仅报告、整个连续原§4保留，不继承Dec16的251池或Source响应。原本日Source/必要Source/独核按身份、精确版本、采用命题匹配复用，不重旧全部正文；Anthropic/Meta/MiMo官网原Dec16公开日期不额外要求秒/TZ，先恢复本日具体事件/版本角色，准备单篇即供Feynman。研究/Source/current/date及完整six仍普通，不能把原完成/ordinary0当本轮通过，见[本日恢复停点](../_sources/daily-20251217/SUP_RESUME_20261014.md)。目前无作者Books锁/legacy lease或新请求，不stagecommitpush/catchup。
+用户于2026-10-15明确恢复，覆盖10-14额度暂停；本轮只补Dec16完整BJT自然日，已通过Newton实际六部分DAY，跨日报验收计数由root维护。原Seedance官网Blog完整6分行/日期/旧窗口与连续原§4保持。按原官方date-only事件及必要精确证据，现确定5个唯一家族：旧Seedance发布事件＋Alignment、MiMo-V2-Flash、SAM Audio、PE-AV四原Dec16研究披露；不是把后arXiv提交日搬入或认定全球首次公开。
 
-现有日期证据支持一个确定当窗家族：Seedance 1.5 pro **官网Blog发布事件**，不是arXiv首公开事件；标准审阅和非作者复核完成，Books决定为仅报告。Anthropic与PE-AV首公开时刻经有限官方恢复仍缺，安全隔离；SAM官方X公告落窗，但没有独立新贡献证据，不把普通公告重新计为论文首发。必要正文已实际阅读，不用日期失败掩盖普通读文待办。有界来源检查及收窄arXiv初筛已记录，普通待办0；外部隔离项不支持覆盖通过或无遗漏断言。
+5项必要审阅完成：Seedance标准审阅/仅报告保持；其余4项受影响域深入及具体owner差额已独立核验，并实际各整合一自然段＋本人注。Alignment归TRAIN-RLHF/Ch31，MiMo无Value分母sink归MODEL-LONG-CONTEXT/Ch22，SAM混合音条件分离归MULTIMODAL-GENERATIVE-PARADIGMS/Ch24，PE-AV local/global监督竞争归MULTIMODAL-REPRESENTATION/Ch23；均经Newton真实POST和root逐书实际读回接纳、四锁释放。三新本人注已同步实际状态并由Newton/root读回闭合，不改机制。MOPD/MTP/R3等已有原则不重复写书，Meta后v1只补证，不冒Dec16全部recipe。
 
-FrontierScience、湿实验科研应用和 GPT-Image-1.5 当前产品发布正文已按各自原文范围关闭；前两项属于暂缓的 AI for Science，后一项未披露足以归因产品改善的新增机制。独立安全材料未因此被关闭。无 Books 写入；现有段落的具体对读不冒称新路线全部已有覆盖，日期隔离中的训练干预增量也未采用。
+来源有限差额保存于[本日来源补包](../_sources/daily-20251217/SUP_SOURCES_20261015.md)。新多模态提交缓冲一页35身份，31个非重复完整题摘独核为30精确v1＋1清楚范围外currentv2，另4已有判断定点复用；26潜力/5排除/4去重已Newton§16–19实际校准，13671v1具体监督接口与13072v1回放/保护反证分别修正原E。26项公开日未证，不列正式候选/评分/Books，非26篇已深入完成。旧缓冲只作线索，不重全池或全部PDF。机构历史缺段、个体公开日与仓库revision保留项不支持正面Coverage/Evidence或无遗漏。FrontierScience/湿实验范围与Images发布正文机制不足的原具体关闭保持，不扩大为独立安全材料已审。
 
 ## 2. 来源覆盖
 
@@ -22,30 +22,34 @@ FrontierScience、湿实验科研应用和 GPT-Image-1.5 当前产品发布正�
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research首入口、Research news仅当前9项+Load more；定点Dec16 FrontierScience/wet lab/Images完整核心说明，正文链接无独立该版本card；精确日期/主题补检返回已读条目，官方RSS有限替代403 | 受阻 | 历史目录邻接段未恢复，隔离不作零事件；独立安全材料未恢复，不将当前正文排除扩大到其安全证明 |
-| SRC-ANTHROPIC | Research首入口与Alignment Blog December相邻段；alignment-faking的Background/Metrics/Training details、三类Mitigation Setup/Results、Limitations/Methodological Lessons已读，root必要源审已记录 | 受阻 | alignment-faking首公开日期已有限恢复后隔离；主Research历史publicationList原始恢复SSL EOF，有限停止与具体重开条件见§5，不据此授全机构覆盖 |
-| SRC-GOOGLE-AI | Google Research2025 Blog第1页Dec18→Dec15→Nov12；DeepMind正确 `/blog/page/4/` December/November切片，五研究/政策页和GeminiFlash/audio外链各核官方datePublished：最近Flash Dec17 16Z、audio Dec12 17Z均窗外 | 受阻 | Blog切片已检查；publications首屏只有年份、精确历史首发段未恢复，不以Blog或月归属给全部论文覆盖通过 |
-| SRC-META-AI | Research入口与官方搜索相邻Dec16/18段，SAM/PE-AV完整题摘；官网PDF各有限失败后实际读2512.18099v1与2512.19687v1的必要方法/消融 | 受阻 | 两研究页首公开及12/16精确PDF缺失；较晚arXiv正文不自动等于12/16版。SAM X公告仅用于该公告时刻 |
-| SRC-QWEN | 旧Blog尾部最新Sep23并明确迁移qwen.ai/research；新目录动态壳与公开前端有限恢复未取得2025目录；Qwen3精确本窗commits空数组 | 受阻 | 历史研究目录不可恢复；空提交不证明全源零事件。只在官方历史目录/事件记录到达时重开 |
-| SRC-DEEPSEEK | 原始Change Log顺序越过本窗，邻接2026Apr24/2025Dec1，无分页；DeepSeek-V3本窗commits空；Speciale endpoint Dec15 15:59UTC到期，早于本窗 | 已检查 | 无本窗变更表/指定repo命中；不扩成互联网无遗漏声明 |
-| SRC-MOONSHOT | Platform Blog26条无Next；持续更新记录全文最新Nov6 K2 Think→Oct27→Sep5，向下May2024；Kimi-K2本窗commits空 | 已检查 | 指定原始入口未发现本窗研究条目，不据空提交作全源零事件 |
-| SRC-TENCENT-HUNYUAN | 官方Research/浏览器有限失败；实际公开API `POST /api/blog/publicList` 全部renderType0共11条仅2026，历史2025目录未恢复；官方repo精确窗口补检T1/Avatar/Video1.5/WorldPlay，必要变化题摘/历史README/patch已读 | 受阻 | WorldPlay历史README Dec17无时区，commit不证明public；Video1.5 all_gather backward修订需公开revision事件。2025目录缺口、两具名事件日期隔离，不称普通维护或零事件 |
-| SRC-ZAI | Research第2页累计18条、底部没有更多；Dec21 GLM4.7→Dec10TTS→Dec9ASR→Dec7GLM4.6V已越窗；release notes Dec22/Dec11相邻段 | 已检查 | 本窗目录未发现条目；不以release notes替论文目录 |
+| SRC-OPENAI | 复用本日旧有效Research入口/9项+Load more有限段；定点Dec16 FrontierScience/wet lab/Images完整核心说明，正文链接无独立该版本card；精确日期/主题补检返回已读条目，旧官方RSS有限替代403不重试 | 受阻 | 历史目录邻接段未恢复，隔离不作零事件；独立安全材料未恢复，不将已读发布正文排除扩大到其安全证明 |
+| SRC-ANTHROPIC | 复用Research/Alignment December相邻段及必要Source；本日原作者Dec16披露已按date-only恢复，新RAW_ALIGNMENT已保存/独核；5分及Ch31实际整合/POST闭合 | 受阻 | Alignment事件不再因缺秒/TZ隔离；主Research历史publicationList缺段仍保留，旧SSL EOF不重试，不能由单篇授全机构覆盖 |
+| SRC-GOOGLE-AI | 复用本日旧有效Google Research2025 Blog第1页Dec18→Dec15→Nov12；DeepMind正确 `/blog/page/4/` December/November切片，五研究/政策页及GeminiFlash/audio原datePublished：Flash Dec17 16Z、audio Dec12 17Z均补窗外 | 受阻 | Blog切片已检查；publications首屏只有年份、精确历史首发段未恢复，不以Blog或月归属给全部论文覆盖通过 |
+| SRC-META-AI | 原Research相邻段与两原页完整AB/Dec16日门复用，本轮原题摘再核；必要2512.18099v1/19687v1为后稿补证；两评分/当前owner/逐字PRE已独核 | 已检查 | 已知两原披露不再因秒/TZ隔离；原Dec16PDF未得，不声称后v1同bytes或Dec16完整recipe，未采用的历史特有细节仍保留 |
+| SRC-QWEN | 本日RAW_QWEN标准JSON实际40完整对象，Newton§6核Dec5/9→Dec19/23/31，没有Dec16字段；不重同请求 | 受阻 | 响应无total/next，40不证明完整历史零条目；只在官方目标历史段/事件证据到达时重开 |
+| SRC-DEEPSEEK | 旧Change Log/指定repo有限层复用；新HOME/NEWS SSR原件完整可见正文：动态5条Apr24→Dec1、研究10条Dec31→Dec2→Nov27，无Dec16字段，Newton§14核 | 受阻 | 两“查看全部”尚未展开，限定当前切片已检查，不据首页/空commit声称完整历史零论文；恢复目标展开段后定点核 |
+| SRC-MOONSHOT | Platform Blog26条/无可见Next及changelog范围复用；本轮具名Kimi CLI0.65 release五项说明实际读，命名/empty会话排序/wire近期turn呈现/usage/bump，未披露新的执行恢复或可靠性机制，关闭 | 已检查 | 有界入口与具名版本处理，不据空提交作全源零事件；wire展示不等环境副作用重放 |
+| SRC-TENCENT-HUNYUAN | 旧全部renderType0仅2026的11条与T1/Avatar/Video1.5/WorldPlay必要层复用；本轮web Research0行，一次hidden browser63.963秒超时未得目录，不重试 | 受阻 | 2025目录缺段。WorldPlay原Dec17声明属补窗后，不用Dec16commit迁日；Video1.5 all_gather backward→SUM reduce_scatter修订仍缺公开revision日期，具名隔离不按普通维护关闭 |
+| SRC-ZAI | 复用本日旧有效Research第2页18条/没有更多，Dec21 GLM4.7→Dec10TTS→Dec9ASR→Dec7GLM4.6V已越窗；release notes Dec22/Dec11相邻段。本轮同页web不可达，不冒新恢复成功或推翻既有层 | 已检查 | 限原实际切片未发现本窗条目；不以release notes替论文目录，不把本轮工具失败作零事件 |
 | SRC-BYTEDANCE-SEED | 官方API Blog类型2/论文类型1，2025第一页的精确邻接段：Blog Dec24/18/16/2/Nov27，论文置顶Seedance、GR-RL后Oct21以下。Blog事件ID1817；必要Blog正文及链接2512.13507v1 p2–8已读 | 已检查 | 声明发布时间可用，但未取不可变2025 Blog上线日志；不授论文个体公告时间 |
 | SRC-BAIDU-ERNIE | 中文技术Blog第1页10条，Dec23 Preview1203→Dec9 Preview1103→Nov21 Preview1120，下页2/2；本页已越过本窗 | 已检查 | 未发现该目录本窗条目，非全网无遗漏 |
-| SRC-XIAOMI-MIMO | 官方首页及MiMo-V2-Flash发布页；精确release commit65f0e738的README与31页paper必要方法/对照/安全反证已读；发布页December16无时区时刻、原始HTML无日期meta | 受阻 | 首公开时刻仍缺；commit不授public，明确隔离，不用2026 arXiv代替历史版 |
+| SRC-XIAOMI-MIMO | 本日homepage Paper8/Blog15及More边界；真实iframe发布正文HTTP200/79305B已存并完整读，Newton§9核Dec16；65f0e738历史31页必要域复用，5分/唯一Ch22/逐字PRE通过 | 已检查 | 已知发布事件已恢复，非动态壳/2026稿；More未全展不授全站历史，commit本身不独证public，性能/安全反侧保留 |
 | SRC-MINIMAX | 官方研究Blog12条，Dec23 M2.1与Oct27 M2/Agent邻接，无Next/load-more | 已检查 | 未发现该目录本窗条目；Dec23仅后续恢复线索 |
-| SRC-ARXIV | 官方语言模型、音视频/世界模型查询为提交缓冲 [Dec12,Dec15)、语言 [Dec15,Dec16)；系统收窄到具体GPU kernel/collective/LLM inference等14条及ML语义compute46条，[Dec14,Dec16)均到页尾；cs.CL官方长格式仅2512.12000–14000段标题补检。新增有效题摘与SIGMA定点§3–4保留，不把宽库存变队列 | 受阻 | 本轮有界发现/收窄已执行；提交缓冲不是公告池，个体first-public不可恢复的具名项隔离。日精度announcement空响应不证明零事件；没有全学科/全月召回保证 |
+| SRC-ARXIV | 旧语言/多模态/收窄系统14与ML上下文46及相关标题段有效层复用，240宽库存撤销覆盖不重；只补多模态同义主题submitted Dec15→16一页35条/无Next（其中14044/14014精确v1实为Dec16提交），完整AB及16项精确v1差额、四强信号current，Newton§16–19实际校准26潜力/5排除/4去重 | 受阻 | 提交/月字段不是new公告日，26具名个体公开日未知不入正式表。旧日列表/legacy失败不重试，无全分类/全月召回或无遗漏保证；独核范围详SUP§5 |
 
 arXiv 查询与实际页尾分别保留在 [语言模型缓冲](../_sources/daily-20251217/ARXIV_LANGUAGE.md)、[Dec 15 语言模型线索](../_sources/daily-20251217/ARXIV_LANGUAGE_MON.md)、[多模态线索](../_sources/daily-20251217/ARXIV_MULTIMODAL.md)。[原系统查询](../_sources/daily-20251217/ARXIV_SYSTEM.md) 的裸 `kernel OR transformer` 引入纯统计与物理，240 项宽库存只留作历史发现线索，已撤销其覆盖资格，不转成逐项关闭队列。后续 GPU/kernel/collective/compiler 必须带大模型/ML 系统语义或相关系统分类，不扩全月扫描。
 
 ## 3. 候选与判断
 
-确定当窗候选1个家族、1个官网Blog发布事件；不能用本事件的时间给链接论文另授首公开归属。其余日期保留项不计分母，亦不因外部缺口改成低分或零命中。
+确定当窗候选5个唯一家族：原Seedance完整行保留，新增四原Dec16研究披露。官网事件不为后链接论文另授arXiv首次公开；日期未知线索不计此分母，不因缺口降分或写零命中。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Seedance 1.5 pro 官网Blog](https://seed.bytedance.com/en/blog/sound-and-vision-all-in-one-take-the-official-release-of-seedance-1-5-pro) | 2025-12-16T18:47:38+08:00 | 独立音画条件难以保证一致→联合MMDiT、coherence数据与联合reward链→须从联合分布/训练信号解释；2+2+2=6 | 标准完成 | 仅报告：联合路线真实，但模块细部与机制级归因不足，不能超出现有Ch24一致性约束；非作者具体对读通过 |
+| [Towards training-time mitigations for alignment faking in RL](https://alignment.anthropic.com/2025/alignment-faking-mitigations/) | 2025-12-16 | 后轮问询无直接梯度不等监督独立→首轮上下文经后轮reward仍受间接选择→训练目标与独立行为验收分责；2+1+2=5 | 深入完成 | 整合：`TRAIN-RLHF` [Ch31](../../../../books/part-04-training-system/31-rlhf.md)，一段＋本人注实际POST/root读回/行政同步闭合 |
+| [MiMo-V2-Flash原发布](https://mimo.xiaomi.com/mimo-v2-flash) | 2025-12-16 | 局部softmax把全部质量分给可见Value→无Value仅分母learnable sink→归一化与历史内容状态分责；2+1+2=5 | 深入完成 | 整合：`MODEL-LONG-CONTEXT` [Ch22](../../../../books/part-02-model/22-long-context.md)，实际一段/本人注，Newton18/root实际POST接纳/锁释放 |
+| [SAM Audio](https://ai.meta.com/research/publications/sam-audio-segment-anything-in-audio/) | 2025-12-16 | 固定类别/单提示不能唯一消歧→混合音按语义/视觉/span共同条件分离→目标与输出评价分验；2+2+2=6 | 深入完成 | 整合：`MULTIMODAL-GENERATIVE-PARADIGMS` [Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)，后v1补证分责，Newton18/root实际POST接纳/锁释放 |
+| [PE-AV](https://ai.meta.com/research/publications/pushing-the-frontier-of-audiovisual-perception-with-large-scale-multimodal-correspondence-learning/) | 2025-12-16 | 全局pair匹配不保帧级定位→local/global采样改变边界与误报取舍→两类评价不能互签；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)，后v1补证分责，Newton18/root实际POST接纳/锁释放 |
 
 ## 4. 证据与知识整合
 
@@ -67,28 +71,50 @@ Blog 披露联合生成、数据调度、后训练及 distillation/quantization/
 
 本次明确采用Blog发布事件；必要原文与v1 p2–8已读，具体披露/反证及Ch24现有音画共享条件段对比见[Blog证据](../_sources/daily-20251217/SEEDANCE_BLOG_EVIDENCE.md)。Blog当前UpdateTime较晚，未声称取得不可变2025正文；只采用与早期精确v1相容的联合设计轮廓。模型卡没有联合模块方程/消融与可比加速配置，不从模型声望或recipe名称推导长期知识写入。
 
+### 补查更新：原连续证据段的当前事件权限与Books结果
+
+以上原连续§4完整保留，不改其中历史日期hold或旧owner提案；其中“缺首公开时刻”“未采用”等属于原时点，不是本轮结论。当前date-only原Dec16研究披露门、精确版本角色和实际Books处置以本段与§3/5/6为准，不以时分秒重开已有效日门。
+
+Alignment必要方法/反侧及`2+1+2=5`复用，唯一差额是首轮文本→后轮问询→reward→首轮更新，mask不授监督独立；具体Ch31新增L464处一段与末本人注已Newton§10实际完整两侧/本人注POST、root读回接纳，行政同步闭合，见[单篇§5–8](../_sources/daily-20251217/SUP_ALIGNMENT_SOURCE_20261014.md)。原probe漂移、CoT/output与Ch66 monitor原则已有覆盖，不重复写入。
+
+### [MiMo-V2-Flash原发布](https://mimo.xiaomi.com/mimo-v2-flash)
+
+实际保存的[原iframe正文](../_sources/daily-20251217/RAW_MIMO_IFRAME_20261015.html)不是导航壳；[单篇§1–6](../_sources/daily-20251217/SUP_MIMO_SOURCE_20261015.md)保存65f0e738必要p6–8的sink、32B dense非最终MoE/窗口反退，与MOPD Table7/未来commit泄漏反侧。只采Ch22无Value归一化差额；MOPD/R3/MTP具体已有原则不再堆多owner，速度/peak/总KV常数不采用。Newton§12/15已核Source/5分/owner/逐字PRE，实际一段及本人注经Newton18完整两侧/本人注POST和root读回接纳，锁释放，行政状态已同步。
+
+### [SAM Audio](https://ai.meta.com/research/publications/sam-audio-segment-anything-in-audio/)
+
+[Meta单篇§1/3/5–6](../_sources/daily-20251217/SUP_META_SOURCE_20261015.md)保6分与唯一Ch24混合音按语义/视觉/span共同条件分离的具体gap。原Dec16AB支持研究轮廓；Dec19后精确2512.18099v1只补联合latent、span/器乐反退与judge相关非真值，不倒称原日25Hz/drop/SAJ完整recipe。条件分离不保证实例身份或波形严格加和，codec/迭代/judge/人评全费用与保原混合音退路近正文。实际一段/本人注已Newton18完整邻接/本人注POST、root实际读回接纳与释放，行政状态已同步。
+
+### [PE-AV](https://ai.meta.com/research/publications/pushing-the-frontier-of-audiovisual-perception-with-large-scale-multimodal-correspondence-learning/)
+
+[Meta单篇§2/4/5–6](../_sources/daily-20251217/SUP_META_SOURCE_20261015.md)保5分与唯一Ch23 local/global监督人口竞争的具体gap。原Dec16AB支持统一/帧级轮廓；Dec22后精确2512.19687v1补证Fig12边界改善与误报惩罚反退，保8+2阶段、base/100k/batch800与完整模型分责，不授普适0.7/更多pair或数据单调因果。目标采样、encoder/consumer与边界/漏检/误报/global检索分验、制备/适配/逐帧费用近正文；实际一段/本人注已Newton18完整邻接/本人注POST、root实际读回接纳与释放，行政状态已同步。
+
 ## 5. 缺口与下一步
 
-**普通待办：** 0。最后相关题名对照已补两项可得PDF：2512.12595v1按具体新增机制未成立关闭，2512.13352v1保留ranking与confirmation不同的评价增量；不是日期失败豁免题摘/准入判断。非作者已定点核验这些判断与完整停止点，并纠正SIGMA Effective Utilization/MFU的指标混淆。新增potential及停止依据见[原始准入记录](../_sources/daily-20251217/ADMISSION_ADDITIONS.md)与[SOURCE_STOPS](../_sources/daily-20251217/SOURCE_STOPS.md)，不是覆盖通过或零事件证明。
+**普通待办：** 无。研究扫描、筛选、必要审阅及实际Books落实已无作者普通待办；新35校准与Kimi/四current/有限来源差额已Newton§16–19实际完成，四整合实际POST/root接纳与锁释放、三本人注行政差额读回均闭合。Newton§22实际完整六部分DAY通过后保存本完成态；完成态FINAL仅检查此次行政差额，尚未预签。旧12595关闭、MIA ranking/confirmation差异与SIGMA指标纠正的有效层复用，不重全部方法。
 
-**已隔离的外部日期/版本保留项：** Anthropic alignment-faking、Meta PE-AV的首公开时刻经[四事件日期恢复](../_sources/OFFICIAL_EVENT_DATE_RECOVERY.md)有限官方路径穷尽，保留潜在贡献与已读必要证据，暂缓当窗采用与Books。SAM官方X `2000980784425931067` 发布时间12/17 01:26:10+08，只证明公告；没有独立新贡献不重收为论文，原研究页首公开仍隔离。Meta官网12/16 PDF不可得，较晚arXivv1可读但历史同一性未证，需官网原PDF或官方版本一致说明。每项重开条件与精确原始链接在sidecar/Meta证据文件；不用转载、提交、OAIupdated补时刻。Seedance声明的Blog事件日期已通过root独立JSON核验，不再列作日期受阻。
+**版本边界保留：** Alignment/Meta/MiMo原Dec16研究披露日门已恢复，不再请求秒/TZ。SAM普通X不另增family；Meta后精确v1并非Dec16原PDF同bytes的证明，本次仅在原AB研究轮廓上用后稿补证/收窄；未采用的历史特有recipe只有原官网PDF或官方版本一致说明到达才定点重开。SeedanceBlog事件沿原JSON日期有效，不授arXiv首次公开。
 
-**arXiv与仓库具名保留项：** [新增准入线索](../_sources/daily-20251217/ADMISSION_ADDITIONS.md)保存精确v1题摘、增量、反证/安全信号与范围排除理由。普通题摘读取和SIGMA决定准入的§3–4补读已执行。必要个体first-public历史记录不可恢复的项，不计确定候选、不评分、不写Books；重开需要官方new公告/RSS或首次正文上下界，不能用常规EST20:00排期批量授日期。WorldPlay与Video1.5修订还需公开release/push记录，不以commit时间证明上线。日期隔离不证明覆盖通过，也不把已发现有效贡献删掉。
+**arXiv与仓库具名保留项：** [新增准入线索](../_sources/daily-20251217/ADMISSION_ADDITIONS.md)保存精确v1题摘、增量、反证/安全信号与范围排除理由。普通题摘读取和SIGMA决定准入的§3–4补读已执行。必要个体first-public历史记录不可恢复的项，不计确定候选、不评分、不写Books；重开需要官方new公告/RSS或首次正文上下界，不能用常规EST20:00排期批量授日期。WorldPlay原Dec17声明不属于Dec16补窗，不用Dec16commit迁入；若其更早同core公开证据到达，只按该身份/真实归属日恢复，不阻本窗。Video1.5 all_gather backward修订仍需有权公开revision记录，不以commit证明上线。日期隔离不证明覆盖通过，也不把已发现有效贡献删掉。
 
-MiMo历史release的[必要正文与反证](../_sources/daily-20251217/MIMO_NECESSARY_EVIDENCE.md)已读；MOPD Table7反驳全领域保住best teacher，AppendixB记录SWE-Bench未来commit泄漏。日期保留项需要官方first-public上下界，非普通读文受阻，不采用其完整模型/安全保证，不据此写Books。
+新35主题缓冲中26个具名潜力的精确版本/增量、5排除与4去重见[SUP§2/4](../_sources/daily-20251217/SUP_SOURCES_20261015.md)。26个体公开日仍未知，不评分/正式入表/Books；只在具名官方new/RSS pubDate或作者原始发布日到达重开该身份，不重旧失败legacy、不按提交排期或月字段授日期。其必要版本题摘已实际读，不把普通未读伪装外部缺口。原arXiv具名保留与本切片重叠只去重，尚未统计联合未知family数，不简单把两份线索相加。
 
-**历史目录保留项：** OpenAI原始目录/RSS、Anthropic主Research历史部分、Google publications首发段、Qwen迁移后历史目录、Hunyuan2025目录，经本轮有界原始/替代入口仍不可恢复。恢复条件是相关官方历史邻接段/可读分页或真实窗口发布记录，只重开该来源/身份；各来源已知有效材料均保留。这些限制不支持“本窗无遗漏”。
+**历史目录保留项：** OpenAI原始目录/RSS、Anthropic主Research、Google publications首发段、Qwen40之外完整历史、Hunyuan2025及DeepSeek未展开“查看全部”部分；对应有限停止/失败保留。恢复条件是相关官方目标历史邻接段/可读分页或真实窗口发布记录，只重开该来源/身份；不重已失败相同入口，不从当前壳/无Next文字/搜索首屏推全覆盖。这些限制不支持“本窗无遗漏”。
 
 以上均为本窗终态保留项；重开条件是对应身份的官方首次公开范围、历史版本同一性或来源原始邻接证据。隔离不支持正面证据、Books或无遗漏断言，不计Coverage/Evidence通过。
 
-**必要源审与Books交接：** Anthropic必要正文及Seedancev1明确位置已由root独立读过，复用其源审，不重复全篇抓取。Seedance具体Ch24差异“仅报告”已获非作者定点校准；Anthropic训练干预具体增量的Ch31局部草案在日期隔离期间不请求实际写书，不宣称已有覆盖。Meta必要可得替代正文已读，不能把它们称为尚未读完的外部受阻。
+**必要源审与Books交接：** Alignment、MiMo、SAM、PE-AV共4实际整合分别具名POST/root接纳，四锁均由root释放；三本人note只同步已发生行政状态，无机制返修待办。Seedance仅报告旧判断保持，不触共享State/index。MiMo性能/安全与Meta后稿边界不因本轮日门恢复变成普遍保证。
 
 **已关闭负侧：** 三项具体理由与读取位置见 [准入记录](../_sources/daily-20251217/ADMISSION_CALIBRATION.md)。非作者已实际读湿实验核心，与先前FrontierScience/Images共3项官方负侧抽检；GPT-Image-1.5 独立安全材料若有实质变化须定点重开。
 
 ## 6. 复核
 
-复核者：主线程（独立于报告作者 Nash）。
+复核者：Newton（本轮非作者；原Feynman与非作者root的有效层按身份/精确版本/命题复用）。
 
 结论：通过
 
-[实际复核记录](../_sources/daily-20251217/ROOT_ADMISSION_REVIEW.md)覆盖唯一拟入选事件的原文、声明日期与Ch24具体差异，相关安全/纠错/设计反证的完整题摘及必要正文，14源有限停止点和外部保留。普通负侧抽检3项官方核心与2项arXiv机制/任务样本，不授全量正文验证；SIGMA指标混淆已更正。无Books写入后待办，日期和历史缺口不计正面通过。结构校验另行执行，不替代语义复核。
+[本日独核§8–19](../_sources/daily-20251217/SUP_INDEPENDENT_20261014.md)实际核Qwen40/MiMo iframe/DeepSeek切片、四新增事件/评分/必要Source/唯一owner/PRE；Alignment POST10与其余三逐书POST18均实际全文新增/完整两侧/本人注回对Source，不由marker/diff代语义。[root记录末恢复节](../_sources/daily-20251217/ROOT_ADMISSION_REVIEW.md)已逐书实际接纳/释放四锁。新35按31非重复完整题摘（30精确v1＋1清楚范围外currentv2）及4已有判断复用核成26P/5E/4dup；全部潜力/设计反证与五排除依具体理由实际核，两个误排定点修正。另四current/版本信号及Kimi0.65五项关闭实际核，原3官方/2arXiv负侧、强信号及Seedance仅报告层有效；未无差别重全文/全部附件或授全版本无撤回。
+
+Newton§22已实际完整顺读当前六部分并逐项DAY通过：来源有限范围/停止、日期与版本、准入评分、必要证据/反侧、四项实际Books及其前后衔接、普通/外部责任和复核范围均一致；三本人注行政差额已Newton§20/root逐一读回闭合。作者据已发生DAY保存完成态；Newton§23已实际完成态FINAL通过，root在ROOT_ADMISSION_REVIEW末“root实际日级接纳：DAY22与保存完成态FINAL23”完整读回同hash保存稿并接纳Dec17。本次仅同步已发生指向，不重研究或替root维护计数。
+
+完成态V3校验、本地引用及原完整Seedance行/窗口/连续原§4检查另行实际执行，限定cached/unstaged diff-check通过；机器仅证明接口、路径和范围，不证明隔离项已通过、互联网无遗漏、实验复现或生产能力。

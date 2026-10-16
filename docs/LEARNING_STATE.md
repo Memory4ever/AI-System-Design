@@ -4,23 +4,51 @@
 
 ## 已暂停：2025 年已有 Daily 增量来源补查
 
-**共享 Books 当前无本轮写锁；Oct18 LAVA的Ch63单项实际POST及本人源注同步均已闭合。** [root本日独核§2/4/5](../papers/2025/10/_sources/daily-20251018/SUP_INDEPENDENT_20261014.md)真实原Blog Oct17事件/部署与三cache触发/6分必要深入、唯一PLATFORM-GPU-SCHEDULER具体gap与最终PRE及实际正文POST有效；root完整顺读190–235/new214/本人387源注及邻接，逐字PRE/正文1注1、本人4新增/cached4外部/两层限定检查通过，§5行政同步已实际读回。无需重写正文、源注或重复审批；本日整合1，不授DAY。Dec17 Alignment的Ch31单段PRE仅reader通过，root尚未授锁或批准写入，未发生正文/note写入或POST。Paddle、Rex、GPT5.2及此前有效POST保持；90/132不是全范围完成，不stage、commit、push。
+### 最新 checkpoint：2026-10-15，等待用户校验
 
-**状态：暂停（用户于2026-10-14因周额度将尽明确要求保存checkpoint）。** 本段覆盖下方所有旧恢复、连续执行及旧停点说明。五个协作会话均已保存停点并结束本轮运行，停止新研究、抓取、换日及Books写入；等待用户明确恢复，不由Heartbeat自动继续这个历史cursor。已验收90/132，42份未验收；保留旧候选日期/评分/窗口/连续§4及无关修改，不stage、commit、push。暂停不代表全范围完成，也不改变其他2026任务或日常自动化配置。
+用户明确要求“保存checkpoint，我先校验一下”。本轮已暂停；以下旧记录中的“持续运行”“普通继续”和旧恢复路由均不构成继续执行授权。等待用户明确恢复，并先消费用户的校验结果。未修改自动化或其他会话任务。
+
+- **进度保持 109/132，23 份未整日验收。** 已验日期为 05-01～04、07-01～04/11/21、09-01～30、10-01～25、11-01～22、12-01～22。剩余 10-26～31 六份、11-23～30 八份、12-23～31 九份。这里的已验收仅表示各日报所述有限检查及保留缺口获接纳，不表示历史来源已全部恢复或不存在遗漏。
+- **优先等待校验的问题：arXiv 历史日期路径。** 最近多份报告发现大量有潜在贡献的论文，却因公开事件日期未核实而未进入正式候选。最近提交日期用于发现，不等于公开日期；一次 Advanced Search 日期查询报错，也不证明其他历史公开日期渠道不可用。此问题尚未修复，不能继续把批量日期未确认当成查漏充分完成，不能解释为论文没有贡献。恢复前先结合用户校验决定后续路径；本次未改日期合同、来源规则或校验器，也未移动旧候选日期。
+- **10-26 停点：** [作者暂停节](../papers/2025/10/_sources/daily-20251026/SUP_SCOPE_20261015.md)及[root已核层](../papers/2025/10/_sources/daily-20251026/SUP_INDEPENDENT_20261015.md)。首六题摘及有限查询范围已核；后续题摘判断、安全/current 与来源尾包尚未全部独立复核。作者另有已读未归并差额，按暂停节逐项恢复，不将原导航列表变成全量全文队列。尚无完整日报本轮验收。
+- **11-23 停点：** [作者暂停节](../papers/2025/11/_sources/daily-20251123/SUP_SCOPE_20261015.md)及[独立复核 §7](../papers/2025/11/_sources/daily-20251123/SUP_INDEPENDENT_20261015.md)。首批来源字段和旧有效层已核；来源尾包、LPLB 具体资格、必要日期与完整日报整理尚未完成，没有本轮日级验收。
+- **12-23 停点：** [作者 §6](../papers/2025/12/_sources/daily-20251223/SUP_SCOPE_20261015.md)、[独立复核 §15](../papers/2025/12/_sources/daily-20251223/SUP_INDEPENDENT_20261015.md)及[root记录](../papers/2025/12/_sources/daily-20251223/ROOT_REVIEW_20261015.md)。GLM 唯一候选行已保存；Ch75 实际整合、写后复核和接纳均已完成，无 Books 写锁。日报仍进行中：§4 尚缺与 GLM 候选对应的具体证据说明；旧 §13 日级通过已撤销，待该窄差额修复及实际复核后才可完成整日验收，当前不计入 109。保留原连续 §4 旧块不等于禁止在旧块之后补充新候选说明；暂停时未实施该补充。
+
+五个本轮执行会话均已保存停点并确认本人已知在途命令结束，没有待继续等待的本任务请求；不据此声称全机无进程，未终止其他任务。本次仅保存各自停点及本入口，保护全部既有暂存/未暂存/并发修改，不 stage、commit 或 push。恢复时重读 AGENTS 与适用合同，复用已核的具体材料层，不重新处理全部已验日期；仍不扩八月、2026、当前日、Weekly 或缺失 Daily。
+
+### 暂停前工作记录（不作为自动恢复授权）
+
+**最新109/132已整日验收、23待，持续运行未暂停。** Nov22 Ohm真实DAY24/完成态FINAL25及[root接纳](../papers/2025/11/_sources/daily-20251122/ROOT_REVIEW_20261015.md)通过；新100为85P14C1W，Selenium恢复与Interview最终C/过度恢复撤销留轨，127论文+LPLB1资格/七机构及四OpenReview限制隔离，不授全Coverage/Evidence或无遗漏。原Anthropic唯一6分OnlyReport0保持，新增正式/Books新写0；原完整行/date/score/window/连续§4及baseline=HEAD、V3/14本地引用12路径/限定两层检查通过。Oct25及此前已验Books全链保持，不重原证。当前Godel/root Oct26仅补Oct25、Noether/Ohm fresh Nov23仅补Nov22、Boyle/Newton Dec23仅补Dec22。已验05-01～04、07-01～04/11/21、09-01～30、10-01～25、11-01～22、12-01～22；剩Oct26～31六份/Nov23～30八份/Dec23～31九份。当前Books窄位见下，全部并发修改保护，不stage、commit、push。
+
+**当前本轮Books窄锁全部释放。** Dec23 GLM Ch75单自然段/本人note已真实保存，Newton非writer完整POST10与[root§2](../papers/2025/12/_sources/daily-20251223/ROOT_REVIEW_20261015.md)实际正文/完整两侧/本人注读回接纳；仅4新增0删/cached空，限定两层检查通过，未改旧marker/段或其他notes。作者仅同步本人note已发生POST/root事实并读回该一条，不重Source/正文/重复收据。该单项闭合不计Dec23整日验收；其他独立日期普通继续，全部既有/并发修改保护，不stage、commit、push，不扩八月/2026/当前日/Weekly/缺失Daily。此入口覆盖下方旧锁/数字/已验日期待办，不影响其他会话2026任务。
+
+**当前本轮Books窄锁已全部释放。** Dec20 Bloom6分/AO5分的Ch66两个单自然段及本人note已真实保存，Newton8/9完整actualPOST与[root§2](../papers/2025/12/_sources/daily-20251220/ROOT_REVIEW_20261015.md)实际完整正文/两侧/本人注读回接纳释放；unstaged本人8新增/cached既有8保护。两本人note行政差额已root实际完整读回闭合，不重Source/正文或重复收据。Qwen尚未授写/保存，其余Source/准入/date/six普通；101/132不含Dec20。
+
+**最新恢复入口（2026-10-15）：101/132已整日验收，31待，连续推进未暂停。** Oct22真实DAY9/完成态FINAL10及[root接纳](../papers/2025/10/_sources/daily-20251022/SUP_INDEPENDENT_20261015.md)通过；两确定机构家族，OCR5已有覆盖/Atlas3仅报告、Books新写0，旧54恢复49P5C与新101的75P25C1W只按实际分层，124必要资格/历史源隔离不授全覆盖。Nov20真实DAY30/FINAL31/root9与Dec19真实DAY26/FINAL27/root7接纳保持，全部实际整合/本人注行政闭合，本轮无Books锁。当前Godel/root fresh Oct23仅补Oct22、Noether/Ohm Nov21仅补Nov20、Boyle/Newton Dec20仅补Dec19；已验05-01～04、07-01～04/11/21、09-01～30、10-01～22、11-01～20、12-01～19，剩10-23～31九份、11-21～30十份、12-20～31十二份。此入口覆盖下文100/99/98及已验日期旧待办；保留旧候选/date/score/window/连续§4，保护全部既有/并发修改，不stage、commit、push；八月/2026/当前日/Weekly/缺失Daily不扩。
+
+**最新恢复入口（2026-10-15）：99/132已整日验收，33待。** Dec19已由Newton真实DAY26/完成态FINAL27与[root§7](../papers/2025/12/_sources/daily-20251219/ROOT_REVIEW_20261015.md)完整六节/冻结/引用/V3/限定两层检查接纳；原1＋新8家族，本轮五真实整合及三已有覆盖全闭合，无Books锁。当前路由为Godel/root Oct22、Noether/Ohm Nov20完成态链、Boyle/Newton fresh Dec20仅补Dec19自然日。已验：05-01～04、07-01～04/11/21、09-01～30、10-01～21、11-01～19、12-01～19；待10-22～31十份、11-20～30十一份、12-20～31十二份。此入口覆盖下文旧98/132与Dec19普通待办表述；历史源/日期精确保留不授无遗漏，保护既有/并发修改，不stage、commit、push。连续推进未暂停，八月/2026/当前日/Weekly/缺失Daily不扩。
+
+**当前本轮Books窄锁均已释放。** Nov20 Body Ch23一段/本人注真实保存、Ohm28 actualPOST与[root§8](../papers/2025/11/_sources/daily-20251120/ROOT_INDEPENDENT_REVIEW_20261015.md)实际完整正文/邻接/本人注接纳释放，末注行政实际读回亦闭合；同日四整合全链无待办。小写tracked路径32→36/cached14及并发P3T新增保护，reader错误空返回已局部更正，不重原证。Dec19本轮五整合（Vend/Codex/Pixel/Post-Hoc/U18）Source/正文/POST/admin亦全闭合，日级未验。Oct22原54贡献层49P5C及Atlas/OCR Oct21机构事件/窄准入、OCR必要v1压缩反侧已root实际核，见[root§1–4](../papers/2025/10/_sources/daily-20251022/SUP_INDEPENDENT_20261015.md)；owner/新查漏/Source/日门仍普通。累计98/132；三日期继续，不stage、commit、push。
+
+Nov19 SoCE Ch35单段/本人note真实保存、Ohm15完整POST、root正文/两侧/本人注及行政差额读回均已闭合；外部cached6新增保护。该日现已实际DAY21/完成态FINAL22/root§3整体验收，见[接纳记录](../papers/2025/11/_sources/daily-20251119/ROOT_INDEPENDENT_REVIEW_20261015.md)，不再列Nov19普通待办或等待其日级完成。
+
+**最新98/132已验收、34待。** [Oct21真实DAY10/完成态FINAL11](../papers/2025/10/_sources/daily-20251021/SUP_INDEPENDENT_20261015.md)接纳：新增Google相册1家族/5分/Ch24真实整合1，150导航出现/134身份/26旧重合/108新完整AB实际校准81P25C2W，旧66恢复57P9C另计；必要current/安全域和14有限Source已处理。公开日/历史来源缺段精确隔离，不授全Coverage/Evidence或无遗漏。原window/空表/连续旧§4、完成态V3及限定两层检查通过；下一fresh Oct22仅补Oct21自然日，不继承本日池/源成功。Dec18 root3、Oct20 root17及Nov19 root3既成接纳保持，不重开。
+
+**状态：进行中（用户于2026-10-15明确恢复，覆盖10-14额度暂停）。** 已实际重读本轮AGENTS与当前合同、来源、Prompt、ROADMAP及保存停点；98/132已验收、34份未验收。当前Oct22 writer Godel/root独核；Nov20 writer Noether/reader Ohm；Dec19 writer Boyle/reader Newton。有效层按身份/版本/命题复用，不重原池；root协调共享Books/State。保留旧候选日期/评分/窗口/连续§4及全部既有和并发修改，不stage、commit、push，不运行当前日/Weekly/2026、八月或缺失Daily；不改变其他任务或自动化配置。
 
 共享Books精确停点：Nov11 Omnilingual ASR的6分最低Source/唯一Ch23差额、逐字PRE§7及真实非writer完整正文/两侧邻接/自身note POST§11有效。root本次恢复实际读回作者SourceOwner§1–6、reader§11–12、Ch23完整230–257语音链与本人末注；新语言context/已见语言配对训练、CTC消费、zero-shot质量反侧/完整费用及退路与已核原命题一致，实际接纳并释放窄锁。仅同步自身note状态、不改机制正文或其他notes；当前本轮无Books写锁。Ch23本人6新增、其他已有及并发新增/cached27保护，恢复时unstaged56新增与本人范围分责，限定cached/unstaged检查通过，不冒全仓clean。Ch33 SAPO6/SPG4真实POST已接纳且两锁释放，external20/cached12保护。Oct14真实DAY14/FINAL15、Nov11真实DAY22/FINAL24/root25与Dec07DAY18/FINAL19/root20均已整日接纳；不重复写书或重原证。
 
-**暂停恢复路由：90/132整日已验收，42份待验收。** Dec16真实DAY11/保存完成态FINAL12/root13、Oct17真实DAY20/保存完成态FINAL21及Nov17真实DAY21/完成态FINAL22/root23接纳；此前有效接纳保持。已验日期：05-01～04、07-01～04/11/21、09-01～30、10-01～17、11-01～17、12-01～16。剩余10-18～31共14份、11-18～30共13份、12-17～31共15份。用户明确恢复后，Kierkegaard/root从10-18、Singer/Dalton从11-18、Carson/Feynman从12-17各自当日停点续跑；先重读AGENTS及适用合同，不重复已核有效层。只补已有2025 Daily，新增按前一完整北京时间自然日，不使用arXiv catchup；不启动当前日/Weekly/2026、八月或缺失Daily，不移动原候选日期、评分、原窗口与连续§4。共享Books/State仍由root协调。
+**当前恢复路由：98/132整日已验收，34份待验收。** 已验日期：05-01～04、07-01～04/11/21、09-01～30、10-01～21、11-01～19、12-01～18。剩余10-22～31共10份、11-20～30共11份、12-19～31共13份。当前Godel/root fresh10-22、Noether/Ohm续11-20、Boyle/Newton续12-19。Books当前精确待办只见顶部，其余已闭合项不重写。每次换日/恢复重读适用上下文，不搬他日池或来源成功；新增仅前一完整BJT自然日，不使用arXiv catchup，不移动原候选日期、评分、旧窗口与连续§4。实际DAY、保存完成态FINAL/root接纳后才计数并继续下一已有日报。
 
 本次恢复最新验收：Oct14 root实际完整DAY14及09:04完成态FINAL15通过，133互斥身份（1正式/101未知P/21C/1O/9title）、唯一SPG6分/必要深入/Ch33一段及自身note实际整合，30引用27路径/14来源/V3/旧window/移唯一新增行还原完整旧§3/连续原§4与限定检查通过；Source/DATE index旧EOF两告警明确保留不修index。Nov11 DaltonDAY22/唯一admin返修FINAL24与root25通过，50新身份36AB14title/25P11EX（2O23未知）与旧42分责，唯一ASR6分/Ch23两段实际整合，15SRC（14Daily＋实际OpenReview）/14引用13路径/V3/原window/baseline=HEAD/连续原§4冻结及限定检查通过；Meta原失败与本次目标字段恢复、Prompt Search EX→P→原出版O近文。Dec07正式/评分/采用Evidence/Books新写0，40题摘/有效身份29P7C3O1overlap、30必要日期保留与历史来源限制，root完整保存稿/V3/14来源9引用8路径/旧window/完整§3及连续原§4与baseline/HEAD冻结/限定检查实际通过。三个安全终态验收都不授未知公开日、全Coverage/Evidence或无遗漏；只已核层继续复用，不把72/132写成全范围完成。下一三日期按各自fresh上下文与原停点执行。
 
-### 额度暂停的三个精确停点（2026-10-14）
+### 本次恢复的三个精确入口（保存于2026-10-14）
 
 - **10-18**：[作者SCOPE顶部暂停节](../papers/2025/10/_sources/daily-20251018/SUP_SCOPE_20261014.md)与[root独核§1–6](../papers/2025/10/_sources/daily-20251018/SUP_INDEPENDENT_20261014.md)。LAVA Ch63真实POST4/本人注同步5已闭合，无待写锁。十三机构有限来源包已保存至SOURCES§4，其余必要独核尚未完成；arXiv新发现/current/日期尚未启动。五主题Advanced编排在调用网络命令前因URLSearchParams缺失停止，五请求均未发出，不冒请求失败或零论文。恢复仅修本地参数构造、继续有限差额，再归并README六节及真实DAY/FINAL，不重旧81/27或LAVA正文。
 - **11-18**：[作者SOURCE§7](../papers/2025/11/_sources/daily-20251118/SUP_SOURCE_SCREEN_20261014.md)与[Dalton独核§22](../papers/2025/11/_sources/daily-20251118/SUP_INDEPENDENT_20261014.md)。有效§1–21保留：74 arXiv身份＝64完整题摘＋10题名，41日期待定潜力/10纯先稿O/13摘要C/10题名C；LPLB独立一个artifact，具名日期责任42家族。T2原首发O与v2新selector修订资格未知并存，不双计；LPLB原字段2025-11，不采用前端补出的Nov1排除。八最低门7P1C已核，不重方法。剩Google官方月归档有限字段独核、来源/日期终态归并及完整六节DAY→完成态FINAL；Hunyuan权限拒绝分支不重试/绕过，目标历史缺段不冒零论文。
 - **12-17**：[作者RESUME§4](../papers/2025/12/_sources/daily-20251217/SUP_RESUME_20261014.md)与[Feynman独核§7](../papers/2025/12/_sources/daily-20251217/SUP_INDEPENDENT_20261014.md)。Alignment Source/5分/唯一Ch31差额及逐字PRE§5有效，但无root写批准、真实写入或POST；恢复须先补原作者URL并由root决定窄锁。MiMo原Dec16发布正文已实际web读，尚未落存本日raw/单篇包；旧31页有效采用域不重。Meta两个原Dec16事件日门有效，具体评分/owner尚未核；Qwen40元字段与MiMo动态壳角色有效。余本日有限来源/日期/六节及真实DAY/FINAL，不扩旧池，不改原Seedance6分冻结行。
 
-root已实际读回五个暂停停点并收到全部会话结束确认；本轮各自运行命令session、legacy owner/在途、Books写锁均为0，没有需收结的后台命令。未终止其他任务/全机进程。三个当前日期均不计入90/132；已保存内容按实际层复用，未知日期与来源缺段不授全Coverage/Evidence或无遗漏。暂停期间仅保存checkpoint与限定检查，已有及并发index/raw空白告警保护，不stage、commit、push。
+10-14暂停时root已实际读回五个停点并收到全部会话结束确认，彼时session/legacy在途/Books锁均0；这是旧暂停证据，不冒本次仍无运行。10-15只恢复上述三日，当前三日均不计入90/132；已保存内容按实际层复用，未知日期与来源缺段不授全Coverage/Evidence或无遗漏。全部既有及并发index/raw空白告警保护，不stage、commit、push。
 
 跨日10987唯一局部差额已闭合：Dec13 Feynman§13实际FedAvg三架构/IID两数据域确认只有排序、无新聚合/具体相反条件后，Carson仅修Dec12 README当前185日期保留＋10987C与SUP_DATE单row/说明，初始174＋12＝186历史身份/审阅轨迹保留。FeynmanDec12§20实际保存差额/计数/原三正式完整row及整个§4冻结/16引用14路径/V3/限定cached和unstaged通过，root§21实际读回接纳；未动日期/评分/window/Books或旧资料。81接纳计数保持，不是新增日期或整日/整月重跑，作者仅同步已发生指向后继续Dec13普通。
 
@@ -135,6 +163,16 @@ Git观察分开保存：本轮没有执行stage、commit、push；期间index发
 每个日期启动、委派或压缩恢复均重读[AGENTS.md](../AGENTS.md)指定的当前合同，只加载本日窗口、材料和未决工作。共享Books/索引由root协调；准备好的单篇直接推进，不等待其他日期。已有无关文件保持原样。
 
 ## 进行中：2026 年已有 Daily 增量来源补查
+
+### 当前恢复入口（2026-10-16，119/279 已验收）
+
+**119/279已验收、160待验收；连续01-01～04-29。** [04-28](../papers/2026/04/28/README.md)补Apr27自然日新增58＝46实际整合／8具体已有覆盖／3仅报告／1中心争议，原71保持，合129；必要证据、46实际非写入者写后、六部分日级验收及08:59:12完成态读回通过，见[唯一SUP A41／R28.50～51](../papers/2026/04/_sources/daily-20260428/SUP_SOURCES_20261016.md)。[04-29](../papers/2026/04/29/README.md)新增57＝29实际整合／19仅报告／9中心争议，原63保持，合120；必要证据、29实际写后、日级验收及08:19:02完成态读回通过，见[唯一SUP A25/A26](../papers/2026/04/_sources/daily-20260429/SUP_SOURCES_20261016.md#a26-root实际day通过完成态保存)。两日原行、日期评分、小时窗与连续原§4不变；新增身份对现有2026日报定点查重无跨日候选冲突。Google缓存/日期键、Meta停点及Qwen具名release误去重已最小纠正。V3、42窗口测试、本地引用与限定cached/unstaged差异检查通过。日期、历史目录及中心争议保留项不授正面Coverage/Evidence或无遗漏。
+
+**当前并行路由：04-30 fresh作者＋fresh独立reader；05-01 fresh作者、root独立复核，下一未分配05-02，未暂停。** 04-30只补Apr29自然日，原34行/旧窗/原§4已冻结；见[本日唯一SUP](../papers/2026/04/_sources/daily-20260430/SUP_SOURCES_20261016.md)。初批CacheFlow等五项命中04-29原63同事件，已在Source前停止重复评分/审阅，保原归属；新增按完整题摘具体贡献校准。公告起点不能用submitted cutoff，24764/24765官方赋号＋月表/DOI原始合证已定点提供，须补24765～24833相关标题；25326/25642旧日期保留、25779更早正文信号只定点恢复。05-01只补Apr30自然日，先冻结原47行/旧窗/原§4；不运行旧556全类初筛脚本，不从旧池反推发现。两日普通发现/审阅/Books/日级仍待，不授完成。各日只写本日README与唯一SUP，共享Books先协调指定段/本人注，实际写后释放；root独占本checkpoint。不扩Live／Weekly／2025，不stage、commit、push；真实验收后持续接下一现有日期。下文旧快照不覆盖本入口。
+
+连续 **01-01～04-24 已验收，165份待验收**。04-24新增57家族＝28实际整合／20具体已有覆盖／3仅报告／6中心争议隔离；必要证据、28写后复核、六部分非作者复核及03:30:41完成态读回通过。原85整行、日期评分、小时窗口及连续原§4均保留；V3、42窗口测试、本地引用与限定cached/unstaged差异检查通过。日期和历史目录限制仍隔离，不表示无遗漏。证据见[本日唯一SUP](../papers/2026/04/_sources/daily-20260424/SUP_SOURCES_20261015.md)。作者ownership及窄写锁释放。
+
+**04-25仍独立推进**，只补Apr24自然日，原1候选不动：[唯一SUP](../papers/2026/04/_sources/daily-20260425/SUP_SOURCES_20261016.md)A20来源、A21五项实际Books写后通过、A16最后有限题摘及后续必要证据。21882／21836／21911／21191／21564已实际整合并独核，窄锁释放；21284具名原纠错已公开且新增分析无额外设计增量，原证保留、前分母关闭。作者与reader按具名互斥批次继续必要Source/具体owner，不把题摘准入当审阅完成。下一未分配04-26。逐日fresh独立上下文，不扩Live、Weekly、2025；本方不stage、commit、push，保护并发index和无关修改。下方旧快照仅作恢复依据，本入口覆盖其旧计数与路由。
 
 范围为现存 279 份 Daily（2026-01-01～10-06），月度数量为 31/28/31/30/31/30/31/31/30/6。10-07 尚无 Report，不计入本次已有报告补查；不启动 Weekly 或其他年份任务。
 
@@ -408,3 +446,29 @@ root协调共享Books窄ownership与全年计数，reader按日期隔离复核�
 - **04-17**：沿[本日唯一SUP A35/R53](../papers/2026/04/_sources/daily-20260417/SUP_SOURCES_20261014.md)恢复。十项新增真实整合全链有效（原6及PreRL/UI-Zoomer/GoldenHandcuffs/SID，R43–52），其锁已释放。UMI14089必要Source/date/逐字PRE通过，但正文/本人注尚未写，未执行Ch26锁已释放；恢复时重新协调写入后做实际POST/final。CRAFT14121、HiVLA14125、LongCoT14140仅作者A34必要Source prepared；root已实际核的局部及尚未核的主对照/消融/配置/直接限制/owner精确见R53，不重做有效层、不授Source最终通过或预写Books。CMAT5中心容量反证争议、SpatialEvo6Only在R52有效，formal尚待同步；六部分合并/DAY/FINAL未完成。撤回13871排除、13371局部step非已证final误接受、13175/14149/Leap资格及HETA等中心限制继续隔离，不作正面证据或无遗漏。
 
 两日期保持独立上下文，原候选整行/日期/评分、原小时窗口与连续原§4冻结；只补各自前一自然日。所有本任务Books锁已释放，子任务保存本日checkpoint后退出，不自行派后日。此次无stage、commit、push；工作区已有及并发staged/unstaged修改保留。日常自动化与其他会话任务不由本历史暂停改动。
+
+**恢复（2026-10-15，用户明确继续，覆盖上方2026补查暂停）：105/279已验收，174待验收。** 04-16作者与独立reader、04-17作者与root独核分别从上述精确停点接续，复用有效证据及实际Books写后层；尚未计入验收。下一未分配04-18，每日通过后以fresh单日上下文继续。只补前一自然日，保护已有候选、评分、日期、旧窗口与连续原§4；不启动Live/Weekly或其他年份，不改变其他会话路由。运行前已有10-15的staged Books/Report/原始记录保留，不stage、commit、push。
+
+**最新106/279已验收、173待验收（2026-10-15）：01-01～04-15及04-17；04-16继续独立推进。** [04-17](../papers/2026/04/17/README.md)保原89整行/日期评分、原小时窗及连续原§4，只补Apr16自然日。新增44＝12实际整合/4具体已有覆盖/25仅报告/3中心争议；合133。root非报告作者必要证据/具体owner/实际POST及本人注、六部分DAY和保存完成态FINAL通过，依据[唯一SUP R54–61](../papers/2026/04/_sources/daily-20260417/SUP_SOURCES_20261014.md#r61-保存完成态-final-实际通过)。完成态V3、冻结、162本地引用与限定cached/unstaged检查通过；普通0、锁释放。历史来源/必要日期与七中心争议继续隔离，不授全Coverage/Evidence或无遗漏。04-16已有18条真实整合全链，另三精确窄写位已协调，剩具体owner及六部分仍普通，不计验收。立即fresh分配04-18，不继承前日池；其他会话及并发index保持，本方不stage、commit、push。
+
+**最新107/279已验收、172待验收（2026-10-15）：连续01-01～04-17。** [04-16](../papers/2026/04/16/README.md)只补Apr15自然日，原87整行/日期评分、小时窗与连续原§4（86200字符）保持；新增100＝27实际整合（17唯一owner）/44具体已有覆盖/20仅报告/9中心争议，合187。独立resume_apr16_review实际27条正文/完整局部邻接/本人注全链、六部分DAY R135及14:35:53保存完成态FINAL R136通过，root实读[唯一SUP末节](../papers/2026/04/_sources/daily-20260416/SUP_SOURCES_20261014.md#r136-完成态actual-final通过本日独立reader-ownership释放)与完成字段并接纳，重跑V3及README/SUP限定cached/unstaged检查通过。普通0、全部ownership与Books窄锁释放；六资格、历史来源缺段及14中心争议继续隔离，不授正面Coverage/Evidence或无遗漏。04-18保独立作者/root复核，四项真实Books全链有效，其余有限Source/owner与报告尚在执行，不计验收。已立即fresh分配04-19作者/独立reader；下一未分配04-20，不继承前日论文池。任务持续，不扩Live/Weekly/2025，不stage、commit、push，保护并发修改。
+
+**最新108/279已验收、171待验收（2026-10-15）：连续01-01～04-17及04-19，04-18仍独立推进。** [04-19](../papers/2026/04/19/README.md)补Apr18自然日，保当前原0候选/小时窗/连续原§4；新增0，Qwen Max-Preview同事件有效关闭，无新增Books改动。独立supp_apr19_review实际ADMISSION/Source、六部分DAY R6与保存完成态FINAL R7通过，root实读[唯一SUP](../papers/2026/04/_sources/daily-20260419/SUP_SOURCES_20261015.md#r7-保存完成态actualfinal实际通过2026-10-15-1454-08)和完成字段，重跑V3及README/SUP限定cached/unstaged检查通过。普通0、ownership释放；五历史覆盖缺口继续隔离，不授完整Coverage/Evidence或无遗漏。立即fresh接04-20作者/独立reader，不等待04-18、不把旧提交库存扩成审阅队列；本任务持续，只补遗漏不移动既有日期/评分/窗口，不stage、commit、push，保护并发修改。
+
+**最新109/279已验收、170待验收（2026-10-15）：01-01～04-17及04-19～20；04-18仍独立推进。** [04-20](../papers/2026/04/20/README.md)补Apr19自然日，新增0、Books新写0；原111整行/日期评分/小时窗/70173字符连续原§4保持。独立supp_apr20_review真实ADMISSION、六节DAY R5及完成态FINAL R6通过，root实读[唯一SUP](../papers/2026/04/_sources/daily-20260420/SUP_SOURCES_20261015.md#r6-保存完成态-actualfinal-实际通过)与完成字段并重跑V3/限定cached与unstaged检查通过。普通0、锁与ownership释放；历史来源、日期及争议隔离，不授完整Coverage/Evidence或无遗漏。保留并发MM/AM index，本方未stage/commit/push。下一未分配04-21；04-18冻结66身份，四实际Books链、七具体NC、四中心争议及其余必要Source分层推进，不将prepared计完成。继续fresh独立日，不扩Live/Weekly/2025。
+
+**当前续跑路由（2026-10-15）：仍109/279已验收，170待验收，运行中。** 04-18仅补Apr17自然日，冻结66身份（含1项4分关闭）；精确有效层及普通待办见[本日唯一SUP](../papers/2026/04/_sources/daily-20260418/SUP_SOURCES_20261015.md)。新增7项实际Books正文/完整局部邻接/本人注POST通过；Ch8/5/29三项逐字PRE已授作者窄写，尚未POST；其余具体owner与必要Source继续，不授DAY。root独核余20的首5必要层已完成，仍15普通Source待办，不追加发现。04-21由fresh作者与独立reader只接Apr20自然日的[本日唯一SUP](../papers/2026/04/_sources/daily-20260421/SUP_SOURCES_20261015.md)，准入、日期、版本与Source分层推进，原146候选及连续§4冻结；准入潜力不当证据完成。两日互不继承论文池，共享Books按具体窄位置协调；下一未分配04-22。其余会话与并发index保持，本方不stage、commit、push。
+
+**本轮精确差额（2026-10-15，继续运行）：仍109/279，不预支日级验收。** 04-18冻结66不再扩发现；65项必要Source及FedGUI4分关闭均已有实际独核结果，18项Books真实正文/完整局部邻接/本人注POST通过，相关窄锁已释放。剩OmniGCD/OT/ASCII/sketch/MFPO五项最小差额仅待逐字PRE、实际写入/POST，之后合并六部分并做DAY；具体已有覆盖及13项中心保留复用本日SUP，不重做有效原证。04-21四项实际Books POST通过且锁释放，fresh reader只接本日后批必要Source；15372/15632必要公开日期资格隔离，15748当前官方撤回不纳本轮候选/评分/Books，仅保原始排除依据。原146行与连续§4保持；导航/潜力不计完成，准确集合与未核层在本日唯一SUP。下一未分配仍04-22；没有暂停或结束授权，不因本checkpoint停工，不扩Live/Weekly/2025、不改并发index。
+
+**最新110/279已验收、169待验收（2026-10-15）：连续01-01～04-20；任务继续。** [04-18](../papers/2026/04/18/README.md)只补Apr17自然日，冻结66＝23真实Books整合／29具体已有覆盖／13中心争议终态保留／1最低关闭。root非报告作者实际全部必要证据、owner与23真实POST、完整六部分DAY及保存完成字段回读通过，依据在[唯一SUP R28–29](../papers/2026/04/_sources/daily-20260418/SUP_SOURCES_20261015.md#r29-root实际完整六部分day通过)。旧0候选、小时窗及连续原§4完整保留，开头旧结论加明确存档边界；完成态V3、冻结与限定cached/unstaged检查通过。普通0、全部窄锁及作者ownership释放；历史来源、必要日期和中心争议继续隔离，不授完整Coverage/Evidence或无遗漏。立即fresh独立接04-22；04-21沿自身唯一SUP继续必要Source/Books，不继承04-18池。并发staged/unstaged保留，本方不stage、commit、push。
+
+**最新111/279已验收、168待验收（2026-10-15）：连续01-01～04-21；任务继续。** [04-21](../papers/2026/04/21/README.md)仅补Apr20自然日，原146整行/日期评分、小时窗及连续原§4保持；新增52＝15实际整合（8唯一owner、30正文段）/8具体已有覆盖/14仅报告/15局部中心争议，合198。非作者必要Source、15实际POST、root完整六部分DAY及18:21:16保存完成态FINAL通过，依据在[唯一SUP R17](../papers/2026/04/_sources/daily-20260421/SUP_SOURCES_20261015.md#r17-root实际六节day通过完成态已保存待最小final)。普通0、全部窄锁释放；完成态V3、冻结、引用和当前限定diff检查通过。并发cached旧SUP第512行EOF空白告警保留，不改index或称cached零警告。历史来源、必要日期与中心争议仍不支持正面覆盖、Books或无遗漏。04-22保独立作者/有限证据复核，立即fresh接下一未分配04-23；不继承他日论文池，不扩Live/Weekly/2025，不stage、commit、push。
+
+**最新112/279已验收、167待验收（2026-10-15）：连续01-01～04-21及04-23；04-22仍独立推进。** [04-23](../papers/2026/04/23/README.md)只补Apr22自然日，原52整行/日期评分、小时窗和连续原§4保持；新增18＝12真实整合（7唯一owner/24正文段）/4仅报告/2中心争议，合70。root非作者必要Source、12实际POST、完整六部分DAY与22:51:26保存完成态FINAL通过，依据[唯一SUP A12](../papers/2026/04/_sources/daily-20260423/SUP_SOURCES_20261015.md#a12-root实际完整六部分day通过完成态保存)。普通0、窄锁及作者ownership释放；完成态V3、42窗口测试、冻结与135引用/48路径零missing及限定cached/unstaged检查通过。历史目录缺段与中心争议终态隔离，不授全覆盖或无遗漏。立即fresh接04-24，不继承他日材料；04-22按自身有限停点推进，未授日级验收。不扩Live/Weekly/2025，不stage、commit、push，保留并发修改。
+
+**当前独立续跑路由（跨入2026-10-16，仍112/279验收）：** 04-22仅补Apr21，[唯一SUP](../papers/2026/04/_sources/daily-20260422/SUP_SOURCES_20261015.md)A47～52/R25～29继续有效：24项真实Books POST已通过并释放相应窄锁；A52的17691/17785单段已写，尚待root实际POST，不预计完成。发现封口，111个可落窗arXiv加Images2；未完Source仅沿作者列明的有限29项由独立reader继续，已交结果及剩余身份以同一SUP为准，不扩发现、不重做有效层。18312已有2019 PMLR同稿公开依据，隔离本日首次公开资格；18245后续v3明确修正composition反向推论，只处理该更正、不扩全版本。04-24仅补Apr23，[唯一SUP](../papers/2026/04/_sources/daily-20260424/SUP_SOURCES_20261015.md)A1～5及后续同日层接续，原85行/窗口/连续§4保护；19907/19945已2项真实Books POST、窄锁释放，其余有限准入/日期/Source/具体owner尚普通，未授DAY。每日日级上下文独立，root为非报告作者复核与共享写入协调；下一未分配04-25，不因跨午夜改窗口或启动Live。任务运行中，不stage、commit、push。
+
+**续跑差额更新（2026-10-16，仍112/279已验收，任务未暂停）：** 04-22新增112项的必要Source、日期和具体Books决定均已独立处理，56整合/36已有覆盖/10仅报告/10中心争议；56实际正文、完整局部邻接及本人注写后核验通过，窄锁已释放。作者正将新增结果融入原六部分，尚待完整日报复核与保存完成态验收，不提前计入已完成。原99整行、小时窗和连续原§4保护；六资格保留及中心争议不作正面证据。04-24新增57项的必要Source已由root22项与fresh35项实际分批独核，日期合证和具名例外有效；19954保后处理日期异常，21921资格不明隔离。现5项真实整合已通过写后核验；其余具体owner与有限PRE沿[唯一SUP A6](../papers/2026/04/_sources/daily-20260424/SUP_SOURCES_20261015.md#a6-具体owner差额与逐字pre未获lease不写)继续，不重做有效Source或原85。04-25已由fresh独立作者接手，只补Apr24自然日，原1候选/小时窗/连续§4保留，首批准入与代表排除准备待独立校准；缓存不是全文队列。下一未分配04-26；每日日级上下文独立，不扩Live/Weekly/2025，不stage、commit、push，保留并发index与无关修改。
+
+**最新113/279已验收、166待验收（2026-10-16，任务运行中）：连续01-01～04-23。** [04-22](../papers/2026/04/22/README.md)补Apr21自然日新增112＝56实际整合/36已有覆盖/10仅报告/10中心争议，与原99合211；必要原证、具体owner及56实际写后核验、完整六部分非作者复核和02:38:15+08完成态读回均通过，依据[唯一SUP R38及后续既成读回](../papers/2026/04/_sources/daily-20260422/SUP_SOURCES_20261015.md#r38-本轮day通过与完成态行政同步final待保存后实际读回)。原99整行各一次、原窗口及连续原§4保持，V3校验/42窗口测试/343本地引用零缺失及限定diff检查通过；六资格/历史目录/中心争议仍精确隔离，不授无遗漏或强性能安全结论。作者ownership与窄锁释放。04-24新增57必要Source和具体owner均已有具名独核，28实际整合写后核验通过、窄锁释放；作者正在合并六部分，尚待日级与保存完成态验收，原85不动。04-25先对具名21330/21215/21523及其它原日事件去重，保留旧材料原归属和有效审阅，不因本轮重读再计新增。21882新两段真实Books写后已由独立reader通过，Ch5锁释放；21836/21911必要Source、日期与最小PRE已独核，Ch23两窄位获授尚待保存/写后；21860中心争议隔离，不写书。另21191/21564/21284必要层及有限来源仍由本日作者推进，不扩大缓存队列；精确停点在[唯一SUP](../papers/2026/04/_sources/daily-20260425/SUP_SOURCES_20261016.md)。下一未分配04-26；不扩Live/Weekly/2025，不stage、commit、push，不改并发index或无关修改。

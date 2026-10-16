@@ -259,6 +259,8 @@ Competence estimate 是随 model、prompt、handbook、tool 和 environment 漂�
 SkillOrchestra 的实验支持 taxonomy、capability routing 与 cost-aware assignment 的组合，但固定 agent pool 和
 benchmark 不证明动态编排普遍优于静态 Workflow。高风险或难以独立验证的任务仍应固定 owner 和 approval。
 
+每回合选择模型也可以先预测终态效用，而不只在当前动作风险越界后升级。一个受限分支编码当前 history，将模型 metadata 与 learned residual 合成候选表示，用离线多模型轨迹的终态分数减后续错误罚项训练共享 estimator，再按预测值选择本回合 executor。它学到的是日志条件下的 outcome proxy，不是已识别每个未选模型的反事实收益；预算耗尽仍由外部 runtime 终止。[必要 history/model 消融](https://arxiv.org/html/2604.23530v1)只支持固定候选池与两类受限任务，商用 router 的不同 pool 不作公平性能证据。轨迹采集、embedding、错误标签、模型切换和重处理 prefix 全计费，少 switch 的相关性不证明 cache 或尾延迟已优化；新模型、环境或代理失配时回固定 executor、经验证的局部升级与独立最终检查，不由预测效用取得动作授权。<!-- source-family:SF-2026-ARXIV-2604-23530 -->
+
 按 task slice 选择能力匹配的 Agent 后，executor 也不必冻结到整个 trajectory 结束。轻量模型可先提出下一 structured tool action，再由当前参数/schema、自身生成信号、状态历史与局部风险元数据判断：低疑虑由本地继续，中间区间付出有限复核，高疑虑把必要状态和候选动作交给强模型；每次工具观测后重新选择，最后仍只提交一个 executor 的动作。这把“整个任务交给谁”细化为“当前一步由谁生成”，不把候选置信度或 MCP 注解升级为行动权限，既有 schema、authorization 与 outcome gate 保持独立。<!-- source-family:SF-2026-ARXIV-2610-07816 -->
 
 这个分支增加 gate 数据、阈值漂移、复核样本与 handoff 成本；失败概率也不等于强模型能救回的概率。[STEPGATE v1](https://arxiv.org/html/2610.07816v1)在同一 Qwen 家族和100个脚本工具任务中支持观测后重路由的局部取舍，但与同预算 random、以及使用更高升级预算的 self-consistency 的差值均不确定，单步对照的实际升级率又不完全一致。经验拟合与小样本 ECE 不签有限风险界，风险标签不是真实危害率，减少远端 token 也不是隐私或端到端成本保证。陌生工具、状态分布漂移或 gate 收益不可靠时，固定 executor、明确人工升级或强模型路径仍合理；强模型亦须过相同执行与最终结果合同。Executor 的选择与下一段的 skill 依赖关系因此是不同平台状态。
@@ -1168,6 +1170,8 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 <!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23530` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23530v1)§3/4.1–4.2/Limitations，2+1+2=5，history×model logged-outcome estimator逐turn选择的具体gap深入。不是反事实Q，外budget termination非已给显式budgetfeature，pool差异/CI与std/switchcache及一次offline采集全费近文；不授通用SLO/动作合法性。root必要Source/actual owner/A22逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整两侧及本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 
 - `SF-2026-MINIMAX-WORKFLOW-20261008` — Daily `2026-10-09`；[官方工作流审计](https://agent.minimax.io/docs/techblog/coding-agent-workflow-and-skills) 必要完整核心，2+1+2=5。仅采用默认入口、配置传播、background resume 的具名反例与真实 artifact/baseline 验证条件；不授单 owner/跨模型复核的因果最优或实现/生产效果。root Source/逐字 PRE 与非writer实际818–852完整邻接、新827正文和本注 POST 通过，非日级验收。
 

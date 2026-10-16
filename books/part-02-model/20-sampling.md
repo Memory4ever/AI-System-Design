@@ -312,6 +312,8 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 [受限 system-prompt 对照](https://arxiv.org/html/2601.06403v1#S3)需要两次条件前向，作者报告约两倍 FLOPs，KV sharing 仍是未来优化，不能由同一模型或同一文本 prefix 推出缓存可直接共享。强度加大也会损伤严格指令准确率和域内可答性；Qwen2.5-7B/14B 等有限任务反侧要求把 target/default prompt、模型、强度与评价人口一起校准，而不是采用通用安全默认值。额外算量不合预算、无法取得两份 logits 或行为回归时，保留普通提示、已验证的 vector 控制或关闭对比分支；外部 verifier、权限和停止预算仍独立约束最终输出。
 
+两份logits的参照也可以由同一模型内部mask形成：先用有reference的校准集逐head消融，按referenceNLL变化选择一组head，再在同一profile、query和已生成prefix下比较原模型与mask分支，用差分调节采样；另一分支可按离线profile簇选择head集合。这里测的是该reference与干预条件下的损失敏感性，不证明head专门或唯一存储用户偏好；所谓generic分支仍读取profile，不能当无profile因果对照。[DPS的受限个性化对照](https://arxiv.org/html/2604.22345v1)尚未给出共享prefill后mask分支KV语义的充分验收，不能由同prefix批准缓存通用共享或净费用接近一次前向。Reference选择、逐head校准、簇路由、双分支与完整任务回归均计费；标签、profile、head身份或质量失配时，保留普通profileprompt、固定条件对比或关闭干预，外部偏好/权限核验仍独立，不用NLL差签发用户意图真值。<!-- source-family:SF-2026-ARXIV-2604-22345 -->
+
 固定双分支的强度还可改成逐 token 学习，而不只在请求开始时选择一个常数。一条受限分支先用共享正确前缀下的正负步骤续写训练 reward LM，再冻结它与 base LM，让小 controller 读取当前两份 logits（或带 token 身份的 Top-k 特征），以 gold-token likelihood 和可选门控 entropy 学习每步的混合权重。这里学习的是解码选择，不是每个 token 的逻辑真值；迁移首先要求词表坐标、模型与已提交前缀身份能对齐，不能由同输出维度推任意模型通用。[TARo 的受限对照](https://arxiv.org/html/2603.18411v1)存在 logit 与 probability 插值口径差异，不能直接照为统一采样配方；部分非训练域任务弱于原 base，硬门控与更高数学分数也不保证全部能力保持。双模型前向、reward/controller 训练、词表特征与状态都付费，token 吞吐与请求吞吐须分账，不由少量 controller 参数或单次算量估计宣称免费推理。混合算子、身份、质量或预算无法验收时，保留固定强度、普通单模型采样与独立 verifier，而不让门控权重替答案签发正确性。<!-- source-family:SF-2026-ARXIV-2603-18411 -->
 
 ### Answer-first 与 Optional Justification
@@ -360,6 +362,14 @@ prompt + decoding policy
 多路径预算不一定要每次从 prompt 重新支付完整生成。若已完成的轨迹中保存了若干高 token entropy 位置之前的 prefix，可以从这些位置重新抽取下一 token，再各自完成后缀；这里分配的是“在哪里重新分叉”的预算，而不是将高熵 token 判为错误或把后缀当独立解答。局部高熵与随机位置在同 generation budget 下的有限数学对照支持这一选择分支，但共享前缀也会保留相关错误，完成后的候选仍需要单独的答案检查。<!-- source-family:SF-2026-ARXIV-2604-00018 -->
 
 entropy 只测当前模型分布，生成后较低的熵也不是正确性验收；没有可靠 verifier 时不能以“after-think confidence”自签停止。该路径仍支付首条轨迹、prefix/cache 保留、概率读取、重生成和候选检查，不同型号或 API 价格不能当同计算预算。受测两模型、两数学任务及训练集调参不授普遍接近满分，也未恢复有限 logprob API 与完整词表 entropy 的等价实现。信号不可得、分支强相关或检查费用不合算时，保留普通完整 self-consistency、随机分叉或单路加独立 verifier。<!-- source-family:SF-2026-ARXIV-2604-00018 -->
+
+若截断采样经常重复相同轨迹，还可显式维护已探索的 token tree：从尚未展开的高概率 prefix 分支，再用 greedy continuation 完成新的 leaf，并复用共享 prefix 的 KV。这里主动改变的是候选枚举顺序；覆盖的质量是截断分布中的概率质量，不是正确答案、语义多样性或独立样本数量。完整遍历有限树才与原截断分布拥有相同 support，固定 leaf 预算下的 greedy suffix 也不保证找到概率最高的完整序列。
+
+[有限 distinct-leaf 对照](https://arxiv.org/html/2604.20500v1)支持这条预算分支，但连续十个 token 与兄弟后缀相同就停止，是会误剪不同答案的近似 merge；较高 coverage 不能替代最终 verifier。树管理、保留 KV、候选完成与选择均计费，低 batch 的 prefix-cache 收益也不能直接搬到可并行生成的大 batch。截断支持不合适、分叉过多或语义误剪不可接受时，保留普通 self-consistency、较保守的分支枚举和独立答案核验。<!-- source-family:SF-2026-ARXIV-2604-20500 -->
+
+当候选是可执行程序时，还可把一部分重新生成预算转移到模型之外：先生成一份程序，并保存指定单 token 数字或运算符在原 prefix 下的条件概率；再把这些位置编译成有限支持的随机变量，重采局部选择、执行程序并交给任务 verifier。它复用未被替换的文本，而不为每个变体重新调用完整 LM；同一原程序产生的多个变体共享固定部分，不能记作彼此独立的完整模型样本。<!-- source-family:SF-2026-ARXIV-2604-17290 -->
+
+这种局部变体搜索改变了候选分布：前面 token 已替换而后缀没有重新条件化生成，原 LM 的完整程序分布一般不再保留；只留部分选项并重归一化、按执行条件过滤还会继续改变目标。[必要机制与反侧](https://arxiv.org/html/2604.17290v1)的精确性说明另需强后缀独立前提，不能借给一般代码。执行通过也只覆盖 verifier 真正检查的对象，训练或评测用已知答案选择不等于部署有该 oracle。概率存储、编译、CPU 重采、执行和检查均须计费，不能由没有额外 GPU forward 推出免费；局部支持不足、修改破坏程序或缺少可靠验收时，保留原完整生成、重新分叉后续写和外部 verifier。<!-- source-family:SF-2026-ARXIV-2604-17290 -->
 
 讨论选择器是否“最优”之前，还要规定交付目标：最大化数值 reward 的期望，与提高相对参考回答的胜率，不是同一个优化问题。胜率只依赖成对排序，平局计半胜；对 reward 作保序变换可以保留排序，却改变数值期望。因而不能把某种期望 reward 下的次优性直接搬到胜率目标。对固定 prompt、独立采自同一参考 policy 的候选，可分别用参考分布上的成对排序误差衡量 selector，以及目标相对参考分布的 density-ratio 尾部衡量覆盖难度；前者小不等于数值 reward 已校准，后者大意味着目标偏爱的答案仍很难被采到。[受限理论分析](https://arxiv.org/html/2603.05739v1#S3)给出调好 N 的 BoN 在此 sample-and-evaluate 模型中的胜率 regret 界，并在非原子参考分布上给出匹配至对数因子的最坏情形下界；它不证明每个任务、任意自适应搜索或部署费用下 BoN 都最优。<!-- source-family:SF-2026-ARXIV-2603-05739 -->
 
@@ -504,6 +514,10 @@ Parallel sampling 的预算也不能只写“调用次数”。完整 contract �
 当合法输出是一个很大的有限集合时，通用 grammar 每步解析会重复计算，而 trie 可以把共享前缀编成紧凑 automaton，只允许仍可到达某个合法叶子的 token。它以预处理时间和内存换取稳定 decode；集合频繁变化、语义约束开放或 tokenizer 不一致时，专用结构的维护成本会超过收益，应回退通用 constrained decoding 或后置验证。
 <!-- source-family: arxiv:2608.12574v1; semantic-body-binding: finite-set-trie-decoding-path -->
 
+对于不能预先枚举成有限集合的上下文无关输出，专门改写 parser 并不是唯一办法。另一分支先把原语法编成生成全部合法前缀的 prefix grammar：完整左侧片段保留原产生式，截断边界使用对应的前缀非终结符，再交给普通 parser。在权重满足相应可求和、交换半环条件且 parser 正确时，它保留前缀权重；对所有单 token 延伸求权重，若解析器支持 lattice、仅以半环运算求值且控制流不依赖这些形式变量，还可把末端扩展写成带形式变量的 lattice，经代数反向传播一次取得权重向量，避免逐候选重跑。这是语法权重，不是任意神经模型未来所有合法 suffix 的条件概率。<!-- source-family:SF-2026-ARXIV-2604-21191 -->
+
+[必要定理与受限对照](https://arxiv.org/html/2604.21191v1)只把输入长度依赖交给原 parser；binarization、prefix transformation 与 parser 自己的预处理仍可扩大 grammar-structural factors。反向传播的常数界是算术操作数，不保证 wall-clock、内存或 LLM serving 吞吐；lattice 支持也须实际实现。编译、规则驻留和每步解析均计费，同一语法跨请求复用才可摊销；语法常变、预处理膨胀或预算不合算时，保留专用 prefix parser、有限集合 trie 或后置验证，另验输出预算与内容正确，不由高效解析批准完整任务。
+
 ### Prefix Feasibility 不等于能在 Token Budget 内完成
 
 有限集合可以沿共享前缀定位合法叶子；对于带嵌套结构的输出，除了“不走入非法路径”，还需要知道剩余预算是否够走到接受状态。
@@ -637,6 +651,10 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-22345` — Daily2026-04-28补Apr27；2+1+2=5，referenceNLL单headmask选择→原/masked双流profile条件采样，PCS非偏好专属/唯一storage、generic仍含profile、共享prefillKV/净费未证及反侧近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-21191` — Daily2026-04-25补Apr24；[exact-v1](https://arxiv.org/html/2604.21191v1) §2–4/Fig1/AppB/Limitations，2+1+2=5。普通parser的prefix grammar与lattice/AD差额必要深入；保可求和半环、lattice支持/theta独立控制流、grammar预处理与算术ops非SLO条件，不授神经未来mass。非作者supp_apr25_review_fresh actual必要Source/date/owner/PRE修订通过，root逐字及插点授两段＋本注窄lease；作者已保存，非writer supp_apr25_review_fresh已实际顺读Ch20完整局部两侧及本人注并核限定diff，POST通过，root接纳释放本窄lease；作者仅行政同步并实际读回；未核代码/复现，不授DAY。
+
 - `SF-2026-ARXIV-2604-01161` — Daily `2026-04-03`；[Reasoning Shift exact-v1](https://arxiv.org/html/2604.01161v1) §3–4/必要A/B。2+2+2=6，限定context-conditioned stop/effective-budget差额；same-prefix重采样非完整质量中介，subtask分摊非同budget，个别长生成与Prefill费用保留；work-in-progress，不授已开发mitigation、内部推理因果或生产保证。必要Source复用有效独核，准入本轮补核；root/reader实际PRE通过后窄写，reader实际正文/完整邻接/本人note nonwriter POST通过，未核代码/复现。
 
 - `SF-2026-ARXIV-2610-13171` — [PreSTO exact-v1](https://arxiv.org/html/2610.13171v1) §3/Condition1/Alg1–2、Prop1 A1–A3、§5/D.2–3；Daily2026-10-13，2+1+2=5，具体MH执行缺口深入。prefix条件、defer保随机输入、原acceptance与有限K分开；single GH200/H100、固定1024无EOS/首20prompts、model-call速度、废分支和29/38局部统计非全分布证明保留。root必要Source/PRE通过，root实际非writer局部正文/邻接与本注POST通过；未核code或复现。
@@ -725,3 +743,7 @@ https://arxiv.org/html/2604.03616v1 — §3–7、Table 5、Appendix G/I。六�
 - `SF-2026-ARXIV-2603-29957` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29957v1)S3–5必要，2+1+2=5，仅code-prefix中途thinking/strip后续代码消费接口。保5K合成/14K训练/8A10040G、格式过滤非正确、special70.0<text70.3、padding69.4→67.6及entropy选择混杂，Eq9不补完整数值recipe，全部制备/训练/rollout/test费；未核代码/复现。
 
 - `SF-2026-ARXIV-2603-29301` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29301v1)S3–6必要，2+1+2=5，仅prototype×warp/100arc-points/ICP/DBSCAN/medoid消费接口。保224templates/35shapes/2240 rejectionbalanced评价人口、known/inferred warp及too-restrictive95.6%/too-permissive80.6%边界、parabola shear混错/τ反退、19对1生成与67ms每pair累计费；不采严格距离不变/物理正确，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-17290` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17290v1)§2–3/Alg1–2/Eq1–4、§4.1–2、AppA/E/G。2+2+2=6，固定程序局部RV搜索的具体gap深入；有限支持/固定suffix不继承原LM law，同组变体非独立draw，GT verifier/Plot2Code textmatch与CPU全费边界近正文。root必要Source/逐字PRE与实际正文/完整局部邻接/本人注非作者POST通过，窄lease释放；本注仅同步已发生结果，不授实现/复现或DAY。
+
+- `SF-2026-ARXIV-2604-20500` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20500v1)§3–4/A/C.2/D.3必要层，2+2+2=6，prefix-mass枚举与truncated概率coverage差额深入。保fixed-k非全序列最优、十token merge非lossless、B1/2与大batch及tree/KV全费；未核代码/复现。必要Source与root实际owner/逐字PRE通过并授两段与本注窄lease，作者已写入并顺读完整邻接；root非writer实际正文/完整前后/本人注actualPOST通过，窄lease释放，本注仅行政同步，不授DAY。

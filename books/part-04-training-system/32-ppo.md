@@ -222,6 +222,10 @@ rho_t(theta)
 
 该选择把密度求值压力换成候选采样、critic 与回归预算，ODE 积分并未从交互路径消失。若另用 latent divergence 和 tanh Jacobian 修正调节探索，需分别核实际 flow 人口、线性训练插值人口和部署离散 solver：某点的 trace 无偏不保证真实策略熵已无偏，候选权重的集中度也不签发训练后策略的硬 trust region。原有限控制对照有任务和阶段反退、不同网络/候选/solver预算及最大 checkpoint 选择；全部采样、双 critic、trace 梯度、拟合与评价付费，不授免费表达扩展、单调改进或真实安全。密度可得、critic 或代理不稳时，保留显式 Gaussian/标准 PPO、独立结果验收与受限拟合，而不以坐标落界或更分散权重批准物理行动。<!-- source-family:SF-2026-ARXIV-2603-17685 -->
 
+隐式连续 policy 还可以用学习的平均 divergence 近似动作密度，再用两种 proposal 估计由 Q 诱导的 Boltzmann 目标分布下的速度场：一支来自当前策略，另一支来自显式 Gaussian，各自形成 self-normalized importance estimate，再按估计 ESS 提议混合。MeanFlow 的少步动作生成、Hutchinson/JVP divergence 训练与候选 Q 选择需要分别验收；有限步生成映射不自动等于连续 ODE 的精确密度，SNIS 的有限样本归一化也有偏。<!-- source-family:SF-2026-ARXIV-2604-14698 -->
+
+[MFPO 的必要连续控制对照](https://arxiv.org/html/2604.14698v1)支持这条有限近似分支，而非精确无偏或普遍最小方差保证。ESS 主要诊断权重退化，不代表任意被积函数的方差；由同批样本估出的随机混合权，不继承固定权且独立估计器的最优证明。受测两步、十候选仍慢于 Gaussian TD3/SAC，额外 divergence 训练、双 proposal、critic 与 rerank 都计费，步数不是完整速度。密度拟合、proposal 支持或总预算不可靠时，回显式 Gaussian/标准 PPO 与独立结果验收，不从 MeanFlow 投影误差或局部控制分数推出全局 soft policy improvement、LLM 策略或真实机器人安全。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:start -->
 逐 token ratio 只比较当前 action probability，不能直接表达更早 token 已改变当前 prefix state；把截至位置 `t` 的 ratios 累乘可更贴近 prefix-level policy shift，却让 log-ratio variance 随位置增长。PPO branch 因而要把 ratio granularity 与 position-adaptive clipping 一起版本化：后部 token 使用按校准长度增长的 log-space bound，并分别报告位置 clip rate。它以较低 state mismatch 换更高方差和长度敏感性；policy lag 过大、长序列比率爆炸或校准不足时，回退 token ratio、sequence ratio 或更频繁 rollout 同步。`arXiv:2605.07331v1` 只支持论文披露的任务、长度与训练设置，不证明任意长文本或异步 rollout 稳定。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:end -->
@@ -296,6 +300,8 @@ min                 = -1.60
 Policy 已把坏 action 概率降低过多，objective 采用更保守的 `-1.60`，同样阻止从单批数据得到无限改善。
 
 这两个例子说明不能只记“ratio 限制在 `[0.8,1.2]`”；必须结合 `min` 和 advantage sign 理解。
+
+若确实希望限制更新比率，另一条分支是先构造已归一的目标 policy，再拟合它，而不把 clipped surrogate 当投影。[BRRL/BPO 的有限定义](https://arxiv.org/html/2604.18578v1)用旧 policy 加权的 soft median 中心化真实 action value，经有界 tanh 得到目标比率，再用加权 TV 型目标拟合；归一依赖这个中心条件，普通组 median/std 不自动满足它。理想目标的界不等于参数网络拟合后的硬界，旧 occupancy、value 误差、覆盖和优化残差也不能消失；它与 PPO 的逐样本 min-surrogate 不是只差常数的同一函数，例如正 advantage、比率低于下界时，原 PPO 仍有增大概率的梯度。有限控制与小模型实验有收益及反退，不把 group 近似继承为任意多轮单调改进。目标估计、拟合、rollout 与回归均有成本；归一、覆盖或预算不成立时，保留普通 PPO/可靠 value 与独立结果验收，不由 bounded-target 名称认证实际 trust region。<!-- source-family:SF-2026-ARXIV-2604-18578 -->
 
 Clipping 的半径还可以按轨迹而不是固定为同一 ε：以当前 policy 的全词表 token 熵求轨迹均值，再在该 batch 内 min–max 归一化，结合 advantage sign 提议样本半径。[SWE-Fuse 的受限规则](https://arxiv.org/html/2603.07927v1)让正 advantage 的高熵轨迹采用较大半径，而非正 advantage 的高熵轨迹采用较小半径；不是“所有高熵样本都更宽”，也不同于前述冻结旧策略的局部信息时间。熵不是真实难度或正确性，batch 人口、退化的 min=max、策略 revision 与半径计算进入训练身份；entropy/ε 是否 detach 及最终 loss/guard 未披露，不能补成只缩放 gradient 的实现或参数 trust 硬界。该规则仍须回到 min-surrogate 与符号解释，不替代 reference KL；冷启动、模型规模与测试选择的联合对照没有独立隔离 clipping 因果，不能由终态 tests-pass 签发完整 patch 正确或无泄漏。全词表 entropy、轨迹与 batch 状态、teacher/sandbox、训练和全部候选测试均计费；代理或 outcome 失配时保留固定 clip、原有 baseline 与独立结果/污染核查，不由可变半径自动认证稳定收敛。<!-- source-family:SF-2026-ARXIV-2603-07927 -->
 
@@ -524,3 +530,7 @@ Primary-source 校验入口：
 - [Android Coach v1](https://arxiv.org/html/2604.07277v1) §3.2–3.4/Eq2–4、§4.1–4.3、A1/A2与D：深入审阅，仅采用已观察state候选重采/Q代理及独立LOO baseline边界；不采通用真实梯度无偏/方差下降或端到端1.4x，8A10080GB/BF16/受限GUI作者评价。必要证据、逐字正文与实际写后独立复核通过；未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
 
 - `SF-2026-ARXIV-2604-10701` — Apr15 来源补查（Apr14 自然日）；[GenAC exact-v1](https://arxiv.org/html/2604.10701v1) §5.1–5.2/§6.1–6.3、AppB Alg1/T5、AppC T7：6分具体缺口深入，只采用生成式估值×policy能力hint、分段prefix/state/return广播合同与校准成本边界，不采用TC0/P真实LLM普遍障碍、faithful解释或因果信用保证。Qwen3/DeepScaleR数学、MCcontinuation标签及10seed近似实验限定；A10080GB节点的GPU数量/precision未披露，2.1倍FLOPs是有prefix复用假设的估算，非实测wallclock/全预训练成本。root实际必要Source/日期/owner/PRE与正文完整局部邻接/本人注非writer POST通过，作者已读回同步注，窄锁释放；未核代码或复现。
+
+- SF-2026-ARXIV-2604-14698 — Daily2026-04-18补Apr17；[MFPO exact-v1](https://arxiv.org/html/2604.14698v1) §4.1–4.4/Eq9–30/5.1–5.2/T1、§8.4/§10T2，2+2+2=6。平均divergence近似density/双SNIS与随机ESS不继承精确/最优证明，finiteT/critic rerank/全费用和Gaussian反侧近文。必要Source/root独核及date有效，作者actual owner，root逐字PRE通过；限定保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未复现。
+
+- `SF-2026-ARXIV-2604-18578` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18578v1)fresh必要Source与root互斥actual owner/PRE有效，原分6，具体接口差额必要深入。只采用上述限定机制，保近文反侧/全费与原回退，不授普遍质量、分布等价、安全或SLO。root逐字PRE通过授本窄lease；作者实际保存并顺读完整邻接，root实际非writer新单段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，未核实现/复现，不授DAY。

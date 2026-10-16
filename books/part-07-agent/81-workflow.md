@@ -180,6 +180,10 @@ exact-v1 `arXiv:2609.12162v1` 用 10 个合成 base examples、三种 minimal-pa
 
 这条路线用 operator 生态约束换取可编辑性、审计与恢复；未知算子和短期探索仍可保留脚本分支。Skills 只是可更新的派生操作指南，既不拥有 DAG，也不能绕过平台验证。
 
+当 workflow 由多个并发参与者执行，单个全局图合法还不保证各参与者知道何时走同一分支。一条受限编译路径先把动作、消息和拥有者的 if/while 写成全局协议，再投影成各 lifeline 的局部程序；分支拥有者向需要继续执行的参与者发送专用控制 tag，接收方据此进入对应 continuation。控制消息拥有的是结构选择信息，不是用户授权或工具结果真值；去掉它们后再比较原协议的消息序列，才能避免把新增协调误作业务动作。<!-- source-family:SF-2026-ARXIV-2604-17612 -->
+
+[MSC/ZipperGen v1 的必要条件](https://arxiv.org/html/2604.17612v1)限定有限参与者、可靠有序且无界 FIFO、可执行的类型正确局部函数，以及循环终止等前提。其有限完整执行的 partial correctness 与“前缀存在完整扩展”，不等于任意 runtime fairness、真实 LLM/tool 一定返回或任务成功；超时与不返回仍需平台处理。Projection、广播、队列和多模型调用付费，生成的子流程也须先验证/投影再显式返回结果；结构隔离不是 OS sandbox 或 side effect exactly-once。假设不能成立或实际调用失败时，保留显式 workflow、预算/超时和人工升级，不由 deadlock-free 名称跳过执行证据。<!-- source-family:SF-2026-ARXIV-2604-17612 -->
+
 ### Template、Realized Graph 与 Trace 不是同一个对象
 
 固定 code-defined template 便于审查、复现和强 verifier，仍是稳定 workload 的默认；但输入、tool availability
@@ -916,6 +920,8 @@ Workflow 可能等待用户、webhook、job completion 或 resource availability
 
 模型不需要持续占用 GPU 等待；runtime 在新 event 到来时重新组装 Context。
 
+不过，持久输入存在，不等于一定会再次被驱动。通知可以只作唤醒提示，再由 Runtime 回权威日志核 owner 和已提交序号；但 broker ACK 推进的是消费组位置，旧 owner 在交接窗口确认了尚未处理的通知，新 owner 便可能永远收不到它。应逐输入来源明确未完成账本、重扫者、尝试上限以及 claim 后加载失败的重驱路径，不能泛称“SQL 会兜底”。[Qwen 的单 broker、H2 与替身 Harness 对照](https://github.com/QwenLM/qwen-code/pull/14109)支持这一 lost-wake 反例，不证明多节点、broker 故障或每个来源都已实现补救。对账、去重和扫描增加成本；短任务仍可采用直接通知，长运行路径若没有重驱证据则保持 pending 或转人工，不由消息已确认宣告最终完成。
+
 ### Continuous-time Agent 需要可中断、可恢复的 Workflow State
 
 传统 Agent loop 假设一次 observe-think-act 顺序完成；流式语音、环境事件或长工具执行会在推理期间到达，系统必须把当前 plan、pending action、observation watermark 与 cancellable boundary 保存为可中断状态，再以新证据决定 resume、replan 或 abort。<!-- source-family:SF-2026-ARXIV-2609-17416 -->
@@ -1210,6 +1216,8 @@ Observed trace 与 induced workflow 也必须保持两个身份：前者是某�
 
 持久化状态并不自动保证中断后行为正确：prefix 是否连续、已发生 effect 是否重放、fork 是否确定、checkpoint 是否有效、resume value 是否只能消费一次，以及 crash recovery 是否确定，都是不同性质。Workflow runtime 应公开这些属性和 fork intent，把 effect ledger 与普通 state snapshot 分开；若只能提供 at-least-once，就必须让 tool adapter 用 idempotency/postcondition 消解，而不能对外宣称 exactly-once。严格合同以更多状态、并发控制和故障测试换取可预测恢复；无副作用的纯计算节点可以使用更轻的重放语义。`arXiv:2608.03836v1` 的 TLA+ 模型只在声明状态界限内成立，对五个 pinned framework 的 fault matrix 也不代表未来版本。<!-- source-family:SF-2026-ARXIV-2608-03836 -->
 
+即使没有进程故障，收到 Stop 也不等于工具已经退出。可在关闭新调用准入后向已 started 的异步工具发 abort，等待并持久化其真实结果，最后才释放 turn 运行权；已生效的写入不因取消被回滚。[MiMo-Code 的受限实现](https://github.com/XiaomiMiMo/MiMo-Code/pull/2618)再区分未启动尾部与已完成结果，恢复时先核确切目标、保留后者并检查模型输入中的 call/result 配对。这增加等待、结果登记和恢复验证成本；忽略 abort 且不 settle 的工具仍能让 Stop 无限等待，process crash 后的远端 effect 也未与本地记录原子提交。本地 fixture 的一次写入不认证开放工具 exactly-once，结果未知时仍应核 postcondition、幂等键或转人工，而不是凭 cancelled 状态批准重放。
+
 只为解释主任务进度而开的旁路问答，不必成为可执行、可恢复的 Workflow child：可以复制主 Context 已闭合的历史投影，去掉尚无完整 Tool response 的尾部 exchange，让后续问答维护独立的临时记录。为了复用 prompt cache 保留相同 Tool definitions，也不应授予相同执行权限；权限 policy 要在 Runtime 中拒绝旁路 Tool call，而不能只依赖“不要调用工具”的提示。Kimi Code 0.9.0 的限定实现使用内存 record、不给 child 登记持久 metadata，并在创建时复制投影和加入 deny-all policy，说明了 conversation branch 与 durable execution branch 的不同选择。<!-- source-family:SF-KIMI-CODE-0-9 -->
 
 临时投影可能很快过期，也不包含后来发生的工具结果或外部 effect，退出后不能据它恢复任务；需要真正行动时，应回到主 authoritative turn 重新核当前状态与授权，这是工程交接要求。持久 child 的另一种选择是先恢复主 Agent、首次访问子 Agent 时才重放其记录，并区分尚在恢复的 promise 与 ready 实例；parent-chain cycle 要显式检查，记录重放失败则在对应 catch 清除 pending entry。这减少启动时必须重放的分支，但不是联合环境恢复、全部分支 ready 或 exactly-once 的证明。高风险 effect 仍回到原 checkpoint/effect ledger 合同，短且无行动的问答才适合轻量分支。
@@ -1217,6 +1225,8 @@ Observed trace 与 induced workflow 也必须保持两个身份：前者是某�
 恢复一个已记录的目标，还要区分“目标存在”与“仍获准继续执行”。把goal create/update/clear记录作为状态来源，再重放成agent-local投影，比让metadata里的最新快照兼任事实与运行权限更容易审计；fork记录应明确清除未来目标，而不是默许继承。Kimi Code 0.12的限定实现把这些记录接入replay，并在重放后清除旧wall-clock anchor，将残留active目标降为paused、要求显式resume；complete残留则清除。这里的记录重建不证明磁盘事务、完整环境恢复或effect exactly-once。<!-- source-family:SF-KIMI-CODE-0-12 -->
 
 错误暂停也不能与任务语义的blocked混为一谈：连接、认证、限流或runtime失败可以保留目标并暂停，让用户重新确认环境；模型显式宣告blocked、预算边界和提示hook拦截仍走各自状态路径。完成或阻塞后至多补一次面向用户的outcome消息，并受剩余step预算限制，只解决状态变化不可见的问题，不让生成摘要成为成功验收。这样增加journal、状态归一化和重放测试成本；记录缺失、授权已变或副作用未知时，应保留paused，回到当前目标、capability与effect ledger的验收，而不是恢复即执行。<!-- source-family:SF-KIMI-CODE-0-12 -->
+
+恢复还必须保留中断的意图。短、无副作用的调用可以只用 abort signal 收口；跨重启的 Workflow 则应将任务与执行 attempt、用户主动停止和基础设施 interruption 关联到持久结果：前者不能被自动 Continue 重新执行，后者才进入原恢复检查，来源不明的旧取消先保持关闭并请求确认。机械 teardown 与后来用户 Stop 也应分别受理，避免取消去重吞掉新的停止意图。[Qwen 的受控 daemon 配对](https://github.com/QwenLM/qwen-code/pull/13436)显示可以同时拒绝已停止任务和保留 SIGKILL 后恢复，却不认证所有 channel、生产模型或外部副作用回滚；额外身份记录和恢复读取也不是跨调用方事务。不能取得可信意图时，保守暂停与显式重新授权仍比自动重试可靠。
 
 ### Logical Plan 与 Physical Schedule 必须分别验收
 
@@ -1594,3 +1604,5 @@ Primary-source 与设计入口：
 - `SF-2026-ARXIV-2603-29624` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29624v1)S3.1–3.5/Alg1、S4/6，2+2+2=6，仅same-trajectory gold/test probe→evidence/opcap/verification三项绑定。保12API×四mode×100/4800、MacM4/16GB、singletrajectory/noCI、provider漂移、30.3vsstrict8.0与hostenergy非remote全账；制备/调用/恢复全费，不授视觉唯一因果或完整正确/安全；未核代码/复现。
 
 - `SF-2026-ARXIV-2604-09718` — Apr15补Apr14；[exact-v1](https://arxiv.org/html/2604.09718v1) §3.1–3.4/4T1–2/§5.1–5.5，2+2+2=6，网页blueprint/确定control spine/selector-healing proposal具体gap深入。只受测singlecompile/HITL与successfulblueprint条件，healing/autorecompile为尚未验证未来分支；保DOM裁剪/定位错对象、repair/人工/浏览器全费与重新审批，不授全流程O1/自动近100%。root必要Source/date/actual owner/修正逐字PRE通过授两段+本人注窄锁；作者已写并顺读完整邻接，root实际非writer完整邻接/本人注POST通过；作者仅同步本注并最终实读回，窄锁释放。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-17612` — Daily2026-04-22补Apr21；[MSC/ZipperGen exact-v1](https://arxiv.org/html/2604.17612v1) §3–5/Def11/Th5.1及6的properties/7结论必要，2+2+2=6。global协议→lifelineprojection→branchcontroltag具体差额；finite/reliableunboundedFIFO/局部函数可执行/loops终止下结构性质非fairness、真实调用终止/授权/sideeffect原子性，广播与projection全费近文。fresh实际必要Source与root actual owner/A51逐字PRE通过并授窄lease，作者已写并顺读完整邻接；root实际非writer正文/完整邻接/本人注POST通过，窄lease释放，作者仅行政同步并实际读回，无代码复现或DAY。

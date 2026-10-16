@@ -294,6 +294,8 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 
 更完整的描述能提高可发现性，却消耗 context、暴露能力信息，也可能被关键词堆砌或 prompt injection 操纵；lint 通过只说明已知缺陷未出现，不证明工具正确或安全。目录很小或描述质量不足时，可以回退 allowlisted full schema 与人工选择；任何 description 更新都应使 discovery evidence 失效并重测，而不能沿用旧命中率。
 
+能力目录还可以用实际执行结果校准，而不只相信card文字：先从agent文档构造任务query，对候选执行，再把任务反馈作为检索/重排标签。这样的标签绑定任务、agent接口版本、工具权限与评判器，不是publisher声称的通用能力；只从文档生成query又会留下目录之外需求的盲区。[AgentSearch的受限对照](https://arxiv.org/html/2604.22436v1)还筛掉全成功和全失败样本，对成功却未在文档中声明对应能力的候选打折只是标注先验，不是可靠性真值。给定候选集上的oracle重排上界不等端到端召回，多子任务各找到一个可用agent也不证明已协作完成。执行探测、弱label生成、评价、刷新与在线检索均计费；接口变化、标签或召回失配时，保留原card/allowlisted目录、受预算的真实能力probe和人工选择，调用时权限与effect验收仍独立，不由检索排名批准可执行或可信。<!-- source-family:SF-2026-ARXIV-2604-22436 -->
+
 <!-- SF-2026-ARXIV-2602-18914 -->
 
 工具publisher提供schema与能力说明，在目录较小且受信时可直接供选择；多server目录中则可把真正用于检索的描述作为operator另行维护的artifact。Operator将server/tool身份、自己审定的summary、schema hash和生成版本签入card，index只从该版本文本派生embedding；签名认证“谁批准了这份文本”，不认证工具实现安全或描述为真。Publisher文字仍可能通过生成器hint影响新描述，向量与card又是不同对象，不能把不复制原copy、签名有效或可重建index当作无污染/正确排名证明。
@@ -414,6 +416,8 @@ payload 纳入同一 spill/recovery 路径。保守保留会增加 context 与�
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22436` — Daily2026-04-28补Apr27；2+1+2=5，v1§3～5/AppA/B必要；execution产弱label校准检索评价，成功未docdeclared折扣仅标注先验；oracleTop20非端到端/COMP非协作成功，外部接口/费用与标签人口近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
 
 - `SF-2026-GITHUB-MIMO-CODE-PR2657` — Daily2026-10-14；[精确 merge MCP index.ts](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/src/mcp/index.ts)与[first-turn fixture](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/test/mcp/first-turn-wait.test.ts)。startup await、refreshHost 与 captured view 分责；未运行测试，不授完整 tools SLO 或生产连接安全。
 

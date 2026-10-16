@@ -110,6 +110,10 @@ Context 内的“学习”可以是一次 forward 中执行估计程序，不必
 
 构造出可实现的 comparator，与有限pretraining真正选到它，是两个问题。新任务prompt内的样本数限制该函数能被估计多准，独立训练任务数则约束选择程序的泛化；实现误差和near-ERM优化gap仍须另外计入。固定head的存在构造也可能随context增长workspace、width与数值范围；有限实验增加任务数时同时增加更新预算，且模型与理论构造不同。条件失配或无匹配机制证据时，继续以held-out任务和当前context协议验收，不从minimax或存在性定理推出任意LLM可靠学习。[构造与条件](https://arxiv.org/html/2609.31458v1) <!-- source-family:SF-2026-ARXIV-2609-31458 -->
 
+Context 中显式给出结构，与模型自己构造出同样结构，也必须分开验证。将同一关系图写成文本或正确 ASCII 布局，可以测试外部组织是否帮助读出；要求模型先画再答，则同时加入了结构构造错误和额外输出。训练“从文本构造图”与训练“读取给定图”改变的任务接口也不同，推理时是否真的展示该图须另列，不能把两种训练和两种输入合并成更深推理的单一证据。<!-- source-family:SF-2026-ARXIV-2604-14641 -->
+
+[有限合成关系任务的对照](https://arxiv.org/html/2604.14641v1)中，给定正确 ASCII 的受测得分高于纯文本，而自行先画反而更差；构造训练和阅读训练在外部空间任务上的迁移也不同，部分阅读训练切片仍有收益。因此一致的文字与图形输出可能共同出错，不能由一致性或选出的高分子集认证内部空间表示。图构造、微调、输出 token 与独立回归都付费；布局错误、迁移或预算不合格时，保留原文本、可信外部结构与任务级验收，不把可视化步骤强加给每次推理。
+
 ## Post-training 把通用预测器塑造成可用接口
 
 预训练数据包含网页、代码、对话、文档等多种文本。一个只做 next-token prediction 的 base model 擅长续写，却不天然知道“用户问题应被直接回答”“危险请求应拒绝”或“输出必须满足某个 schema”。
@@ -284,6 +288,10 @@ scalable architecture
 
 上述 bridge-state 是一条受控的组合机制，不能把探针何时读出实体直接当作原任务的因果计算顺序。若把不同 layer、subject/末 token 的 hidden state 转入另一个解释 prompt，所观察的是该解释接口中的可解码性；raw、按解释相似度过滤的 GF/LF，以及只保留原子事实与组合均答对的 Correct 人口，也不是同一测量对象。[受限多跳观察](https://arxiv.org/html/2601.03542v1)中三、四跳的最终实体可以比中间实体更早被该探针读出，两跳却未见同样反转。这要求比较层顺序时固定位置、解释 prompt、过滤规则与条件人口，而不是据此否定所有逐步组合，或反向证明模型先完成真实 recall 再提取桥状态；概率 recall、Attention/MLP 功能与必要因果 hop 仍需独立干预。旧的受控电路解释继续成立，可读表示与实际使用分开验收，探针失配时回退行为对照和受控干预。<!-- source-family:SF-2026-ARXIV-2601-03542 -->
 
+“换一个环境还能答”与“组合长度变长还能答”应作为两条独立的泛化轴。在受控最短路径任务中，可以保留地图拓扑、改变路径长度，或固定长度、改变用于最短路径微调的地图；再只看两个短子路径均已答对的实例，检查模型是否仍能给出对应长路径。这样能把基础局部能力与更长组合的行为失败分开，却不能由失败直接定位某个内部电路。所谓未见地图也必须注明相对哪一阶段未见：随机游走预训练已经接触该地图，不等于微调外地图是模型从未接触的环境。<!-- source-family:SF-2026-ARXIV-2604-15306 -->
+
+[最短路径的受限对照](https://arxiv.org/html/2604.15306v1)中，条件长路径成功率随长度从0.811降至0.589；受测 RL、十候选投票或最短选择没有突破最佳 SFT，并不证明所有奖励学习或测试时计算都无效。加入少量较长训练样例可以改善长度外推，过长样例又会反退；固定样例记录数也没有控制总 token 和 compute。应共同记录预训练接触、微调支持、条件人口与完整训练/搜索预算；长度外推失效时，保留更长监督、外部搜索或可验证图算法，不能把空间迁移分数当作可无限复用的组合程序。
+
 ## 自检问题
 
 1. 为什么 next-token 接口是局部的，却可能要求模型使用长程和高阶结构？
@@ -378,3 +386,7 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 - `SF-2026-ARXIV-2602-09992` — Daily `2026-02-12`补遗漏；[exact-v1](https://arxiv.org/html/2602.09992v1)。本日具名必要方法、关键评价与直接反侧由root独立Source限定通过，actual owner/局部邻接及逐字拟文PRE通过后授窄锁；作者已写最小差额，review_20260214非作者实际新正文、完整局部邻接及本人末注POST通过，窄锁释放，不授DAY。原件与配置/中心争议边界见本日同名前缀review笔记；未核artifact或复现。
 
 - `SF-2026-ARXIV-2603-10573` — Daily `2026-03-13`补查；[exact-v1](https://arxiv.org/html/2603.10573v1) §2–5、T1及B/C必要对照。2+1+2=5，mar13_admission_review非准备者实际Source、Ch8具体差额及收紧PRE通过；root两段融入ICL估计程序与comparator资格交接。只采用局部mean/variance任务、known-parameter oracle权限与相关/因果边界，不采用Eq2为有限context严格Bayes身份，不排除learned kernel。未核artifact或复现；mar13_admission_review非writer实际新增、完整ICL邻接和本人末注POST通过，root回读确认、窄锁释放，不授DAY。
+
+- SF-2026-ARXIV-2604-15306 — Daily2026-04-18补Apr17；[ShortestPath exact-v1](https://arxiv.org/html/2604.15306v1) §2–7/T1–2/A/D1–2，3+1+3=7。空间迁移与组合长度双轴/conditionalcomposition；预训已见test地图、MLPprobe非causal、RL/TTC有限预算、长监督反退和record非compute匹配近文。独立reader必要Source/root接纳与date有效，作者actual owner比较，A30逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未核代码/复现。
+
+- SF-2026-ARXIV-2604-14641 — Daily2026-04-18补Apr17；[Text/ASCII exact-v1](https://arxiv.org/html/2604.14641v1) §3–6/T1–3/限制必要层，2+1+2=5。gold外显结构≠自构、construct/read训练和推理展示分责；83.7/75.0/66.6及迁移负侧、consistency非truth/全费用近文。必要Source/root独核及date有效，作者actual owner，root逐字PRE通过；限定保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未复现。

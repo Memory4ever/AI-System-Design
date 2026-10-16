@@ -126,6 +126,8 @@ task-topology matching，同时保留单 Agent、deterministic verifier 和 work
 
 如果所有 agent 读取同一错误文档、使用同一模型并互相复述，讨论轮数不会创造新证据。
 
+监督角色还可能只改变错误出现的动作通道，而没有消除同一损失：折扣次数减少时，退款或店内信用额可以替代让利。因此，复核者不能只验被点名禁止的动作，应把等价资源转移及其最终结果一起核账，并保留执行者与监督者是否共享模型和证据的条件。[受限真实运行观察](https://www.anthropic.com/research/project-vend-2)中，同底座主管减少了显眼折扣，却增加退款与信用额；模型、工具和提示又持续迭代，整体盈利改善不能归因于增加主管。采购仍有人类批准，现场履约与纠错也依赖人工，观察不证明无人运行可靠性。联合核账会增加状态关联、审计与人工复核成本；无法取得独立结果或监督仍共享盲点时，保留单Agent的明确流程和外部审批，而不是用层级或相互认可代替验收。
+
 Verifier 的配置还应联合校准两条轴：在单次 agent 调用后还是完整 iteration 后复核，以及 judge 读取当前 step、完整 history 还是摘要。前者改变可介入的控制机会，后者改变证据可见性与 token 成本；摘要可能丢掉跨步依赖，完整 history 也可能混入干扰，不存在普适粒度或越长越好的视图。配置、judge、候选池与搜索预算应共同冻结，再比较实际控制收益及总成本。[有限多 Agent 对照](https://arxiv.org/html/2602.03053v1)的 BestConfiguration 经配置选择且成本不同，不是部署默认的统一最优；某些设置的零成功只描述这些样本与协议，不证明任务 fundamental impossible 或理论能力天花板。judge 域失配、摘要遗漏或复核成本失控时，应保留更简单的固定配置与独立环境验证。<!-- source-family:SF-2026-ARXIV-2602-03053 -->
 
 ## 典型拓扑
@@ -397,6 +399,10 @@ Agent 可从 interaction history 推断 co-player 的响应策略，并据此调
 在线适应之外，还可以先让模型生成固定策略、检查其可执行性，再在冻结策略池中模拟不同群体组成与组大小；这以编译、筛选和模拟费用换取更大的可检查人口，但可执行不等策略正确，编译失败的选择性剔除也会改变人口。单 Agent 收益或同模型 self-play 不足以说明整体福利，评估还应显式保存用户模仿、策略重采样、mutation 与停止规则，分别报告个体收益和群体结果。[受限 population 证据](https://arxiv.org/html/2602.16662v1#S6)显示选择算子可偏向损害集体结果的策略，也有小组/游戏反例；binary action、固定收益与已知 horizon、无通信及未充分校准的模仿超参限制其解释。它不是在线 belief 更新，更不预测现实迁移成本、用户选择或合作安全；开放协作仍需实际环境验证和外部规则，短小任务可保留既有在线策略与固定小组。<!-- source-family:SF-2026-ARXIV-2602-16662 -->
 
 若策略会在 test time 继续更新，测量人口就不能只是一组固定 action policies：可把初始 interaction history 与固定 adaptation prompt 合成一个 meta-strategy，再冻结候选集、对手抽样、初态和 horizon，估计成对收益及相对该集合的 NE-regret。Uniform-opponent 收益高不等于面对 best response 仍稳定，同策略 self-play 的合作也不等于该人口下没有有利偏离。[受限 meta-game 对照](https://arxiv.org/html/2602.17203v1)在六种 GPT5-mini 配置、四离散价格、40 base-game 初态与 t=50 中得到部分合作均衡代理，但候选策略、API 离散化和信念改变都会改变结论，旧模型停用还使早期结果不能重现。History 中的 plan/insight 更新与固定 prompt 都须保存，模拟、矩阵估计与API调用付费；这不同于固定策略的 mutation/selection，也不预测现实 collusion 或授权合作。人口覆盖或成本不足时，保留冻结小组与实际环境对照，把 behavioral belief 和外部规则继续分权。<!-- source-family:SF-2026-ARXIV-2602-17203 -->
+
+合作机制也不只是在相同规则下多给一些历史。重复交互与 reputation 主要改变 Agent 能看见谁的过去行为，以及未来互惠的机会；mediator delegation 与 payoff contract 则还依赖环境真实执行委派或收益转移。提出协议、口头同意或投票，并不等于外部系统已经授权且能够兑现这些操作。应分别记录观察接口、partner identity、可委派动作、收益规则与实际执行者，不让 behavioral belief 静默升级成控制权或可执行承诺。<!-- source-family:SF-2026-ARXIV-2604-15267 -->
+
+[CoopEval 的有限博弈证据](https://arxiv.org/html/2604.15267v1)在指定有限游戏、可见历史和足够重视未来回报等条件下讨论合作均衡存在；这不排除坏均衡，也不保证模型群体会到达它。归一化 payoff、固定收益矩阵上的演化加权与实际合作成功率是不同测量，更多历史或某种 contract 仍可更差；合成 rationale 标签也不读取真实动机。重复模型调用、历史和机制执行都计费，有限轮折扣实验不认证现实用户福利、跨机构授权或持续稳定。执行承诺、人口或成本不可验时，保留明确外部规则、固定小组与实际环境对照，不从一个均衡存在命题批准开放协作。
 
 ## Message 不是 State
 
@@ -1399,3 +1405,7 @@ Review note：`SF-2026-ARXIV-2606-29654`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2604-09523` — Apr14补Apr13，exact-v1Event-Driven Temporal Graph Networks题名，§3–6及必要8/B，2+2+2=6具体event-clock→hidden/credit分责差额深入；不采用currentv3 JAX suite、fullsim2real、安全或独立模块因果。保Δt/50clip、duration/preemption/tie/silentdrop是engine定义、local TFIDF/日志actor vsnoisefreecritic、RK4四NFE、双方共同换算法、NoBeta56656/NoGAT56565接近57135、mock/Docker不同人口、10seeds median末20%无CI、10vs17.2policySPS/A10040或80/32CPU2.5M8h与全费/SLO ND。reader必要Source/date有效；reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回，未核实现/安全攻击运行或复现。
 
 - `SF-2026-ARXIV-2604-12229` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12229v1)§3–5/Tables1–4/A.3，2+1+2=5，hinter监督/solver消费与oracle信息资格具体缺口深入。只采用角色与输入分账；gold状态不授在线适配、内部hint非答案authority，FT反退/AIME2025八run零及全费用保留。未核artifact/复现；reader R14必要Source/R15 date/R19逐字PRE与R23实际正文、完整邻接及本人注POST通过；作者同步本人注并实际读回，不授DAY。
+
+- SF-2026-ARXIV-2604-15267 — Daily2026-04-18补Apr17；[CoopEval exact-v1](https://arxiv.org/html/2604.15267v1) §2–7/Thm1条件/T2及必要AppC，2+1+2=5。history信息与delegation/payoff执行承诺分责，均衡存在非选择/稳定；finite15round、normalizedpayoff/evolutionmetric、负侧与调用费近文，不授现实福利/授权。独立reader必要Source/root接纳/date有效，作者actual owner比较，A35逐字PRE通过并获指定窄lease，正文/本人注已保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未核artifact/复现。
+
+- `SF-2025-ANTHROPIC-VEND2`：Dec19补Dec18；[官方Phase two](https://www.anthropic.com/research/project-vend-2) CEO/What actually worked/Tools/末限制。Boyle 2+2+2=6，限定监督动作替代及结果联合核账反证；保共同底座、持续版本/工具/prompt混杂、采购人工批准及现场支持，不授CEO盈利因果/无人可靠性。Newton§4实际必要Source/owner/逐字PRE通过，root ROOT_REVIEW§1授本段与本人注窄锁；Newton§7实际新增全文/完整两侧/本人注POST通过，root ROOT_REVIEW§2实际读回接纳并释放窄锁；本次仅同步已发生行政，不授DAY；未核artifact或复现。

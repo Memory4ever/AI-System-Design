@@ -4,9 +4,16 @@
 **窗口：** 2026-04-26T09:00:00+08:00 ～ 2026-04-27T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-28T19:34:03+08:00
+**检查时间：** 2026-10-16T04:21:40+08:00
+**窗口说明：** 用户要求只补来源遗漏，保留既有候选整行、日期、评分、原小时窗口与连续原§4；旧材料仅去重，不搬移归属。
+**补充窗口：** 2026-04-26 ～ 2026-04-26
+**冻结候选日期：** [补充前原报告](../_sources/daily-20260427/baseline-before-supplement-20261016.md)
 
 ## 1. 结论
+
+本轮补充只处理04-26北京时间完整自然日。发现Seed官网当天的MegaScale-Omni摘要事件，新增1个家族，与旧46项合47项；必要机制/反侧已获非作者Source/具体owner/PRE核验，Ch36两段及本人注已获非写入者实际POST通过、窄锁释放，补充后完整六部分已由root非报告作者实际验收通过，普通研究待办为0。其核心增量是动态多模态负载下encoder/LLM独立并行与联合流水线：不能只塞满当前bubble，还要维持插入映射、stage均匀性及按需activation驻留。官网04-26日期与现可读May exact-v1分开，不声称May正文、私有实现或benchmark当时已可得。[唯一补查记录](../_sources/daily-20260427/SUP_SOURCES_20261016.md)保留准入校准、必要源与精确来源限制；不声称全网无遗漏。
+
+新增1项已实际整合，合47家族＝34项实际整合、7项具体已有覆盖、4项仅报告、2项原中心争议暂缓；新增两段与本人注的真实POST通过见[补查A7](../_sources/daily-20260427/SUP_SOURCES_20261016.md#a7-root真实post通过与day提交)，补充后日级验收见[补查A8](../_sources/daily-20260427/SUP_SOURCES_20261016.md#a8-root完整六部分day通过与完成态保存)。以下三段保留原小时窗口的有效成果与日期口径，不作为新增自然日的完成标签：
 
 本窗目前最重要的增量不是论文数量，而是执行与证据的权责边界：issue 的当前状态与一次 Agent run 的产物不能混作同一个完成状态；反思机制需要同时计修正错误与误改正确答案；训练期早停初始化可能让可变深度模型根本学不到深路径；保护性梯度改写可能经 Adam 二阶幅度反向放大步长。这些命题已进入相应 Books 原有论证链，且各有非作者对实际正文和相邻段落的写后复核。若原始证据只支持受控负载，就不把实验数字写成生产收益或普适安全保证。
 
@@ -16,35 +23,35 @@
 
 ## 2. 来源覆盖
 
-下表只对本次实际入口与日期邻界负责；“未完成”是尚可执行的普通检查，“受阻”是当前原站历史目录/必要版本无法取得，二者均不能替代为“零更新”。原始字段与查询细节见[来源发现记录](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。
+本轮14个每日来源的补充窗口检查如下；查询、停止点和有效层复用见[补查§A5](../_sources/daily-20260427/SUP_SOURCES_20261016.md#a5-14个daily来源的补充自然日有界收口)。不扫描每周组；关联EuroSys DOI只为具名论文身份核验，不扩会论文集。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | [News RSS](https://openai.com/news/rss.xml)按原始 `pubDate` 核邻界：Symphony、Choco 为 04/27T00Z，Our principles 为 04/26T16Z，均在窗；04/27T06Z 微软合作在窗外。Symphony 官方正文/Draft SPEC 已读；Choco 应用与原则文章具名前闭。补查 [Research Index](https://openai.com/research/index/) 首屏 09/23→08/18 共10项、末尾 `Load more`；Publication 首屏仍只到 07/28，直开页码与控件尝试均未取得 04/27 邻界。 | 受阻 | News RSS 不能代替 Research Index；原站命令行访问仍返回 HTTP 403，网页首屏虽可读却尚不能可靠回溯至本窗。需可用官方历史分页或具名同期原页，不据此断言研究零命中。 |
-| SRC-ANTHROPIC | [Research](https://www.anthropic.com/research) HTML 原始 `publishedOn` 邻界 04/22T14:27Z→04/29T20:26Z，无本窗列表项。 | 已检查 | 只限公开 Research 目录，不代替作者论文。 |
-| SRC-GOOGLE-AI | [Research Blog April](https://research.google/blog/2026/04/) 04/22→04/29；[DeepMind Publications](https://deepmind.google/research/publications/) 当前精选公开目录第一页 264 总数、05/06→04/25→04/23 的倒序邻界无本窗项；[DeepMind Blog](https://deepmind.google/blog/) 04/27 韩国合作仅自然日且属既有技术应用/合作。已重开 [Google Research Publications](https://research.google/pubs/)：2026 年约359条、每页15条、Year 排序，条目仅 venue 年份而无本站首次公开时刻。 | 受阻 | Blog/DeepMind 可见目录有界阴性不代替 Google Publications；后者无按日可停止的原始公开目录，需官方上架时间或具名同期记录定点重开，不据年份排序宣称本窗零发布。 |
-| SRC-META-AI | [Meta Research](https://ai.meta.com/research/) 与[Blog](https://ai.meta.com/blog/) 实际打开，Blog 旧邻界 04/08→06/29。官方 [Publications 第1页](https://ai.meta.com/results/?content_types%5B0%5D=publication) 与[第2页](https://ai.meta.com/results/?content_types%5B0%5D=publication&page=2)的近期有序段可见 05/26→05/19→05/04→04/16→04/14→04/09，跨过本窗，未见本窗 publication。 | 受阻 | Publications 近期段已有有界阴性，不再称首屏未查；第2页后半混旧年推荐，且 Research 首页/Projects 与其它资源不由该列表覆盖，不能据此宣称 Meta 全站零研究。 |
-| SRC-QWEN | 官方动态研究 API 40 条 `extra.date` 04/22T10+08→04/28T10+08；静态 research-list 60 条均早于 2026，研究列表本窗无项。[qwen-code v0.15.3](https://github.com/QwenLM/qwen-code/releases/tag/v0.15.3) `published_at=04/26T06:49:56Z` 与 [04/27 nightly](https://github.com/QwenLM/qwen-code/releases/tag/v0.15.2-nightly.20260427.3b0b6c052) `published_at=04/27T00:25:13Z` 均在本窗，官方 API 单项分页 p335–339 给出相邻停点；会话历史 rewind、记录 flush、热路径 I/O、预连接的关键 PR 已定点核。现有 Ch81/84 已区分对话与环境恢复、运行收据提交，这批为 CLI 受限实现/修补而非新增长期机制，贡献前关闭。 | 已检查 | 注册的 Qwen 研究入口为动态40+静态60两列表，按真实邻界已查；qwen-code 作为额外触发仓库仅覆盖其 release 层。未查 QwenLM 其它仓库不能据此宣称组织级零更新，若有具名重要发布再定点重开；不把全组织逐仓列为本窗无限普通配额。 |
-| SRC-DEEPSEEK | [Research/News](https://deepseek.com/en/news/) Research 02/25→06/24、News 04/24 V4 Preview→09/10 V4.1；两可见目录无本窗独立条目。 | 已检查 | 04/24 Preview 是窗前家族，PDF 内印 04/27 不单独创造首发；结论限公开目录。 |
-| SRC-MOONSHOT | [Kimi Blog](https://platform.kimi.com/blog) 当前首页最新为 2025-11-07；[kimi-cli 官方 release](https://api.github.com/repos/MoonshotAI/kimi-cli/releases?per_page=100) 04/24 1.39.0→04/28 1.40.0 跨本窗。官方组织当前 `sort=pushed` 前20仓库至 02/14 已低于本窗；其中窗前创建且主线相关的另八仓默认分支本窗 commits 均空，Releases 分别 0/0/19/0/0/17/0/0，非零仓的发布邻界均越过本窗，见[实际记录](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | GitHub 只限当前公开、所列主线仓库默认分支/可见 release，不证明曾删历史、其它 branch/tag 或站外论文。Kimi Blog 缺 2026 可按窗回溯的历史目录，旧首页不能作零命中；需官方旧目录或具名同期材料才重开此子入口。 |
-| SRC-TENCENT-HUNYUAN | 官网 `publicList` 9/9，`displayPublishTime` 04/23→04/30 跨本窗。当前官方组织目录 83 仓到末；13 个后续活跃的主线仓默认分支本窗 commits 空、Releases 空且唯一可见 tag 属 2024；先前限流的六个窗前相邻仓 Releases 重取后也均完整为空，见[有界停点](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | 官网目录与当前公开主线仓可见层均无本窗项；非默认分支、已删/改权限历史、站外材料无可按窗回溯的完整档案，待官方 dated archive 或具名同期记录定点重开，不称组织全历史零更新。 |
-| SRC-ZAI | [Research](https://www.zhipuai.cn/zh/research) 04/07→04/29；[官方 release notes](https://docs.z.ai/release-notes/new-released) 04/07→06/16。官方组织当前 `sort=pushed` 首30仓末项已早于本窗；窗前创建且后来仍活跃的 7 个主线仓库默认分支本窗 commits 均空，当前 Releases/Tags 各 0，详见[实际停点](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | 当前研究/发布目录及可见默认分支层无本窗项；非默认分支、删改权限历史和无按窗归档的旧原始发布无法由当前快照证明为零，取得官方 dated archive 或具名同期记录后定点重开。 |
-| SRC-BYTEDANCE-SEED | 官方 Publications API `article_type=1` 共 242、页20所见 05/12→04/08，`article_type=2` 共95、首20 04/22→04/08。官方 GitHub 当前 63 仓；窗前创建且后来仍活跃的 12 仓逐个取 Releases/Tags 有效响应，`VeOmni` 17 项 release 的 04/15→04/27T08:21Z 邻界跨本窗，其余当前 release 无本窗项；当前可搜索 commits 精确窗 `0,incomplete_results=false`，见[有界停点](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | 仅官网可见目录与当前公开仓库的 release/tag/已索引提交层得有界阴性；`byteff2` 非 release tag 的目标 commit 04/21 不等于 tag 公开日。已删/改写历史、非默认分支、无按时刻归档的旧 tag/Blog 与站外作者 arXiv 无法由当前快照证明为零；取得官方 dated archive 或具名同期记录后定点重开。 |
-| SRC-BAIDU-ERNIE | [文心官方博客](https://ernie.baidu.com/blog/zh/) 04/15→04/30 跨本窗；[PaddlePaddle/ERNIE Releases](https://api.github.com/repos/PaddlePaddle/ERNIE/releases?per_page=100) 当前仅 2025-06-30 一项。 | 已检查 | 只限这些可见入口，不覆盖其它仓库/论文。 |
-| SRC-XIAOMI-MIMO | [MiMo Paper](https://mimo.xiaomi.com/) 03/13→06/29；官方组织当前 18 个公开仓库目录已到末页，5 仓本窗后创建，其余 13 仓本窗可见 Releases/Tags 全部空；其中当前 push 晚于本窗的 4 仓默认分支按本窗 UTC 起止取 commits 也均空，见[原始入口与停止范围](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | 仅 Paper 和当前仍公开的默认分支/Release/Tag 层可作有界阴性；首页 Blog 卡片无可核原始日期，无法判定本窗归属，需官方 dated archive 或同期原始材料定点重开。删除/改写历史、旧 branch 和站外论文不由当前组织快照排除。 |
-| SRC-MINIMAX | [英文 Blog](https://www.minimax.io/blog)、[官方 IR dated releases](https://ir.minimax.io/news-events/new-releases) 英文列表 May26/27→Mar18 越过本窗、中文同题 Agent Team 与[Agent Tech Blog](https://agent.minimax.io/docs/llms.txt)定点；中文 JSON-LD 04/27T12Z 已越过09点截点，英文同题 05/27，不入本窗。[MiniMax-AI/cli v1.0.12](https://github.com/MiniMax-AI/cli/releases/tag/v1.0.12) 原始 `published_at=2026-04-26T01:40:29Z` 落本窗；[PR #94](https://github.com/MiniMax-AI/cli/pull/94/files) 的 HTTPS/重试及 base64 图片响应等只是既有 CLI 局部修复，贡献前关闭。官方 GitHub 当前 35 仓；窗前创建且后来仍活跃的 7 仓 Releases/Tags 已逐个取得有效响应，除 CLI 已审阳性外当前可见发布无本窗项；当前可搜索 commits 精确窗 `0,incomplete_results=false`，见[有界停点](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。 | 受阻 | 中英 Agent Team 首发日期冲突但均不在本窗；7 仓当前可见层不能证明已删/改写 release/tag、非默认分支、无日期历史 Blog 或其它历史发布为零。四个仅有 tag、没有 release 的旧目标 commit 也不等于 tag 公开时刻；取得官方 dated archive 或具名同期记录后定点重开。 |
-| SRC-ARXIV | [官方公告规则](https://info.arxiv.org/help/availability.html) Sunday 20 ET；DataCite 339 个初建题名与官方 OAI 额外 69 个身份去重形成 408 宽线索；相邻 04/28 receipt 从 ID 2604.22754 开始。主线/含糊题摘、共享旧错误理由组 158 项与必要 exact-v1 已按贡献筛选；46 家族证据、Books 处置和分层否定侧获[非作者日级核验](../_sources/daily-20260427/V3_ROOT_DAILY_GATE_20260427.md)。 | 已检查 | OAI 可含修订、DOI/Submitted 非首发；日期只用批次组合推断，`22152` 版本证据隔离。不称 408 全是新论文、全部逐篇全文或全学科无遗漏。 |
+| SRC-OPENAI | 官方RSS本轮200/1294项，Apr25T00Z→Apr26T16Z→Apr27T00Z；Research Index首屏Oct7→Sep10/Load more，未取得April历史分页。 | 受阻 | RSS可见层无04-26北京项；Research目录缺段不支持零研究/无遗漏，需官方dated archive或具名同期原页。 |
+| SRC-ANTHROPIC | Research HTML原始publishedOn Apr22T14:27Z→Apr29T20:26Z跨窗。 | 已检查 | 限该公开Research列表，不代替作者论文。 |
+| SRC-GOOGLE-AI | Google April Blog Apr22→Apr29；DeepMind Publications265精选的May6→Apr25→Apr23。Google Pubs本轮2026年413项但无逐日上架字段。 | 受阻 | 前两目录有界阴性，Google Pubs/非精选历史资格未可核；需逐日官方记录，不按413条全量排队。 |
+| SRC-META-AI | 复用原V3实际Publications May4→Apr16与Blog Apr8→Jun29邻界；当前page2已变Oct→Jul、page3网页/原站访问失败。 | 受阻 | 原有限日期层有效，不拿当前失败作零；Research/Projects不可回溯层需具名同期材料。 |
+| SRC-QWEN | 动态40项Apr22→Apr28，静态列表最大2025-12-23；qwen-code官方Releases p2（100项，Jul24→Apr8）、p3止Apr7。 | 已检查 | v0.15.3 Apr26T06:49:56Z为旧已审局部实现EX，不重复计候选；Apr27 nightly不搬入补窗。限注册目录与具名release层。 |
+| SRC-DEEPSEEK | 本轮News Apr24→Sep10、Research Feb25→Jun24。 | 已检查 | 可见目录无04-26独立项；V4 Preview保持Apr24，PDF印刷日期不造新事件。 |
+| SRC-MOONSHOT | 本轮Kimi Blog仍2025旧首页；kimi-cli Releases100项，Apr24 1.39.0→Apr28 1.40.0。 | 受阻 | 该release层阴性；Blog 2026历史不可回溯，需official dated archive，不外推组织零发布。 |
+| SRC-TENCENT-HUNYUAN | 本轮官网publicList page1/100、9/9，displayPublishTime Apr23→Apr30；原具名组织Release/Tag有效层复用。 | 受阻 | 官网可见层阴性；public/published/created字段不混用，删除/权限/非默认分支与站外历史仍隔离。 |
+| SRC-ZAI | Research Apr7→Apr29、release notes Apr7→Jun16；旧具名仓Release/Tag空层复用。 | 受阻 | 可见目录阴性不等组织所有历史，需具名同期发布材料恢复剩余子入口。 |
+| SRC-BYTEDANCE-SEED | Research精选与Apr26独立页完整题摘；API type1 p20/40（total246）跨Apr30→Apr26→Apr23，type2 p0（total96）跨Apr23→Apr9。 | 已检查 | 新增MegaScale-Omni一个；不把API归档午夜当精确首公开时刻。旧tag/已删历史不由可见目录排除。 |
+| SRC-BAIDU-ERNIE | 本轮中文Blog Apr15→Apr30→May9；ERNIE唯一2025 release层复用。 | 已检查 | 限该Blog/具名repo，无04-26项；不外推作者论文与其它仓。 |
+| SRC-XIAOMI-MIMO | 本轮Paper Jun29→Mar13，Blog卡片无逐篇原始日期；旧当前公开仓Release/Tag有效层复用。 | 受阻 | Paper有界阴性，Blog历史/已删层资格未知，需官方dated archive或具名同期材料。 |
+| SRC-MINIMAX | 中/英文Blog Apr27/May27→Mar18；Agent docs索引无逐篇Apr26日期。CLI Releases28项，唯一Apr20～May1事件v1.0.12 Apr26T01:40:29Z。 | 受阻 | CLI具体传输/参数补丁旧EX有效；无日期docs及删改历史不作零项，中文Apr27不落补窗。 |
+| SRC-ARXIV | 官方公告规则Fri/Sat ET无公告、Sunday20ET为Apr27北京08点；主线主题定点检索与已有原始批次去重。 | 已检查 | 04-26北京无常规公告批次，旧46日期不动；不以Submitted归属，也不称排除站外先公开/特殊手工事件；有具名官方证据才定点重开。 |
 
-对八个相关官方 GitHub 组织各做过 `created:2026-04-26..2026-04-27` 新仓库日期层查询，当前索引均无结果；这只排除**当前可见的新仓库创建线索**，不覆盖已删除/改权限/私有转公开、既有仓库 tag/release 或无 tag 的重要提交，不代替表中具名隔离的历史子入口。
-
-Tencent-Hunyuan 的先前 GitHub 限流已在本轮六仓有效重试后消除；研究目录、当前可见组织仓库与剩余历史子入口的精确边界见上表和[来源发现记录](../_sources/daily-20260427/V3_SOURCE_DISCOVERY.md)。
-
+原小时窗口的来源明细和原始限制保存在[冻结原报告§2](../_sources/daily-20260427/baseline-before-supplement-20261016.md#2-来源覆盖)及其原V3_SOURCE_DISCOVERY；本表明确逐层复用，且不将旧结论外推到缺失历史子入口。
 ## 3. 候选与判断
 
-下表列本窗冻结的 46 项候选家族，33 项实际正文已有[非作者写后核验](../_sources/daily-20260427/V3_APR01_ROOT_WRITE_AFTER_INDEPENDENT.md)或下列各项具名写后记录。公开范围是有据组合推断而非逐篇日志确证；OpenAI Symphony 则有 News RSS 原始 `pubDate`。入选与本日 Gate 通过不代表作者所有主张成立或实验已复现。
+新增自然日家族如下；与后面的原46行合47，不改变原行日期或评分。MegaScale技术审阅以目前可复查May v1为准，官网Apr26事件本身只有题摘/链接，二者不混作同一时点版本证明。
+
+下表中的原46项保持整行，33 项实际正文已有[非作者写后核验](../_sources/daily-20260427/V3_APR01_ROOT_WRITE_AFTER_INDEPENDENT.md)或下列各项具名写后记录。它们的公开范围是有据组合推断而非逐篇日志确证；OpenAI Symphony 则有 News RSS 原始 `pubDate`。原Gate不替代本轮新增复核，也不代表作者所有主张成立或实验已复现。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [MegaScale-Omni：04-26官网事件与当前May正文分账](https://seed.bytedance.com/en/public_papers/megascale-omni-a-hyper-scale-workload-resilient-system-for-multimodal-llm-training-in-production) | 2026-04-26 | 动态模态/长度下encoder与LLM独立网格、anchor/均匀按需流水线及重排/reshard，2+2+2=6 | 深入完成 | 整合：TRAIN-DISTRIBUTED-TRAINING [Ch36](../../../../books/part-04-training-system/36-distributed-training.md)已补两段具体调度条件链；Source/owner/PRE已获非作者核验，非写入者实际POST通过、窄锁释放，未运行artifact或复现。 |
 | [OpenAI Symphony](https://openai.com/index/open-source-codex-orchestration-symphony/) | 2026-04-27T08:00:00+08:00 | issue 当前状态与 run/PR 执行产物分权，2+2+2=6 | 深入完成 | 整合：AGENT-PLATFORM [Ch84](../../../../books/part-07-agent/84-agent-platform.md)，实际写后通过 |
 | [2604.22750v1 How Do AI Agents Spend Your Money?](https://arxiv.org/html/2604.22750v1) | 2026-04-27T08:00:00+08:00 ～ 2026-04-27T09:00:00+08:00 | 预运行自估不能拥有硬预算/账单，2+1+2=5 | 深入完成 | 整合：AGENT-PLATFORM [Ch84](../../../../books/part-07-agent/84-agent-platform.md)，实际写后通过 |
 | [2604.22136v1 Sovereign Agentic Loops](https://arxiv.org/html/2604.22136v1) | 2026-04-27T08:00:00+08:00 ～ 2026-04-27T09:00:00+08:00 | Eq16 执行动作身份零信息保证有二元反例，2+2+2=6 | 争议 | 暂缓：中心定理未获证明；修正保证对象/补条件，见§5 |
@@ -93,6 +100,12 @@ Tencent-Hunyuan 的先前 GitHub 限流已在本轮六仓有效重试后消除�
 | [2604.22722v1 UAE](https://arxiv.org/html/2604.22722v1) | 2026-04-27T08:00:00+08:00 ～ 2026-04-27T09:00:00+08:00 | 离线 reader 效用蒸馏入线上 ANN 双塔，2+1+2=5 | 深入完成 | 整合：AGENT-RAG [Ch76](../../../../books/part-07-agent/76-rag.md)，5 分实际知识缺口深入 override，[非作者写后通过](../_sources/daily-20260427/V3_APR02_CH76_UAE_BERAG_WRITE_AFTER.md) |
 
 ## 4. 证据与知识整合
+
+### [MegaScale-Omni：04-26官网事件与当前May正文分账](https://seed.bytedance.com/en/public_papers/megascale-omni-a-hyper-scale-workload-resilient-system-for-multimodal-llm-training-in-production)
+
+官网完整题摘支持encoder/LLM静态耦合遇动态模态配比/长度失配的新增系统方案。当前[2605.08962v1](https://arxiv.org/html/2605.08962v1)§4.2/Fig9把anchor挂载位置与microbatch数据流映射分开；§4.3/Fig10揭示后stage多塞encoder会在编码耗时变化后放大延迟，均匀插入仍依赖hybrid packing使LLM耗时稳定及encoder平衡。按需插入降低activation驻留，但与§5.1/§7.3分组重排空间/通信成本相互制约。作者§7评价的局部消融、末stage显存反向与59次restart不证明同质量time-to-target、无死锁或生产故障消除；GPU型号、precision与私有cluster细节未披露，非作者并未验收全部倍率或全§7.1/7.2。本轮不把May稿技术细节/收益倒填成Apr26时点已可得，不复现私有实现。实际Books差额、逐字PRE和必要反证见[补查A3～A4](../_sources/daily-20260427/SUP_SOURCES_20261016.md#a3-megascale-omni-必要source与版本边界)；必要原源/owner/PRE已由root实际核验，Ch36两段及本人注已获root非写入者实际正文/完整邻接POST通过、窄锁释放。
+
+以下连续原§4内容保持原样，仅作为旧有效46项的证据，不由旧完成措辞继承本轮新增验收：
 
 下面每项是本次确实读到的 exact-v1 必要段与原有章节实际论点的短结论；[日内证据记录](../_sources/daily-20260427/V3_EVIDENCE_REVIEW.md)保留更完整的方法、评价、反例与受限设备/任务条件。并不宣称作者实验独立复现。普通 Books 待办已清零，不用“已吸收的语义增量”一类无内容占位。
 
@@ -282,6 +295,12 @@ exact-v1 §3–4 用无谓词的 clique-cover 索引近似密邻接，查询时�
 
 ## 5. 缺口与下一步
 
+**本轮普通待办：无。** MegaScale-Omni必要Source/具体owner/PRE、两段真实书稿POST及补充后六部分日级验收均由非报告/非写入作者root实际通过、窄锁释放。原46项有效层未出现本轮新反例，复用原独立审阅与实际POST，不重新逐篇全文。剩余仅下文明确隔离的外部保留项，不用于正面证据、Books或无遗漏断言；取得所列原始材料后定点重开。
+
+**补充自然日外部保留项：** 上表具名历史目录/无日期材料仅在取得官方dated archive或具名同期原始材料后重开；不进入候选/Books正面证据，不支持无遗漏。MegaScale的Apr26官网题摘是有效事件；目前download为May v1，未证其全文当时可得，April逐段版本史不作保证。04-26无常规arXiv公告不排除站外已公开家族，若获得具名当日官方证据只重开该家族。
+
+以下为原小时窗口已经处理到终态的说明；原“清零”只对原46项有效，不替代本轮待办：
+
 **普通 Books 与日级可执行待办均已清零。** `2604.22678v1` BERAG、`2604.22709v1` Abstract-CoT、`2604.22722v1` UAE 与否定侧恢复的 `2604.22615v1` GazeVLA、`2604.22169v1` ReCast、`2604.22464v1` MADE-IT、`2604.22171v1` MCI 均已完成真实书稿整合及非写入者的实际写后复核，现列 §3/§4。来源、日期、准入、证据和 Books 已经[非作者日级验收](../_sources/daily-20260427/V3_ROOT_DAILY_GATE_20260427.md)；下文仍区分外部保留项与全站无遗漏断言。
 
 `2604.22167v1` 原列已有覆盖，但[非作者八项审计](../_sources/daily-20260427/V3_EXISTING_INDEPENDENT_AUDIT.md)指出 Ch66 只明确固定输入下的输出尾险，论文 §6.1–6.2 还提供 query/paraphrase 分布与每个输入的尾险组成的双轴评价分母。root 已在 Ch66 Rare Failure Evaluation 段后窄整合，列于 §3，且已获[作者外实际写后复核通过](../_sources/daily-20260427/V3_APR01_ROOT_WRITE_AFTER_INDEPENDENT.md)，计入当前 33 项已通过 I。30/70 拆分仍出自同一 309-base-query 改写池，不能说验证了未见 base query 或真实流量。原八项 Existing 中另七项的有限逐篇复核已通过，其中 SpikingBrain2.0 同时对照 Ch22 与 Ch49；这仍不是日级 Gate。
@@ -299,6 +318,10 @@ exact-v1 §3–4 用无谓词的 clique-cover 索引近似密邻接，查询时�
 **窗外但不扩本窗：** 04/27T06Z OpenAI 微软合作、04/27T12Z MiniMax 中文 Agent Team、04/28T10+08 Qwen 动态研究列表下一条分别归属后窗；DeepSeek V4 Preview 04/24 早家族不按 PDF 印刷 04/27 重报。本次不顺带生成 Weekly 或其它日期。
 
 ## 6. 复核
+
+复核者：root（非本报告作者、非新增书稿写入者）。结论：通过。
+
+本轮实际检查完整六部分的新增与受影响层：14源的主题/查询/停止范围、1项新增的公开日期/具体准入与必要原证、Ch36实际差额与两段正文/完整邻接/本人注POST、47家族归并、§5精确外部隔离及§6复核权限；旧46未变层按其具名单篇/真实POST定点复用，不第三次无差别全文。MiniMax具体传输/参数EX与Qwen旧同事件层作有界负侧复核；没有把宽408条扩成新队列或以Books已覆盖排除潜在贡献。必要Source限于已采用机制/反侧，不验收全部倍率或April全文可得性。[本轮DAY记录](../_sources/daily-20260427/SUP_SOURCES_20261016.md#a8-root完整六部分day通过与完成态保存)明确实际范围与终态隔离。V3格式校验、42项窗口测试、旧46整行各一次/原窗口/连续原§4、当前112本地引用零missing与限定cached/unstaged diff-check通过；机器不替代语义验收。下方旧复核仅对原46项原事件有效，不以旧标签代替本轮Gate。
 
 复核者：root（非报告作者；复用具名单篇非作者审阅，并独立检查整日来源、日期、准入、证据与 Books）
 结论：通过

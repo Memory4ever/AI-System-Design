@@ -4,9 +4,14 @@
 **窗口：** 2026-04-19T09:00:00+08:00 ～ 2026-04-20T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-28T12:31:19+08:00
+**检查时间：** 2026-10-15T14:59:03+08:00
+**补充窗口：** 2026-04-19 ～ 2026-04-19
+**冻结候选日期：** [补查前原档案](../_sources/daily-20260420/baseline-before-supplement-20261015.md)
+**窗口说明：** 用户明确授权只补既有 Daily 遗漏，原小时窗、111个既有候选整行/日期/评分及连续原§4保持；新增只按前一北京时间完整自然日检查。以下既有研究结论继续保留，本轮补查另行验收。
 
 ## 1. 结论
+
+**2026-10-15补充：** Apr19整日确定新增候选0、新完整题摘0、新必要证据审阅0、Books新写0。十三机构已有效核验的具名目录停点均跨过补窗；arXiv正常公告在BJT Apr19无槽，下一次Sunday20:00EDT属于Apr20 08:00，不把提交日期或旧库存移入补窗。无新材料不改变原111家族的处置；OpenAI/Google/Meta历史覆盖缺段、MiniMax Agent Tech Blog历史不足等仍安全隔离，不授全机构零发布或全网无遗漏。独立supp_apr20_review已实际读取保存六节并通过本轮DAY，普通待办0；详见[唯一补充记录](../_sources/daily-20260420/SUP_SOURCES_20261015.md#r5-actualday通过与保存完成态)。
 
 已浏览447个跨分类去重库存标题作有界查漏，读150个完整题摘作贡献判断；不是447个当窗新论文、150个冻结候选或全文队列。首批九项准入独立校准为五项继续、四项具体关闭。旧V2.1 Complete和通用Existing不继承，旧正文完整保留在[归档](../_sources/daily-20260420/V2_1_README_BEFORE_V3.md)。
 
@@ -15,6 +20,8 @@
 ## 2. 来源覆盖
 
 以下实际原始访问的停点来自[恢复记录](../_sources/daily-20260420/v3-reopen-notes.md)；跨日未变目录只复用其可证明范围，不复制旧PASS。仅十四每日源和实际材料触发，不扫每周源。
+
+**补窗检查范围：** 本轮实际重读上述本日机构来源两节、[三机构停点](../_sources/daily-20260420/V3_THREE_SOURCE_STOPPOINT_REOPEN.md)及原非作者Gate，逐行确认下表既有目录邻界也包住Apr19全天；只复用这些有限入口，不伪称重抓十三站。OpenAI Apr16→20、Anthropic Apr14→22、Google Blog Apr16→21/DeepMind Apr15→22、Meta近期Apr16→May、Qwen Apr18→22、DeepSeek Feb→Apr24、Kimi-cli Apr17→20、混元Feb13→Apr23、ZAI Apr7→29、Seed LeapAlign Apr15 16Z→AgentWorld Apr19 16Z（后者已BJT Apr20）、ERNIE Apr15→30、MiMo Mar18→Apr22、MiniMax-cli Apr17→26及EN/CN Blog已见跨窗段均无补窗项。各行原有缺口不解除。arXiv本轮实际读[官方公告规则](https://info.arxiv.org/help/availability.html)：BJT Apr19对应Eastern周六12时至周日12时，没有常规新稿/替换/撤回公告槽；下一Sunday20EDT已BJT Apr20。辅助cs.CL月表429仅为检索受限，不据空响应写零命中、不扩12分类整月全文队列。具体查询、复用/新查区分、停止与权限见[补充R2](../_sources/daily-20260420/SUP_SOURCES_20261015.md#r2-daily14-补窗来源检查与停止)。下表arXiv447/150指保留的旧窗口研究，非本次补窗命中数。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
@@ -34,6 +41,8 @@
 | SRC-ARXIV | 447有界标题查漏、150完整题摘逐项贡献判断；127→111经历[作者反向审计](../_sources/daily-20260420/V3_ONLY_REVERSE_ADMISSION_AUTHOR.md)、[root 八项](../_sources/daily-20260420/V3_ROOT_EIGHT_REVERSE_ADMISSION_ADJUDICATION.md)、[三项](../_sources/daily-20260420/V3_ROOT_THREE_REVERSE_ADMISSION_15675_15583_15771.md)、[十一项冲突](../_sources/daily-20260420/V3_ROOT_ELEVEN_REVERSE_ADMISSION_AUDIT.md)和[两项最终逆向纠错](../_sources/daily-20260420/V3_ROOT_NEGATIVE_REVERSE_AUDIT_15376_15945.md)；窄公告/OAI/ID链见[日期说明](../_sources/daily-20260420/V3_DATE_RECONCILIATION.md)，cs.AR整月227仅补检、cs.CL请求429由既有原始库存与其他主题入口有界补足 | 已检查 | 来源/首公开只支持具名有限范围；cs.CL原请求受限、历史机构目录不保证全网零遗漏；日级核已签，见§6 |
 
 ## 3. 候选与判断
+
+**本轮补窗新增0；以下111条完整既有行逐字冻结。** 不因自然日补查迁移旧公开日期、重算评分或恢复已被有效纠偏的V2候选；AgentWorld的CMS Apr19 16Z已为BJT Apr20，不作本次新增。
 
 仅列已形成具体贡献/采用命题且通过终稿复核的111个家族。区间由官方公告时ID分配规则、Sunday20:00EDT公开槽、原始OAI与15314～16299前后边界联合推定；不把Submitted/Updated/DOIcreated单独当首公开。日期链的具名例外已隔离，见§5及[日级复核](../_sources/daily-20260420/V3_ROOT_DAILY_GATE_20260420.md)。两项从原前闭恢复的具体依据见[负侧逆向审校](../_sources/daily-20260420/V3_ROOT_NEGATIVE_REVERSE_AUDIT_15376_15945.md)。
 
@@ -642,6 +651,8 @@ exact-v1 §3.2–3.3/Fig.3 的检测 loss 通过 hidden state 反向更新 LoRA 
 
 ## 5. 缺口与下一步
 
+**补窗：** 无可执行普通待办，本轮独立六部分DAY已通过。OpenAI Research历史分页、Google Publications日级、Meta Research历史逐条日期、MiniMax Agent Tech Blog历史字段不足，以及未列机构材料继续作为终态覆盖保留：不支持候选正面证据、Books采用、机构零发表或无遗漏；可靠官方历史目录/存档或具名Apr19原文/公告返回时，只重开相应来源/家族。旧AgentWorld/π0.7身份及中央争议的精确重开条件保持下文，不借补窗解除。
+
 **本窗无可执行待办；外部保留项见下：**150份唯一完整题摘已逐项作贡献判断；§3–4的111项候选＝26项真实 Books 整合、13项具体已有覆盖、54项仅报告、18项中央窄争议；38项具名前关闭，另1项首公开身份隔离，`111+38+1=150`。此数由原127项候选的反向准入、作者纠错、[十一项冲突的非作者逆向核](../_sources/daily-20260420/V3_ROOT_ELEVEN_REVERSE_ADMISSION_AUDIT.md)及[最后两项独立负侧纠错](../_sources/daily-20260420/V3_ROOT_NEGATIVE_REVERSE_AUDIT_15376_15945.md)得出，不是按比例缩池。27项有限同行核已逐项完成；最终来源/日期、正负样本与 Books 已获[非作者整日 Gate](../_sources/daily-20260420/V3_ROOT_DAILY_GATE_20260420.md)。下文提及109/40/1、19项待核等数字是纠偏过程快照，不代表当前状态；保留其证据与反例，不让旧待办覆盖现行检查点。
 
 **终态保留项与定点重开条件：**OpenAI 注册Research的历史分页、Google Publications的日级目录、Meta Research的可读逐条日期，本轮入口与有界替代目录均已检查到§2所述停止点；三者属于每日必查入口，按合同标“受阻”而不是仅供补检使用的“检索受限”。这些缺口**不支持正面证据、Books 采用或无遗漏断言**，也不支持机构全站本窗零发表；本日确定候选来自另有官方原文与联合日期链的具名家族。若相应官方历史页可读且出现具体本窗材料，只重开受影响来源/家族，不扩扫无关年度或 Weekly。Seed AgentWorld 虽有 CMS 卡片日值却无当时正文公开证明，15483 虽有本批 arXiv 版本但同 family 官方早发线索未排除，二者维持具名身份隔离、不评分不写 Books；可核当时正文/公告或先前家族首次公开材料返回后只重开真实日期。本段之后的过程记录只是纠偏历史，不产生当前普通待办。
@@ -665,6 +676,8 @@ exact-v1 §3.2–3.3/Fig.3 的检测 loss 通过 hidden state 反向更新 LoRA 
 15350只隔离perfect答前及普适α方向保证，geometry定义、阶段/架构表与OOD退步有效保留；所见必要主文/B/E已审。重开材料为feature在generation前/中哪个时刻可用、α方向不一致澄清、最优layer/phase选择与held-out协议的可核补充/更正；此前不据它宣称质量预测/发布保证，也不扩大成所有模型/全部诊断失效。
 
 ## 6. 复核
+
+**本轮补查复核：** 复核者supp_apr20_review；结论：通过（actualDAY）。独立实际读取保存的六节受影响内容、完整HEAD差额、SUP R1–4和旧来源/Gate有效层；确认14ID及Apr19有限停点、官方常规公告边界、0新增/Books No Change、历史/身份/争议保留与精确重开，无普通工作。机械独核baseline=HEAD、111完整旧行及小时窗相同、完整连续§4相同（正文70173字符）、V3和限定cached/unstaged检查通过。复用未变化的旧单篇层，不冒充重读111全文或全网召回。执行双方均未stage/commit/push；目标MM/SUP AM是观察到的并发index状态，保留且不操作，不宣称index干净。
 
 复核者：root（非日报作者，来源/日期/负侧及整日日级 Gate）；apr01（首批九项准入校准、旧八具名准入、有限证据及 root 所写 Ch36 AW-PSP 真实写后）；apr02（具名必要源→owner及有限处置）；apr20_resume（仅对 root 所写 Ch31 15557 作非书稿作者实际写后核，不是本日报日级复核者）
 

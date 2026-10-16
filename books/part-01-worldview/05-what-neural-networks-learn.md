@@ -70,6 +70,10 @@ Representation learning 的关键收益，是让系统不必完全依赖手工�
 
 [必要方法与反侧](https://arxiv.org/html/2603.23091v1#S3)采用的语言建模匹配口径尚不闭合：相似性检验的显著性写法与结果的无显著差异不同，二者都不提供预先声明容忍区间的等价保证。局部模型与数据组合存在不一致，分类 probe 的多次初始化也不能当完整模型的独立训练重复或实际任务成功；因此只保干预设计与受限观察，不外推某项外部对齐是普适能力、安全或可信度的必要条件。额外适配、辅助信号、readout拟合、probe与反复匹配均付费；应分别保存干预目标、读出类、控制身份和独立任务结果，匹配或归因不足时保留原模型、常规probe与更窄受控实验，而不凭低辅助可读性签发性质删除证明。
 
+检验“任务在哪里表示”还须把任务信号的形成与答案信息的读取拆开。一个受限语言模型实验先用预定任务词汇的logit-lens读出定位head，再把正确任务提示中的平均activation补到缺任务提示，检查目标任务与相近竞争任务的行为；相同信号可由instruction或examples诱发，不等于两种提示走过完全相同的检测路径。下游retrieval受任务信号调节，也不证明该head存储了答案。[Shared Lexical Task Heads的有限对照](https://arxiv.org/html/2604.22027v1)只恢复部分任务与样本，词表阈值只看得到lexicalized信号，加强同一方向过多还会重复输出。提示构造、head选择、缓存与强度搜索均付费；任务或新域不受支持时，保留显式任务说明、示例、黑盒结果对照与更细因果干预，不把可解码词或高activation范数当通用任务算法。<!-- source-family:SF-2026-ARXIV-2604-22027 -->
+
+因果干预通过一个construction，还不表示定位到了跨construction可复用的机制。另一条语言实验将目标句与只改句法概念的配对句作activation patch，比较不同construction并用未见词汇测试；filler-gap相关heads在多类construction中可共享，NPI的定位则依construction变化。另用leave-one-construction-out拟合的一维DAS方向在未见词汇上出现退化，而直接patch的局部分布较稳定；学习方向与替换整个attention输出可修改的空间不同，不能从这个对照推出DAS必然过拟合或AP普遍更优。[Shared Syntactic Mechanisms的受限英语对照](https://arxiv.org/html/2604.22166v1)主要依赖合成配对、每实验一次和少量自然句，频率与机制出现时间的相关也不是独立因果证据。构造数据、拟合方向、白盒patch、强度选择与任务回归都计费；词汇、句式或最终行为不稳定时，保留原模型、独立任务结果与更窄的配对干预，不从一个共享方向批准统一句法模块或任意迁移。<!-- source-family:SF-2026-ARXIV-2604-22166 -->
+
 ## 什么叫“好的表示”
 
 一个表示是否好，不能脱离任务和约束判断。对某个任务有用的表示，可能主动消除另一个任务需要的信息。
@@ -192,6 +196,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 一个均匀随机事实映射下的 rate-distortion 下界只证明这种可分离失效在其假设中必然存在，不是现实 LLM 幻觉率公式。真实语言具有共享结构，模型还会使用上下文、推理、后训练和外部工具；这些机制可以改变有效压缩率或绕过闭卷回忆，但不会让有限参数自动获得“我是否可靠记住此事实”的校准能力。生产系统仍应把 retrieval、claim verification 与 abstention 作为独立证据路径。<!-- source-family:SF-2026-ARXIV-2609-12111 -->
 
+事实已被观察或保存，也不保证每一种名字都能把它带到当前回答路径。评估闭卷知识时，可以固定实体、关系与正确答案，只替换同一实体的规范名、别名、缩写或拼写形式，分别统计“规范名对、别名错”与相反方向的切换，而不是把两边都答错的一致性当成可靠记忆。受限英语事实 QA 中，这种双向切换在多类模型上存在；因此，人类选定的规范名称不是参数知识访问的天然标准键，单次 canonical 问答失败不能独自决定增加知识数据还是修复访问路径。<!-- source-family:SF-2026-ARXIV-2604-21882 -->
+
+[必要配对与反侧](https://arxiv.org/html/2604.21882v1)仍只是行为证据：透明模型中实体总频率在控制当前名字频率后仍与准确率相关，不等于训练频率已获得因果解释，也不证明模型内部保存了唯一实体地址。名称资源、实体链接、答案 alias matching、额外问法及分层评测均付费，英语 Wikimedia 覆盖与量化推理又限定了测量人口；对象侧改写和跨语言尚未覆盖。应保留原 canonical 基线并补同事实的名称切片，必要时使用可核外部检索与拒答，而不由多名字 agreement 或一个频率 proxy 认证事实为真。
+
 判断泛化必须回到未见数据和部署分布。训练误差、validation 误差、数据去重、污染检查、时间切分和分布外评估分别回答不同问题。benchmark 得分高也可能来自训练数据污染或测试集与真实场景不一致。
 
 对于生成模型，记忆还涉及隐私与版权风险。模型能够逐字复现某些训练片段，不等于全部知识都以逐字数据库形式存储；反过来，表示是分布式的也不意味着不会泄露具体样本。二者必须通过实证测试区分。
@@ -264,6 +272,8 @@ class 与局部曲率一起记录；它不构成对任意 Transformer loss lands
 
 是否干预还可与干预强度分开：用相反方向的球面 prototype 给出局部分数，再按阈值选择哪些 activation 进入旋转路径。但 prototype 分数不是已校准的真假概率，方向、层、token population 与 context 仍要共同绑定，配对样本、阈值搜索和逐 token 白盒计算也有成本。[有限球面 steering 对照](https://arxiv.org/html/2602.08169v1#S3)中，TruthfulQA 的选择题与生成评价并非全面同向，保范数的强干预仍可损害信息量；base 与 instruction 模型也不能合并为同一 operating point。因此必须联合检查候选答案 likelihood、生成真值与信息量，不能以 norm 不变签发“无损控制”。方向或 gate 失配、非目标行为退步时，回退原模型与已校准的行为验证，既保留 additive 路径，也不由局部结果推断所有 context 中与 ICL 正交。
 
+固定 steering 方向后，还可以只学习当前状态应沿该方向移动多少。先从带标签 probe 提取每个 block 的单位方向，再以少量 prompt–completion 的 next-token loss 学习线性 sensing，使增量成为 `d·(cᵀ[h;1])`；方向与 sensing 因而有不同的监督来源。这在函数形状上仍是 rank-1 activation edit，不因拆分训练就证明方向具有真实概念或因果解释。[必要同方向与干扰对照](https://arxiv.org/pdf/2604.24693v1)只支持有限任务接口：probe 另需样本与搜索，LoRA/ReFT只用completion训练的预算不同，部分模型/任务仍退步。Direction 提取、sensing训练、逐层计算与非目标回归全计费，系数调节计时不是全部成本；context、方向或合法能力失配时停用 edit、保留原模型及显式任务提示，不让可读方向取得真实性、安全或用户授权。<!-- source-family:SF-2026-ARXIV-2604-24693 -->
+
 尤其要区分三种结论：
 
 ```text
@@ -297,11 +307,17 @@ behavioral correlation
 
 方向之间的“冲突”也取决于谁消费这些表示：可由固定task BB classifier对activation的梯度构造平均Fisher几何，再在该metric下比较CBM概念或SAE方向，保留metric、概念标签与任务head三份身份。三个带符号cosine的乘积为负是一项定义统计关系，合法Gram也可出现，不证明自然概念逻辑矛盾或缺失真概念。[Concept Frustration的受限分析](https://arxiv.org/html/2603.29654v1)只在特定线性Gaussian/独立noise/正定block及人为构造下联系Bayes误差；增加第三概念同时改方向/head容量与监督，不是foundation weights改变或唯一修复因果。Metric可能退化、零分母与所选decision window都限制对象，proxy交叉验证也不等独立机制复现。Encoder取特征、task BB/CBM/SAE训练、梯度/metric、dictionary/window选择、标注和评价全部付费；标签、metric或head失配时保留原probe、受控干预与独立行为验收，不以几何可视化批准ontology修复、因果解释或安全。<!-- source-family:SF-2026-ARXIV-2603-29654 -->
 
+跨模型复用解释时，还可以先学习组件分数的映射，而不假设同层同号 head 承担同一功能。把 source 的 node 重要性映到 target，以独立 soft gate 混合 target 的 clean/corrupt activations，再用恢复 clean 输出与稀疏惩罚共同训练，可提出无需逐任务 target attribution 的候选组件集。[必要置乱和模型差距对照](https://arxiv.org/html/2604.24302v1)只支持特定任务行为的恢复，仍需 target 前向/反向；直接 attribution 也不是严格 gold 上界，较大 gap 与另一模型族可明显变弱。稀疏恢复不证明这些节点必要、连通或两个模型使用同一真实机制，clean 输出更非答案真值。双模型、corruption、映射训练与留任务验证全计费；坐标、干预或迁移失准时保留各模型独立 attribution、随机/置乱控制和真实行为回归，不由对齐矩阵批准解释可移植。<!-- source-family:SF-2026-ARXIV-2604-24302 -->
+
 这条证据阶梯也适用于模型自己的解释。问模型“你刚才在想什么”，得到的仍是生成文本，不是直接读取的内部计算记录；准确的描述可能来自训练中学到的说法，也可能只是根据已经说出的内容反推。要检验描述是否依赖内部状态，可以保持可见输入不变，在指定层注入概念方向，再比较无干预、随机概念及不同注入时机的报告。若模型在说出该概念之前就识别到变化，而且仍能正确复述原输入，才获得了比自述可信更窄的证据：这次报告使用了某种内部信息，而不是单纯抄读输入或事后解释输出。
 
 这种诊断增加配对试验、层与强度搜索以及独立评价的成本，还可能被提示方式、输出偏置和干预损伤混淆。[受控概念注入研究](https://transformer-circuits.pub/2025/introspection/index.html)在部分 Claude 模型上发现了这种局部能力，但多数试验仍失败，也没有直接定位完整的元认知表示。因而局部自述与内部状态之间的因果联系，不等于自然任务中可靠的自我审计，更不证明意识或全部解释真实。条件失配时，仍应回到外部行为测试和受控干预，而不能让模型为自己的计算过程签发正确性证明。<!-- source-family:SF-2025-ANTHROPIC-INTROSPECTION -->
 
 局部干预还须说明后续计算有没有重新采样。一条受限路径固定已经实现的 prefix 与 continuation，只在 receiver 的 Attention 中遮住候选 trace span，再测 next-token 分布怎样变化；它隔离的是“在这条续写上，哪段历史被当前读路径使用”，不等于删除后重新 rollout 会产生什么答案。以固定 stride 切 span、按 entropy/JS 选接收位置可能偏向更显著的局部效应，因而需保留匹配随机位置对照、候选选择与额外 forward 成本。[DRTC 的有限 reasoning 对照](https://arxiv.org/html/2602.15332v1#S4)支持读路径依赖，却没有证明该 span 对最终正确性必要或有益；存在替代路线、模板或选择分布变化时，仍应重新生成并独立检查行为结果，不能把固定续写的因果测量升格为整条 reasoning 的正确性证书。<!-- source-family:SF-2026-ARXIV-2602-15332 -->
+
+梯度归因还可以改变基线的人口，而不把噪声更小直接当作更忠实的机制解释。沿同一直线写出 `b(t)=x₀+t(x−x₀)`，若基线位置为随机变量 S，其累积分布为 G，在路径绝对连续、相关梯度可积时，平均路径归因可写为对梯度积分加权 `G(t)`。各维归因之和对应 `F(x)−E[F(b(S))]`，不再是相对一个固定 x₀ 的差；基线分布因而属于解释对象的身份，不能改变它后仍声称回答同一个 completeness 问题。<!-- source-family:SF-2026-ARXIV-2604-14338 -->
+
+[PSIG 的有限理论与 toy 对照](https://arxiv.org/html/2604.14338v1)在均匀基线、零均值白噪声模型下给出方差缩减，但权重也改变信号，不能推出真实模型解释更忠实或普遍更高 SNR。数值积分误差还取决于加权被积函数的光滑性或有界变差，重复完整 IG 的基线平均则支付内层梯度预算。应分别验收归因残差、随机/基线敏感度与原模型上的行为干预；条件、梯度预算或任务解释不匹配时，保留固定基线 IG、其他合适基线与 activation patching，不以较平滑热图取代因果证据。
 
 Jacobian-adjusted lens 一类方法提供了一个具体例子：它不直接把中间 activation 投影到
 最终词表，而是用该 activation 对后续 residual 的局部 Jacobian 近似 layer-to-output
@@ -330,6 +346,8 @@ Jacobian-adjusted lens 一类方法提供了一个具体例子：它不直接把
 
 参数替换得到的是相对于这对 checkpoint、输入与干预粒度的充分性证据，不是唯一知识源头或所有行为的通用定位；现有检验只在六个代表任务上支持稳定性。模块间冗余、交互及改变输入后的失效仍需单独检查，局部恢复也可能损害其他任务。它因此补充而不替代 activation patching、黑盒行为评测与更细干预；将 source-level 参数差异与运行期中继分账，才能避免把“在某层看到信号”误写成“知识唯一存储于该层”。<!-- source-family:SF-2026-ARXIV-2604-13694 -->
 
+状态复用与重新学会同一任务，也应作为两份不同证据：先在 support 上选择 layer、位置和可读写接口，再冻结这些选择，在 query 上检验 donor state 经编译或 patch 后能否被原 receiver 消费；允许新增 prompt slots、adapter 或更宽控制路径的训练，则另测其重学能力。[有限 state-transfer 对照](https://arxiv.org/html/2604.18158v1)中，两类路径都可能成功，且可训练控制槽能追回原局部低秩更新的差距，因此不应由一次固定接口失败宣布模型缺少能力，也不由重训成功声称已复用原状态。匹配任务结果仍不证明内部身份唯一；跨模型随机状态控制、K/V 分拆和更长生成可使原结论变窄。Support 搜索、donor 构造、状态读写、训练步与选择器全计费，冻结 query 不抹掉上游候选选择成本；接口或迁移失准时，保留显式状态、普通训练与黑盒行为验证，不把局部闭环等同通用状态 API 或天然低成本部署。<!-- source-family:SF-2026-ARXIV-2604-18158 -->
+
 行为不能取用已学事实时，也不一定只能继续补知识。训练期 augmentation 把预期的逆关系或组合答案提前写进样本，在查询结构稳定时直接有效；另一分支训练模型在推理时召回、组合和自验参数知识，将额外计算放在访问路径上。受控实验先用 SFT 写入事实，再以答案条件化的 teacher traces 启动 thinking，并用 correctness feedback 训练：所测 Gemini 2.5 Flash 在只经历事实学习、未经历该 thinking/RL 训练的新知识上仍能改善部分潜在推导。这是访问策略迁移的证据，不是任意未见知识都会自动泛化。<!-- source-family:SF-2026-ARXIV-2604-01430 -->
 
 尤其不能把“生成候选后按正向关系自验”写成“学会直接求逆”。纯逆关系没有可组合中间路径，成功仍依赖先提出正确实体及可靠自验；单次成功率低于把完整事实放入上下文的 ICL 对照，多次尝试的 pass@N 也不等于部署时能识别正确答案。Thinking 增加训练和生成成本，自验还可能重复参数中的错误；稳定关系可继续用显式 augmentation，事实可检索时保留外部证据路径，而不能用更长推理代替事实核验。
@@ -355,6 +373,10 @@ label 唯一，或模型普遍按该叙述“思考”。旧的 probe、activati
 
 干预目标本身也要保留算子的竞争关系。用某条 Query–Key 路径的线性相对贡献筛 circuit，在快速定位时是合理代理；移除部分计算后，Softmax 的同一 row 分母和其他 key 的权重却都会改变，代理下降不等于原 attention 权重同样下降。一条更受控的分支重算移除后的 score 与整 row Softmax，以实际 counterfactual weight 变化作为选择目标，再追溯 upstream components；竞争 key 的负贡献不能仅因符号被抹去。这增加反事实前向和方向分解成本，按阈值贪心删减也不认证全局最小或唯一 circuit。所测正确 IOI prompts 中，不同结构可沿替代路线完成任务，自动解释/fuzz 得分仍非真实 feature；目标、prompt 人口或干预有效性变化时，保留原 activation patching、黑盒行为与完整模型对照，不由更小的图取得普遍机制证书。<!-- source-family:SF-2026-ARXIV-2602-13483 -->
 
+稀疏 dictionary 也可以改变读出结构，而不只调整固定 Top-k 或稀疏惩罚。一个替代分支把原 activation 当作 query，让同一组 concept vectors 分别经过 key 与 value 投影；query–key 分数经 sparsemax 投到 simplex，再用所得稀疏权重重构 activation。每个样本的非零 support 随分数变化，取代预先指定相同 K，但 concept、投影、尺度与训练预算仍是模型选择。这里得到的是一份受约束的解释用重构，不是测出了真实、唯一的概念数；归一化定义归第14章，执行代价归后续推理章节。<!-- source-family:SF-2026-ARXIV-2604-14925 -->
+
+[动态 sparsemax SAE 的有限对照](https://arxiv.org/html/2604.14925v1)在 CLIP 和 GPT-2 Small 上支持这一重构分支，不能由较低 NMSE、分类或可视化结果认证 monosemantic 因果。不同方法尚未匹配实际 L0、参数量与完整计算预算；按目标数据训练集为各类挑概念，也不是完全无目标信息的 zero-shot 评价。更多概念或把平均 support 作为固定 K 都有反退，CE 指标口径亦不能概括成每项无损。应同时检查重构、稀疏覆盖和原模型行为，计入额外投影、归一化及训练费用；质量或覆盖失配时，保留固定 Top-k、普通 SAE 和独立 null/干预对照，不让动态 support 自签解释真实性或安全控制。
+
 重构与稀疏目标合理地要求 dictionary 保留输入、限制激活容量，却没有直接要求同一 feature 激活的样本在外部语义空间中一致。一条可选分支是固定外部 encoder，用它的单位向量 $h_n$ 定义样本相似性，再把这种一致性作为辅助目标，而非事后标签。设某 feature 的归一化激活为 $a_n$，累积 $u=\sum_n a_n$、$v=\sum_n a_n^2$、$w=\sum_n a_nh_n$，则 pairwise cosine 加权均值的分子、分母分别等于 $(\|w\|^2-v)/2$ 与 $(u^2-v)/2$。这消去了显式样本对：对 $B$ 个样本、$M$ 个 features、$d$ 维外部表示，聚合算术成本为 $O(BdM)$，并需维护 $d\times M$ 统计。因而可以在保留原重构/稀疏目标的同时，加上带权重 $\lambda$ 的“1 减有效 batch scores 均值”。这是[外部一致性辅助训练的一种具体实现](https://arxiv.org/html/2602.12403v1)，不是学到了真实 feature 的证书。<!-- source-family:SF-2026-ARXIV-2602-12403 -->
 
 这条分支把外部 encoder 的语义偏好带进了 dictionary，必须保留 encoder、激活归一化范围、batch population 与 $\lambda$ 的身份。数值为零的分母对应无有效共同激活，应从均值中排除；batch proxy 不自动等于全数据目标的无偏梯度，预提取 embedding、min–max 准备与统计驻留也不是免费成本。更高一致性可能只来自更窄的激活覆盖，或付出重构下降；应在匹配数据、稀疏度与训练预算下，同时检查 held-out reconstruction、coverage、独立 probe 和原模型干预，不能拿外部空间的自洽代替原模型因果。当一致性收益依赖 encoder 偏差、覆盖收缩或不合适的正则权重时，保留普通 SAE 与仅事后评价的分支，再用下面的随机/冻结基线检查额外学习贡献。
@@ -372,6 +394,8 @@ label 唯一，或模型普遍按该叙述“思考”。旧的 probe、activati
 训练一个能把 activation 翻译成文字的解释器，还会引入标签分布的先验。冻结原模型、只训练 activation adapter，可以让解释更流畅，却不保证描述来自待解释向量：affine map 的 bias 在零输入时仍能生成符合训练标签风格的输出。因此要将 null-input 或 bias-only 输出与真实 activation 条件输出分开比较，先估计解释器默认会说什么，再检查输入究竟增加了哪些可复核信息。<!-- source-family:SF-2026-ARXIV-2602-10352 -->
 
 [必要的零向量对照](https://arxiv.org/html/2602.10352v1)显示 SAE 与 Wikipedia 标签训练出的默认解释不同，bias-alone 也承担大量拟合改善；这些定性样例不是 feature 真实语义或推理因果的证书。训练 adapter、标签审核与原模型干预都有成本，筛选已答对的 bridge 人口还限制泛化。标签或 null 对照失准时，保留原 activation、独立 probe 与行为干预，不能用一个自洽文字解释覆盖 faithfulness 的缺口。
+
+给视觉feature命名时，还可主动寻找“看起来相近却不激活”的图，而不只总结高activation样本：先在CLIP近邻中筛低activation对照，让解释器比较两组，再在单位归一化的图像embedding中减去contrastive投影、按activation汇聚，用与候选文字的相似度选择label。这里改变的是解释样本和标签构造，不是删除原模型计算中的真实概念；低activation不证明只缺一个因素，过度投影也可能减掉目标共享信号。[CSP的受限对照](https://arxiv.org/html/2604.22477v1)仍有退步与弱投影更好的例子；生成图能激活、随机COCO上AUC高或标签模型相关，都不认证人类唯一概念、因果使用或医疗效能。近邻检索、VLM/SAE、生成式评价与强度选择均付费；反例、语义或原任务不支持时，保留原activation、较弱对照投影与人工/行为干预，不让更好听的label越过既有featureidentity与因果证据门。<!-- source-family:SF-2026-ARXIV-2604-22477 -->
 
 表示是否在最终层保留某类信息，还取决于训练目标把监督放在什么位置、覆盖哪些 token。只预测
 被 mask 的局部目标，可能让中间层保留纹理和运动细节，却允许最终层把容量收缩到更利于全局语义
@@ -573,6 +597,14 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-24302` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.24302v1)§3/4.1/4.3–4.4/5；2+1+2=5，source重要性→target softclean/corrupt干预映射具体接口深入；CPR/LOTO/置乱、modelgap及全部target计算费近文，不授节点必要/连通/跨模型同一机制。root必要Source/actual owner/A22逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整两侧及本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-24693` — Daily2026-04-29补Apr28自然日；[原始必要版本](https://arxiv.org/pdf/2604.24693v1)exact-v1PDFp2–7/9；2+1+2=5，fixedprobe direction与completion-trained contextsensing具体接口深入；参数/数据/计时分母及干扰反侧近文，不授probe语义真值或全流程matchedbudget。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整前后邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-22477` — Daily2026-04-28补Apr27；2+1+2=5，CLIP近邻低activation对照→VLM候选label→单位embedding投影/activation汇聚选择，标签提案非原feature因果，overprojection/γ与DMA/AUC/SCS代理负侧、全费近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-21882` — Daily2026-04-25补Apr24自然日；[RedirectQA exact-v1](https://arxiv.org/html/2604.21882v1) §2–4、Limitations与B.2/B.4/B.5，2+1+2=5，固定entity-fact/surface访问差额必要深入。仅采用配对行为与名称条件访问，不采频率因果、唯一内部entity地址或跨语言保证；双向flip/both-wrong、量化及Wikimedia选样/alias评分边界与费用近正文。fresh非writer必要Source/日级联合资格/actual owner及逐字PRE通过，root授唯一两段及本人注窄lease；作者实际保存，supp_apr25_review_fresh实际完整179–211正文邻接、587–600本人注与限定diff的非writer POST通过，root接纳并释放窄lease；作者仅行政同步并实际读回，不授日级完成。未核代码/复现。
+
 - `SF-2026-ARXIV-2604-13218` — Daily `2026-04-17`补Apr16自然日；[exact-v1](https://arxiv.org/html/2604.13218v1) §2/3.1–3.2、Thm3.2 sketch、Ass3.4/3.6/3.8、Eq2–4，2+1+2=5，component/global equivalence具体知识缺口深入。只采用识别级别与严格前提，不授finiteerror/finite-sample、优化成功、任意LLM/SAE语义或完整proof验证；未核toy结果/code/复现。root R20必要Source/实际Ch5逐字PRE、R24 current身份与自身v1/OAI/createdApr16+R6共batch有据联合date（非historicallistmembership）及窄锁通过；实际两段/本人注已保存，作者完整邻接读回，root R28非writer实际正文/完整两側/本人注POST通过；本人注同步后作者actual读回，不授DAY。
 
 - 2026-04-08补充 / `SF-2026-ARXIV-2604-03436` / [exact-v1](https://arxiv.org/html/2604.03436v1)：5分，具体dictionary训练差额深入采用；冻结meta重构critic与交替可分解性penalty，cooccurrence/fuzz非trueatomicity，L2/CE成本和强penalty反退保留。 Source/日门/逐字PRE/实际正文及完整局部邻接已由非writer `supp_apr08_reader` 读核；本条仅同步采用边界，不宣布整日报完成或实验复现。
@@ -698,3 +730,13 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 
 - `SF-2026-ARXIV-2603-29654` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29654v1)S2.2–2.11/Eq1–12/Defs1–5/Thm1–2/S3/必要S4与method，2+1+2=5，仅taskBB-derived平均Fisher比较CBM/SAE方向与metric-label-head三身份。保合法Gram负乘积/零分母、.2–.8选择window、C3容量+监督混杂、600matched/60×10seed/n8000/75:25与proxyCV、caption/p13口径；全制备/标注/CV费，未核代码/复现。
 - `SF-2026-ARXIV-2604-08284` — [exact-v1](https://arxiv.org/html/2604.08284v1) §3–6.4/T2；formula-description共同早层与instance中层组织的受限比较，保tracing重复/ΔW记法/局部可靠性及费用，不授唯一存储层因果/逐字recipe/普遍无破坏，未核实现/复现。
+
+- SF-2026-ARXIV-2604-14338 — Daily2026-04-18补Apr17；[PSIG exact-v1](https://arxiv.org/html/2604.14338v1) §2–3.3/Thm3.2/Prop3.6/Thm3.8、§4/T1，2+1+2=5，理论接口gap必要加深。随机路径baseline/CDF权重与期望baseline残差；白噪声/数值正则条件、信号变化和gradientbudget保留，不授LLM因果faithfulness。独立reader必要Source/root接纳及date有效，作者actual owner比较，A30逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未复现。
+
+- SF-2026-ARXIV-2604-14925 — Daily2026-04-18补Apr17；[Sparsemax SAE exact-v1](https://arxiv.org/html/2604.14925v1) §3–4/Eq3–7/Alg1/T1–4及§6KKT，2+1+2=5。sharedconcept K/V+simplex动态support区别固定TopK，gap必要加深；未matchL0/预算、targetclass选concept、CE口径/更多support反退近文，不授真实concept或causal安全。root必要Source/date有效，作者actual owner比较，A32逐字PRE通过并获指定窄lease，正文/本人注已保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未核artifact/复现。
+
+- `SF-2026-ARXIV-2604-18158` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18158v1)必要Source/fresh实际层和本日SUP有效，原分5，具体接口差额必要深入。仅采用上述条件分责，支持/反侧与完整费用近文，不授状态唯一身份、通用迁移；未核实现/复现。root实际owner/逐字PRE通过授窄lease，作者已保存并顺读完整邻接；root实际非writer新单段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-22027` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§2～4及A1/G/L，lexical任务信号与retrieval消费分责具体差额深入；保词表阈值/局部恢复/强度反退与code language选择非正确性。reader必要Source/date/actual owner与逐字PRE通过，root接纳授本单段+本人注窄lease，reader非writer实际正文/完整两侧/本人注POST通过，root接纳释放窄lease；作者仅行政同步本注并实际读回；不授DAY，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-22166` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～7/B/D5/D6/G，FGD共享/NPI依construction不同、AP词汇OOD稳定与1DDAS退及不同容量分账；保每实验一次/A100约300h/20natural与全部费用，不授AP普优或统一syntax模块。reader必要Source/date/actual owner/修后逐字PRE通过，root授本单段+本人注窄lease，reader非writer实际正文/完整两侧/本人注POST通过，root接纳释放窄lease；作者仅行政同步本注并实际读回；不授DAY，未核实现/复现。
