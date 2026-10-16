@@ -53,6 +53,8 @@ cost_to_quality_target
 = total experiment family cost until accepted evidence
 ```
 
+后训练账本还应把共享阶段与分支费用分开：同一 pretraining/midtraining 可供多个 Think/Instruct 产物复用，不能各自重复计全额，也不能只报告最终成功分支而隐藏开发试验、数据生成与失败运行。在线 RL 则要把 rollout generator 与 trainer 分别计量；长回答使 trainer 等待时，低功率不表示整个训练便宜。[Olmo3 的生命周期账本](https://arxiv.org/html/2605.01158v1)给出这一反侧，但 generation 近似功率、实测 GPU 功率、IT multiplier/PUE 与碳水地域系数不是同一证据层，作者比例不应变成行业常数。测量窗口、共享分摊和估算假设增加维护成本；上游账本或系数不可得时逐项标 unknown，保留窄口径 final-run 与 marginal 成本，不拼出精确生命周期总数。<!-- source-family:SF-2026-ARXIV-2605-01158 -->
+
 ### Adaptation 不是单一路径，而是受预算约束的组合决策
 
 当一个任务只允许 full fine-tuning，先选方法再核算成本是合理的；随着 SFT、PEFT、retrieval-augmented
@@ -409,6 +411,8 @@ marginal per-request serving cost 仍是合法的共存基线。现有证据限�
 <!-- source-family:SF-2026-ARXIV-2605-13981 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-01158` — Daily2026-05-06补May05；[exact-v1](https://arxiv.org/html/2605.01158v1)，2+2+3=7。必要方法/条件、直接对照与反侧见本日SUP A6；只采A7指定受限命题，不授普遍能力/稳定/性能保证，全部测量与准备费用保留。root实际必要Source/具体owner及逐字PRE通过，授本单段及本人注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码、全部附件或复现。
 
 - `SF-2026-ARXIV-2604-20105`（Experimental）：[exact-v1](https://arxiv.org/html/2604.20105v1) §III-B、IV-A～C、V、VI-A/C/E；Daily 2026-04-23。只吸收目标设备尚不可测时 kernel 结构→模块活动→离线校准的设计阶段 proposal 与实测回退；A100/A10 训练、H100/L40S 外推、顺序规则单 GPU 限定，不能证明并发通信、整机能量或 SLO。apr02 非作者 source→实际 Ch70 采用核通过；root 已顺读写后正文与相邻段落，未复现实验。
 

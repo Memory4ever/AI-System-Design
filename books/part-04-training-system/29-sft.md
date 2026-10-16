@@ -91,6 +91,10 @@ L_SFT
 
 Logits 仍是 `[B,T,V]`，loss 并没有换成新的模型输出类型。变化来自训练分布、哪些 positions 被 mask，以及更新通常从 pretrained checkpoint 而不是随机参数开始。
 
+从可信预训练先验出发的轻量适配，也可能有意削弱极端错配样本的监督：冻结CLIP两侧encoder、只训连续prompt时，可把已有类别概率再做一次softmax后计算交叉熵。第二层normalization的Jacobian会压小接近one-hot预测的logit梯度，即使该预测与训练标签不符；它依靠“此处prior常比噪声标签可靠”的条件，不是在识别真实错标。[必要梯度与反侧](https://arxiv.org/html/2605.00591v1)只支持受测分类/人工噪声，logit梯度不等完整参数更新界，也不授任意LVLM或从头训练鲁棒性。额外normalization、先验与clean held-out校验仍计费；prior偏误、真实新类被压制或质量回归时，保留普通CE、可信标签清洗、原zero-shot/冻结checkpoint，而非把梯度消失一律当优点。<!-- source-family:SF-2026-ARXIV-2605-00591 -->
+
+若希望SFT保留更多可采样路径，可把训练的logit温度与困难token权重分开：先对缩温分布作带β系数的CE，再以未缩温GT概率计算focal梯度系数，并将该系数detach后乘入loss。这样保留的是one-hot标签下指定的梯度形状，不等于对缩温概率直接乘focal项，也不同于部署改temperature。[Tempered Focal的受限对照](https://arxiv.org/html/2605.00195v1)中，低概率不认证稀有但正确的模式，目标亦非proper概率拟合；更高多样性或Pass@k可伴平均正确率下降，没有证明后续RL必受益。超参、完整训练和多样性/质量/安全回归均付费，数据噪声或能力保留不合格时，保留普通verified CE、原checkpoint与独立采样选型，不让更宽分布代签正确性。<!-- source-family:SF-2026-ARXIV-2605-00195 -->
+
 条件最大似然适合复现经核验的 demonstration，但每步 teacher-forced likelihood 不直接度量模型自己续写后的序列分布。若没有可靠 outcome verifier，可以进入另一条 rollout 辅助适配分支：冻结一份 feature network，把各给定 prefix 下模型续写的平均特征，与参考 completion 的特征矩匹配。相应奖励既拉近 sample 与 reference，也以其他模型 samples 的相似项制约只向一个模式聚拢；这是改变监督对象，不是把 CE 换一种等价计算，更不是让 frozen hidden features 取得正确性权限。[EBFT 的受限目标与对照](https://arxiv.org/html/2603.12248v1)只在足够丰富、均值能识别分布的 feature 条件下连接完整分布校准；实际有限表示、短 rollout 与 reference 人口仍可能漏掉事实或有效模式，CE 和独立任务验收应分别保留。<!-- source-family:SF-2026-ARXIV-2603-12248 -->
 
 这一奖励构造还要求具体采样依赖可见：其他 sample 的 reward 若通过两两相似项含有当前 sample，仅从 reward 均值中去掉当前条目，仍不是与当前样本独立的 leave-one-out baseline；须连其他项内这份贡献也排除，并按剩余样本重新归一；原修正版要求同一 prefix 下条件独立采样数 n>2，再核对实际梯度。该固定 feature 下的估计条件不能自动传给同批 whitening、偏置权重或 clipped/normalized 实现。[第33章](./33-grpo.md)仍拥有通用 policy-gradient 与 baseline 的分责。多个 nested prefixes 可共享原序列计算并批量抽取特征，但各短续写只能看自己的已给 prefix/采样历史；它不使整个部署轨迹变成已匹配人口。冻结网络、rollout、特征与统计求值、参考制备和调参均付费，作者部分任务仍弱于基线且每步比 SFT 慢；特征支持失配、行为回归或总预算不合算时，保留普通 verified CE、可靠 outcome 更新或原 checkpoint，不以更低特征 loss 自签忠实和无损。
@@ -110,6 +114,8 @@ Logits 仍是 `[B,T,V]`，loss 并没有换成新的模型输出类型。变化�
 [ER-CE的反例与受限对照](https://arxiv.org/html/2609.30572v1)支持这种目标分权，而不是通用support证书：有限集合的理论还要求正确support可实现、统一非零概率下界与联合参数渐近条件，不能仅因softmax非零便搬到LLM。固定λ、低Renyi阶或answer-only目标会出现退步，固定temperature样本对照也含分布锐化混杂。全词表entropy增加loss-head显存与重算，分块仅控制局部峰值；应按target format、prefix、λ、decoder与独立verifier保存身份，分别看质量/覆盖/预算。不需要多解收拢、验证器不可靠或回归失败时，普通verified CE及原diversity审计仍合理。<!-- source-family:SF-2026-ARXIV-2609-30572 -->
 
 若目标改为减弱指定训练样本的可生成性，所有 response token 同强度作 gradient ascent，可能同时破坏通用结构词。一个受限分支用当前完整词表 entropy 提议每个位置的 detached 权重，再归一成平均权重为一，只对 forget loss 加权、retain 样本仍用普通 CE。这里熵比单一目标 token 概率多观察了分布形状，却不等于已识别私密或语义必要内容：低熵的敏感记忆仍可能被轻罚，高熵结构也可能被过罚；权重总和不变更不保证梯度范数、效用或删除程度不变。[ETW v1 的必要对照](https://arxiv.org/html/2604.17785v1)只支持其 forget/retain 取舍，不将 KS 检验不拒绝、MCQ下降或一个乘积汇总分当作分布等同重训/不可提取的证书。全词表概率、双人口训练、超参选择和独立提取/效用评估计费，分母退化或能力回归时保留原 checkpoint、普通受控遗忘目标和外部访问/行为限制，不由 entropy 名称批准真实知识已删除。<!-- source-family:SF-2026-ARXIV-2604-17785 -->
+
+若只用entropy会漏掉低熵却依赖特定实体的completion，还可遮掉问题或forget语料中的noun线索，比较同一gold token在原/扰动prefix下的log-probability绝对差，再与entropy分别归一后形成选位或权重，只作用于forget目标，retain另验。这里的差额测输入依赖，不识别参数中的唯一知识方向，noun masking也会制造OOD或漏掉隐含指代。[必要机制与反侧](https://arxiv.org/html/2605.00364v1)支持受限forget/retain取舍，不采用未闭合SNR保证，更不证明完整删除、等同重训或抗relearning。额外maskforward、POS/权重制备、retain/reference和全部训练仍付费；hard/soft改变有效梯度尺度，不能只按selected token数声称同预算。线索、归一化或保留能力不稳时，保留原checkpoint、普通受控目标与独立提取/效用检查，不由较低MCQ或局部词位掩码签发隐私保证。<!-- source-family:SF-2026-ARXIV-2605-00364 -->
 
 这种分账还要沿语言维度保持。高资源语言的 demonstration SFT 可以改变其他语言的输出置信度，即使相应准确率近乎不变；只报告平均任务分数便会漏掉这条迁移路径。[受限多语对照](https://arxiv.org/html/2601.01362v1)以候选答案的 perplexity 归一成多选概率，在三种 2B～8B 模型与两套 29/42 语言任务中观察这一分离。这个 confidence estimator 依赖候选集合、模板和答案长度处理，不等同于模型口头自信、开放生成的事实概率或内部知识。因此 SFT release 应固定 base/tuned checkpoint、语言、任务与候选概率定义，联合检查 accuracy、校准误差和 entropy；某一语言的能力增益不能替另一语言的可靠性验收。
 
@@ -444,6 +450,8 @@ verifier，却仍支付 generation 与训练成本，并可能把错误代码、
 
 同模型产生 target 也不必是无外部监督：student 在只有问题的条件下生成 rollout，teacher 在同一已访问 prefix 上额外读取 reference solution，再提供 detached 的词表分布或采样 token 的 log-probability correction。新增信息而非模型名字决定监督权限，teacher checkpoint、privileged context 与 student rollout 应各自绑定版本；[受限 on-policy self-distillation 实验](https://arxiv.org/html/2601.18734v1)实际固定 initial teacher，不能推成持续同步当前 policy 的自教。参考答案也不保证弱 teacher 能生成可靠指导；full-vocabulary 信号增加 logits 和峰值内存，少 rollout/较短输出下的 generated-token 降幅不等端到端训练降本，部分小模型或任务仍反退。teacher 能力或 reference 质量不足时，保留独立教师、verified targets 或既有 policy-gradient 路径，不把特权上下文蒸馏认证为零外部信息的自我纠错。<!-- source-family:SF-2026-ARXIV-2601-18734 -->
 
+特权也可经视觉通道进入：student仍在原图上采样坐标，teacher在同prefix额外读取标注目标框、外围软mask与hint，再按坐标数字的重要位及teacher熵调节逐token蒸馏。它改变监督的形式和权重，不消除GT位置标签；低熵不是真值，分词后的digit也未必等价于物理误差。[GUI-SD的受限对照](https://arxiv.org/html/2605.00642v1)只验单次grounding，近one-hot的reverseKL不能直接叫普通SFT CE，筛选/改写数据、teacher前向与EMA、全部rollout和训练仍付费。特权映射、teacher质量或独立任务回归不稳时，保留可信坐标监督、普通蒸馏或RLVR及原student，不从少rollout与局部低熵批准长轨迹GUI执行。<!-- source-family:SF-2026-ARXIV-2605-00642 -->
+
 Target 的支持域也可以来自训练期轨迹，而不只由 temperature 与 truncation 决定：在有标注的视觉推理序列上，把标注轨迹中尚未经过的概念 token 集合定义为逐步收缩的窗口，只在其中对本模型的 detached logits 做归一，形成 soft target；当窗口分布的归一 entropy 较高时再混入 hard next-token 标签，最终答案仍接受普通 CE 监督。[这一受限分支](https://arxiv.org/html/2601.06803v1#S3)用训练期 future labels 决定“允许学什么”，detach 只隔离 target 一侧的梯度，既不让部署读取未来信息，也不把 soft/hard 混合认证为事实真值。原文将 `laser_end` 排除于窗口、在最后推理步之后作 deterministic phase target，但 singleton 的 entropy 归一与窗口/next-token 的字面索引仍未完整闭合，不能据此补成可执行配方。GPT-4o 合成 scanpath 无 ROI 真值，latent 同时编码候选也不等于同时执行多条真实推理；六任务中 MMStar 低于所比较的 latent baseline，定位等子任务退步，说明单点目标、verified trajectories 与外部 teacher 仍有共存理由。合成、过滤、训练和 latent/answer forward 都需计费，6/5.7 个平均输出 token 与 97.3% token 减少不是端到端 latency、并发或 SLO 证据；若窗口标签不可靠或执行边界未明确，应保留普通单点监督，不能从 NTP 必然造成语义 collapse 出发选型。<!-- source-family:SF-2026-ARXIV-2601-06803 -->
 
 自我修正还可改变被学习的 target 角色，而不只改变答案的采样分布。训练时让读取答案或测试结果的 teacher 对失败尝试提供诊断，student 一方面消费反馈再尝试，另一方面学习产生这类反馈；部署时则只从自己的已公开尝试生成自评，不再读取训练期私有答案。[交互学习的受限实验](https://arxiv.org/html/2602.16066v1#S4)支持外部反馈模式向内部 critique 的这条接口，但没有把反馈预测的单因素贡献与所有共同训练条件完全分离，不能把自评当正确性 oracle，也不等于每个任务内更新了权重。teacher 数据、反馈预测训练和部署多轮生成都需计费，错误诊断仍可能循环放大，协作数学任务上的短期适配更不证明永久知识巩固或对抗反馈下安全。无法校准自评、缺少可靠 outcome verifier 或预算不足时，保留外部教师、verified demonstrations 与不自评的原回答路径。<!-- source-family:SF-2026-ARXIV-2602-16066 -->
@@ -541,6 +549,8 @@ SWE-Bench Verified，不能证明跨 Agent domain 或高风险代码自动发布
 
 选择改变的是监督人口与归一分母，不保证全 token 梯度无偏，也不同于在每个位置压缩需微分的词表坐标。Teacher 的完整分布与上下文前向、student rollout、分数归一和排序仍付费；较少接收监督的位置或较低 peak memory 都不直接证明完整训练更快。受限数学与规划对照中，局部选择仍有低于全 token 监督的反侧，batch outlier 还会改变 min–max 标尺；忽略跨 token 相关的理想权重推导不能授普遍最优排序。代理失配、重要尾位置被遗漏或总预算回归时，保留全 token OPD、可信解答监督和独立行为回归，不由 teacher gap 或熵分区自签能力与稳定性。
 
+蒸馏还可以只学习‘在student能提出的候选中怎样选’，而不强迫学生复现teacher完整词表分布。先保留student生成的prefix与候选集合，让teacher在同一prefix上给这些候选评分；teacher自己的最高概率token不在集合时是候选覆盖缺口，在集合却没被选中才是选择缺口。一个受限分支再用LoRA与专门readout，把各候选追加成不同prefix，蒸馏它们的相对排序，并以原text词表分布约束保护base。[S2T Local的必要证据](https://arxiv.org/html/2604.26940v1)支持这条候选选择接口，不把teacher argmax当答案真值；部署的trigger也须由可得信号预测，不能借用teacher KL oracle。K条augmented prefixes可batch成额外一次forward，但不等零成本或只改logits，还须支付teacher标注、selector训练及语言回归。候选缺覆盖、teacher排序不可靠或质量—执行费用退步时，保留原student/full-vocabulary蒸馏与外部验证，不用更高teacher-token命中签发真实任务正确。<!-- source-family:SF-2026-ARXIV-2604-26940 -->
+
 ### 扩展输出词表时单独保护原语言分布
 
 Query→semantic ID 的监督训练在专门检索器上简单直接；若还希望同模型保留语言行为，新增 SID vocabulary 会使检索正确与原文本分布漂移成为两个验收对象。一个训练分支在原 text vocabulary 上重归一学生分布，由学生生成 text-only continuation，让冻结的原 base model 在相同学生 prefix 提供分布，再以 forward KL 保护原语言输出。Teacher 提供 token 分布而非生成 suffix；SID 监督仍训练检索，不能由较小 KL 直接批准文档事实或回答。
@@ -572,6 +582,10 @@ Text-only continuation 刻意不采新增 token，使旧 teacher 的分布接口
 ### Privileged Teacher Evidence 必须做差分验证
 
 Teacher completion 也可能沿错误 prefix 同向偏离。使用 privileged evidence 时，应比较同一 teacher 在有/无额外证据下的 target 差异，并以 verified outcome 决定接纳、降权或丢弃；额外 forward cost 与视觉错误仍是失败面。<!-- source-family:SF-2026-ARXIV-2609-16459 -->
+
+当 teacher 能识别 student 的错误，却无法从这些错误前缀继续答对时，单纯增加 on-policy 覆盖还会重复收集不可靠监督。一条有可靠 reference 的条件分支，让 teacher 指出错误段、引用错句并给出修正；student 保留到最后错误段的前缀，带这份 critique 重新生成 suffix。随后 teacher 在带 critique 的条件下评分，student 的训练 log-probability 却在去掉 critique 的历史上计算，并只监督新 suffix，不要求模仿保留前缀中的旧错误。识错、续答恢复和 reference 正确性是三份责任，不因为来自同一个 teacher 就合并成真值。
+
+这里的 suffix 是带反馈采样、无反馈求 student log-probability，因此更新只是 surrogate，不是原无反馈 reverse-KL 的无偏梯度。[CriticOPD 的有限数学对照](https://arxiv.org/html/2610.20572v1)还显示生成长度和可用预算会改变结论：4k/8k预算下可低于原OPD，较宽预算才显优势。Reference制备、critique、改写、teacher评分及更长输出均付费；它不保证部署时无需足够reasoning预算，也不证明teacher总能恢复错误状态。反馈或reference不可信、错误前缀无法修复或净收益不合算时，保留普通OPD、可信解答SFT与外部verifier。<!-- source-family:SF-2026-ARXIV-2610-20572 -->
 
 特权teacher对原prefix提出另一token，只训练那个位置，并没有收集沿新token继续走的student状态。一个条件分支在有可靠反馈的失败rollout中，用teacher–student divergence提出branch位置，保留更早prefix、强制一次teacher选择，再把suffix生成交回student；随后在这条新轨迹上查询特权分布。Teacher拥有单次branch提案，而student仍产生后续context；原始feedback的identity须保留，新轨迹即使仍失败也可能提供蒸馏信号，不能把采集资格冒充成功认证。
 
@@ -761,6 +775,8 @@ exact-v1 所测 2B–8B 多模态模型、五个 benchmark、8×A800 80GB 与最
 
 学会消费语言反馈，也不自动学会主动索取缺失信息。一个受限数据构造在错误的 student turn 处，用随轮次衰减的概率将猜测替换为合成问题；造问题时 teacher 可读私有正确答案，而 student 的实际对话输入仍只包含公开历史。[Social Meta-Learning 的 Q-priming](https://arxiv.org/html/2602.16488v1#S4.SS4)因而改变的是 question demonstration 的分布，不是给部署问句附带答案，也不同于让完整与分步视图直接共享一个目标答案。成功对话 SFT 和后续 conversation RL 各有作用，有限静态数学/代码实验中的提问增加不认证问句价值、动态用户意图理解或所有增益由替换规则造成。教师造题、对话筛选和多轮 rollout 都增加成本；匹配 generation steps 不等匹配教师调用与总 tokens。teacher 偏差、提问质量或用户效用未验收时，继续采用已核 view pairs、人工澄清示例或显式询问策略，而非默认把所有错误回答改成提问。<!-- source-family:SF-2026-ARXIV-2602-16488 -->
 
+减少学生可见的中间文本，是另一种demonstration schedule，而不是只少算几处loss。一个跨语言语音指令分支先以目标语言指令、核心语言指令、核心语言响应和目标语言响应作四段监督，再按epoch逐步压缩前面三类文本：按句保留前若干词组并标记省略，最后仍预测目标语言响应。它同时改变teacher-forced条件历史、监督长度和部署时生成的中间token；被删内容不再像loss mask中的token那样继续供后文读取，因此不能称为逻辑原样转入隐状态。[受限XS-CoT对照](https://arxiv.org/html/2504.20835v1#S3)中，压缩节省中间token却降低部分任务评分，原ASR、翻译和指令能力也须单独回归；合成语音与代理judge不认证自然流量或推理忠实。应绑定分段/删减schedule、阶段checkpoint、监督格式与生成预算，并计入翻译、语音制备、过滤、多阶段训练和质量验收成本；质量或协议失配时，保留完整可信轨迹、普通目标语言demonstrations与原checkpoint，不由token更少签发墙钟或能力保持。<!-- source-family:SF-2025-ARXIV-2504-20835 -->
+
 一次看到更多不同样本通常提高 coverage，但长 reasoning demonstration 中真正决定策略的稀有转折可能只出现
 一次，容易被大量常规 token 稀释。重复同一 verified trajectory 能增加它在经验风险中的权重，却不会创造新证据：
 
@@ -889,6 +905,10 @@ general code/model checkpoint
 distillation dataset 都必须有 lineage。Qwen3-Coder-Next 报告为这条 staged specialization 提供了厂商实验，
 但其模型规模、任务数量、context 长度和 benchmark 结果不是通用训练配方，完整训练实现也未公开。
 
+相同base上独立得到的SFT与RLVR checkpoint，还可以先各自减去base形成task vector，再在产物层组合，而不重新交替两种训练目标。幅值大的向量可能淹没另一支，逐参数符号冲突也使直接相加不稳；一个受限分支分别保留各向量高幅值位置，再恢复各自原L2norm，最后搜索两个合成系数。这里保留的是各向量的原强度，不是将二者强行等范数；不再梯度训练也不等于没有产生改变后的模型权重。<!-- source-family:SF-2026-ARXIV-2605-00610 -->
+
+系数可以由少量未标注query上的回答一致性与perplexity共同选择，但二者都只是选择proxy，反复答同一个错误不能认证能力融合。DoTS的有限对照仍依赖source质量与互补性，改造sparsifier的既有merge已接近其平均分，弱source也有反退；不能把全部差额唯一归于稀疏或由参数符号推断普遍训练冲突。原SFT/RL、候选生成、系数搜索与分任务保留回归都计费，已有checkpoint后的搜索便宜不等全链免训练。初始化不兼容、proxy退化或任一目标回归时，保留原source、独立adapter/experts与已有训练整合，不让高consistency自签release。
+
 当运行协议也随训练迭代改变时，成功示教还要匹配下一版实际采用的runtime：轨迹身份绑定prompt、tool bindings与observation processors，将失败中的运行时缺陷交给harness修订，而只把验证通过、接口匹配的示教交给SFT；可在新runtime下补采，不能把后来被弃用的候选harness成功直接混成部署监督。模型与harness的候选分别固定另一方验收，冻结晋升集仍参与选择，不等独立泛化证据。[CoTrace的有限对照](https://arxiv.org/html/2610.10426v1)同时改变来源、补采、任务配额与重放，较小模型的匹配SFT仍无参数侧收益，不认证matching唯一因果或跨runtime不退。搜索、全部rollout、验证、补采、重放与梯度均计费，较低每轮成本不等较低全链成本；匹配样本不足、协议漂移或外部任务退步时，保留固定runtime的verified demonstrations、独立迁移回归和可回退的原pair，不由本轮晋升批准生产。<!-- source-family:SF-2026-ARXIV-2610-10426 -->
 
 当任务目标是产生可执行 artifact，而不是复述答案时，synthetic demonstration 还可从 answer-only 扩展为
@@ -980,6 +1000,8 @@ Delta theta represented by small trainable factors
 两者可以使用相同 SFT data 与 token loss。LoRA 是参数化和训练状态选择，不是另一种 supervision objective。
 
 若反向传播的 activation/optimizer 状态仍超预算，另一条实验分支只用前向 loss 查询估计 adapter 更新方向。固定每步查询数容易实现，但困难迭代方向噪声大、容易迭代又浪费预算；自适应查询若另用一批 probe 判断可靠性，也会吞掉节省的前向次数。复用先前扰动的 seed 与 loss response，可让历史样本同时参与当前方向估计和“是否继续查询”的决策，避免纯验证查询；但参数移动使旧 response 变陈旧，方向一致性门槛必须显式处理这种偏差。这里只改变 SFT 的更新/查询预算，不改变监督目标；受限 OPT/LoRA 实验只证明披露任务的 forward-evaluation 节省，不证明 wall-clock、收敛到反向传播解或通用预训练替代。可反传且资源足够时，原来的 BP 仍更可靠。<!-- semantic-body-binding:SF-2026-ARXIV-2609-22115 -->
+
+若省下反向传播后，瓶颈又变成自适应优化器的两份全量moment向量，可以保存有限历史的loss投影与PRNG状态，按参数block重生随机梯度，恢复截断的一、二阶moments后更新；它与复用历史response减少查询是不同分支，也不改变监督目标。这里不保存全模型moments，却仍需要历史元数据与block级临时缓存，horizon和两项衰减率又引入重算与截断误差。[必要机制与成本反侧](https://arxiv.org/html/2605.00650v1)中，受测OPT-1.3B的额外显存约7%，每步反而更慢；质量实验与runtime测量还使用不同horizon，少forward不能直接换算同幅端到端加速。小horizon可数值不稳，恢复的moments也不是精确Adam；应联合验收质量、完整训练时间、峰值内存和截断敏感性。内存充足或重生代价过大时，原MeZO、显式moments或可反传的更新仍合理。<!-- source-family:SF-2026-ARXIV-2605-00650 -->
 
 受限微调中分别选择 data subset 与 parameter mask 会重复计算并产生两个漂移的 selector。共享 validation objective 下，可从同一 gradient interaction matrix 的行/列聚合联合导出 data utility 与 parameter importance；selection artifact 必须绑定 validation set、gradient approximation、budget 与 base revision。局部/二阶近似失效或 shared matrix 成本过高时回退单轴选择、顺序选择或全量 SFT。
 
@@ -1087,6 +1109,10 @@ Delta theta represented by small trainable factors
 
 因此 self-generated replay 只是一种有条件的 retention signal，不是无条件自举。BOS samples 可能不代表真实 pretraining distribution，reference 本身可能带偏差，狭窄 retain slices 也会掩盖回退；生成 replay、reference forward 与 KL 还会增加训练计算和 artifact lineage。现有证据主要来自受控语言混合、单任务 fine-tuning 与一个 1B instruction model 的 Verilog slice，没有直接测量信息容量，也不证明它适用于 frontier-scale、多任务持续学习或生产安全回归。若 replay 分布、capacity proxy 或 retain evaluation 失效，应回退可信 pretraining/domain replay、较低 learning rate 与早停、adapter/扩容，必要时拒绝继续吸收新任务。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-26097:end -->
+
+容量压力也可转化为一个受限的结构增长提案，而非只降低learning rate或增加replay。在保留训练task边界的continual分类中，同时检查activation有效维度与当前task Fisher的percentile相对历史baseline，只有两者触发才增加宽度；新fan-in用QR方向初始化、fan-out置零，使插入瞬间的函数不变，再扩展Fisher/anchor与optimizer状态。当前Fisher不能证明参数对所有旧任务必需，瞬间no-op也不保证后续训练无遗忘。[NORACL局部证据](https://arxiv.org/html/2604.27031v1#S5)限一/两层ReLU MLP和MNIST变体，50task准确率仍约48%，更大静态oracle可能更好；无inference task ID不等无训练边界。SVD/Fisher探测、增长后的全部参数/forward/状态与回归都计费，不能直接升级为Transformer扩容recipe；固定容量足够、预算或旧能力验收失败时，仍保留原模型、可信replay、adapter和停止吸收的路径。<!-- source-family:SF-2026-ARXIV-2604-27031 -->
+
+保留能力也不只由梯度步长控制：在目标随时间变化的在线学习中，weight decay可决定旧参数贡献衰减得多快。一条受限分支为每个参数保存正decay的对数及其sensitivity trace，用近似meta-gradient调整decay，而让原optimizer继续控制新信息的吸收；它忽略跨参数影响，不能当精确全网络超梯度。[FADE的有限对照](https://arxiv.org/html/2604.27063v1#S3)主要支持小网络head上的适应：调好的固定head decay已接近自适应结果，朴素全层推广反而明显退步，不授大语言模型全层recipe或旧能力保证。两份逐参数状态、meta步长搜索和新旧任务回归均有成本；非平稳性、trace或质量失配时，保留匹配过的固定head decay、普通optimizer、可信replay与独立adapter，而不是把遗忘更快自动当作更好的持续学习。<!-- source-family:SF-2026-ARXIV-2604-27063 -->
 
 Reference KL 也可以只约束由模型差值提名的输出 token 域，而不是完整词表：在共享 tokenizer、固定安全回答的 teacher-forced 前缀上比较 aligned/base 概率，再把所选域及参考权重版本化；训练时在该域内重归一比较。域内分布相近不保证该域的总概率质量不变，普通高差值词也不拥有安全真值。另一项独立选择是同时读取完整 prompt+assistant prefix 与去 prompt 但仍含 assistant prefix 的 reference logits，再按域内集中度提议混合及位置衰减；去 prompt 不等干净监督，sigmoid 混合权重也不是已校准的污染概率。[PACT 的受限微调对照](https://arxiv.org/html/2603.07445v1)支持比较这两个接口，但任务准确率和部分有害率仍有反退，逐步加组件不证明每项独立因果。Selector 漂移、前缀身份、额外 reference 前向和安全/合法请求/任务多侧回归均计费；域或 reference 失配时保留完整词表约束、可信 replay、较小更新与原 checkpoint，不让 token 集中度替代行为安全验收。<!-- source-family:SF-2026-ARXIV-2603-07445 -->
 
@@ -1210,6 +1236,8 @@ Demonstration 只给出一个目标 response。它没有直接说明：
 普通 SFT 在部署前冻结参数，行为容易复现；query-conditioned test-time self-training 则从当前输入构造监督并临时更新模型，使推理能适配特定 query，却把 parameter delta、optimizer state 与 rollback 变成请求级状态。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13369 -->
 
 输入诱导的更新可能污染后续请求、放大恶意样本并增加尾延迟。受限实验不能证明开放流量安全；没有租户隔离、可验证监督和原子 rollback 时，应回退 frozen inference、检索或 session-local adapter，绝不把临时 delta 静默合并进共享 checkpoint。
+
+若只适配可学习的输入prompt，部分工作还可以在请求到来前完成：用原prompt和类名表示作语义锚点，同时惩罚类名embedding与prompt受小扰动后的特征变化，先训练一个初始化，再沿原有test-time entropy目标更新。它改变的是起点，不是给无标签测试样本造了正确性监督，也不等于普通response SFT。[受限CLIP对照](https://arxiv.org/html/2604.27715v1#S5)中，仅稳定性目标会使分类坍缩，部分OOD准确率与校准切片仍退；更平坦的局部proxy不能认证每域置信度或任意loss的可靠性。离线预训、类名/初值与encoder版本、后续临时更新和独立accuracy/校准审计都付费，在线不多一步不等全链免费；类别、checkpoint或部署域失配时重验，并保留原prompt、冻结推理与已有TPT，不把预训起点静默当安全或正确率保证。<!-- source-family:SF-2026-ARXIV-2604-27715 -->
 
 ## Evaluation 应分开能力与行为
 
@@ -1355,6 +1383,24 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00195` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00195v1)§2–4/Thm3.1/Prop3.2/Cor3.3–3.5/5，2+1+2=5，具体loss差额深入。只用onehot下缩温CE与未缩温概率的detached focal系数；保多样性/quality/mean-vs-Pass@k与全费，不采proper概率校准或后续RL必益。may05_source_tail必要Source/date/owner/PRE，root实际核并授指定单段/本人注，已保存并自读，root已实际正文/完整邻接/本人注POST通过、窄lease释放，未核实现/复现，不预授DAY。
+
+- `SF-2026-ARXIV-2605-00642` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00642v1)§2–5/Eq1–5/Tables1–4/B，2+2+2=6。只采用visual privilege、digit/entropy权重分责，保GT位置与teacher/数据费用；不采reverseKL-to-onehot等于CE、长轨迹或普遍省费。may05_source_tail必要Source/date/owner/PRE，root已实际核并授本单段及本人注；已保存并自读完整邻接，root已实际正文/完整邻接/本人注POST通过、窄lease释放，不预授DAY，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00364` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00364v1)，2+1+2=5，具体owner差额深入。必要Source/date与直接反侧见本日唯一SUP R24，不授超该原证的普遍理论、质量/性能或安全保证；全部制备/运行/训练费用及旧分支退路近文。root C9实际owner完整邻接/逐字PRE通过并授本窄段及本人注；作者已实际保存，root C11非writer实际正文/完整局部邻接及本人注POST通过，窄lease已释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00591` — Daily2026-05-05补May04；[DSPT exact-v1](https://arxiv.org/html/2605.00591v1)必要§3/4/A/C.3/C.6/D，2+1+2=5。reader R19必要Source/date通过，root C6实际owner完整邻接/逐字PRE及单段+本人注窄lease通过；只采双softmax压缩logit梯度与可信prior条件，保prompt参数Jacobian、noise/人口/从头反退与全费，不授任意LVLM或逐错标识别/通用鲁棒证明。作者已保存，root C7非writer实际正文/完整局部邻接及本人注POST通过，窄lease已释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00610` — Daily2026-05-05补May04；[DoTS exact-v1](https://arxiv.org/html/2605.00610v1)§2/4/5/6/A.1–2，2+2+2=6，source-bound taskvector合成差额深入。保各自原norm、proxy非正确、弱source反退和全费用；笔记错填的default10%/每source32已按原件纠正30%/5，不采普遍3%总成本/参数无变化或完全消除干涉。root必要Source/具体owner/逐字PRE通过；作者实际保存/读回，root C3非writer实际完整正文/两侧/本人注POST通过并释放窄位；作者仅行政同步既成事实并读回，不授DAY；未核artifact/复现。
+
+- `SF-2026-ARXIV-2605-00650` — Daily2026-05-05补May04；[AdaMeZO exact-v1](https://arxiv.org/html/2605.00650v1)必要Source由独立reader R5实际完成，moments重生而非query复用的具体差额深入；保metadata/block缓存、截断与每步更慢/配置不同的反侧，不授零内存/精确Adam/同幅端到端加速。root实际owner/逐字PRE通过；作者实际保存/读回，root C3非writer实际完整正文/两侧/本人注POST通过并释放窄位；作者仅行政同步既成事实并读回，不授DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-27063` — Daily2026-05-02补May1；exact-v1 §2/3/5，2+1+2=5，decay horizon与step-size分责差额深入。保近似cross-weight独立、head vs naive all-layer反侧、fixed-head强基线及2scalar状态成本；不采未逐证附A/LLM外推。reader实际Source/owner/逐字PRE R27通过，root授仅NORACL后/Reference KL前单段及本人注窄lease；作者已保存，非writer实际POST R35通过，root接纳并释放窄lease；作者仅行政同步已发生状态并实际读回。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-27031` — 原路由为Daily2026-05-02补May01（保留历史字段，非已核公开日）；reader R79/R80发现早提交至registered跨日且有限原始日组未恢复，实际May1归属未确认，隔离于本窗候选/覆盖/整合计数；技术审阅与有效正文保留，取得该ID官方首公告日或同日有效组合后仅恢复日期层；v1 §3/5/结论，2+1+2=5，增长触发与瞬间函数保持差额深入。只采双sensor/zero-fanout/状态重建边界，不采过去任务必要性或全面解决stability-plasticity、无边界或LLM扩容保证；保小MLP/5seeds/50task退化及更大oracle反侧。reader必要Source及actual owner/逐字PRE R18通过，root授指定窄lease；作者已保存并顺读完整邻接，非writer reader actual POST R21通过，root接纳并释放该窄lease；仅行政同步本注，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-26940` — Daily2026-05-01补Apr30自然日；[S2T exact-v1](https://arxiv.org/html/2604.26940v1)必要§4.1–4.4/5.1–5.5与Tables1–3。2+1+2=5，student候选覆盖/选择分解与Local排序蒸馏差额必要深入；teacher非truth、额外Kprefix forward、trigger oracle/部署区别及训练/回归费用近正文。root独立必要Source、actual owner完整邻接和逐字PRE通过并授本段/本人注窄lease；作者已写并实际读回，root非writer已实际独读正文、完整上下邻接与本人注，POST通过，窄lease释放。未核artifact或复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-14084` — Daily `2026-04-17`补Apr16自然日；[TIP exact-v1](https://arxiv.org/html/2604.14084v1) §3–8/Eqs1–7/Tables3–7/B.3，2+2+2=6，position选择/词表坐标与teacherproxy/全费分责具体缺口深入。保Q3 forwardKL×低熵构造选择分数、仍reverseKL训练与SoftOR TopK/entropy概率sample不同人口，选择分母变/非全token无偏、token-separable oracle前提、Qwen2.5/32Bplanning反側及H200/长度/teacher完整前向费用。不采事实truth、全域最优或净训练加速，未核artifact/复现。root R29必要Source、R32自身v1/current/officialLG/R6共batch联合date、actualowner逐字修正PRE与窄锁通过；实际两段/本人注已保存，作者完整局部读回，root R34非writer实际正文/完整局部两侧/本人注POST通过；本人注同步后作者actual读回，不授DAY。
 
@@ -1600,3 +1646,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-17785` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17785v1) §3/Eq1–8/4/5.1–5.6与C/H/I必要，2+1+2=5，安全受影响forgetGA entropyweight与retainCE差额深入。分布entropy非语义/敏感重要性，权重总和非梯度/utility保留；KS不拒非删除、Agg/筛选口径争议与原分项反侧保报告，完整双人口训练/搜索费用近文。fresh实际必要Source与root actual owner/A52逐字PRE通过并授窄lease，作者保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，窄lease释放，作者仅行政同步并实际读回，未核artifact/复现或DAY。
 
 - `SF-2026-ARXIV-2604-20835` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20835v1)A5必要机制/评价及直接反侧，2+1+2=5，A7具体owner差额深入。有限采用命题、失败退路与全费近正文，不授全主张/生产保证；非作者必要Source按A5 root/fresh具名结果有效复用，root实际现局部/逐字PRE通过并授单段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-20835` — Daily2025-05-01补Apr30自然日；[XS-CoT exact-v1](https://arxiv.org/html/2504.20835v1)必要§3–6/式1/Tables1–7，2+2+2=6，条件历史删除非loss-mask的具体TRAIN-SFT差额加深。保合成语音/代理judge人口、局部压缩质量及原ASR/翻译/指令回退、翻译/TTS/过滤/多阶段训练与生成全费，不授逻辑保真、普遍能力保持或墙钟收益。Newton§9必要Source/评分/逐字拟段通过，root核当前完整邻接后授唯一单段与本人注窄位；作者已实际保存并self-read，Newton§13实际非writer新段/完整两侧/本人注POST通过，root实际读回接纳并释放窄位。未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-20572` — Daily2026-10-16窗10-15；[CriticOPD exact-v1](https://arxiv.org/html/2610.20572v1)必要Source见本日唯一LIVE记录R6，2+2+3=7。只采错prefix恢复、反馈采样与无反馈student求分的surrogate分责；保长度预算反侧、teacher/改写/求分全费，不授无偏梯度或普遍恢复。独立reader A6逐字PRE/R9通过，root授指定两段与本人末注窄lease，作者已保存并读回；独立reader R11实际正文、完整邻接与本人注POST通过，root已释放指定窄lease；作者仅行政同步本注并实际读回。未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-27715` — Daily2026-05-02补May1；v1§3–6/T1–9，2+1+2=5，offline prompt初始化/online更新差额深入。保flat-only崩溃、OOD/分域校准反退、uniform-sphere非真实校准证书与离线全费；未核代码/复现。root C14实际必要Source/owner/逐字PRE通过并授本单段及本人注窄lease，作者已按许可保存；作者已actual顺读完整新增/两侧/本人注；root C15非writer实际POST通过并释放指定窄lease，作者仅行政同步既成事实，不授DAY。

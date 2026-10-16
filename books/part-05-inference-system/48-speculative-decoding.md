@@ -456,6 +456,14 @@ SGLang、低并发和训练合同，不能外推为通用倍数。经典独立 A
 
 并行 drafter 的另一个独立压力是随 prefix 与并发增长的 **drafter-side KV**。为每个历史位置从 target hidden state 投影一套 draft KV，条件信息丰富，接口也容易训练，却复制了随请求长度增长的驻留状态；直接读取 target KV 可省掉副本，但可能失去最后位置 hidden state 已汇聚的上下文摘要，并让较远的 draft token 更难命中。一种条件性分支让 drafter 只读 target 已提交前缀的既有 KV，以最后位置 hidden state 初始化有界 recurrent state，再生成并行 proposal；这不阻止 target 在接受后继续写自己的 KV，target 仍单独验证和提交。它把额外 KV 容量换成 target/drafter 层维度与位置编码兼容、混合 backbone 计算和版本耦合。短输入、低并发或接口不兼容时，独立 KV 的旧方案仍较简单且可能更快；因此验收应同时量接受长度、实际 KV 占用和并发吞吐，而非只看单请求 draft 质量。<!-- source-family:SF-2026-ARXIV-2609-24197 -->
 
+若 target 本身包含 gated linear Attention，drafter 还可以读取已经存在的 recurrent matrix，而不另建随 token 数增长的 context source。每个 draft 位置从自身表示产生一个 learned query，向同一份已提交 prefix state 读取不同方向的关联，再以低秩投影与 residual 注入草稿层；读操作不推进 target state。它补充了既有 hidden features，却不能恢复未来 token 尚未写入的内容，也没有证明完整多层 hidden features 必然不足。Target 仍按原规则验证，在接受与更正后才更新正式 KV、recurrent state 和输出；拒绝分支不能成为下一轮 reader 的历史。
+
+这里固定的是新增 context source 的尺寸，不是 hybrid target 的全部缓存或实际 memory traffic。低秩读取仍须准备完整源 state，gather、归一化与 feature packing 也会吃掉接受长度收益；因此 reader 需要和不读 state 的同预算适配 drafter 对照，而不能把全部继续训练收益归给接口。[ReaDy 的受限对照](https://arxiv.org/html/2610.20503v1)只支持 Qwen3.8-27B、单 B200、BF16、并发1、greedy、block7/最长1024输出及排除 Prefill 的 Decode TPS，不能批准生产 SLO、随机采样或其他架构。没有兼容 recurrent state、读状态成本难摊销或接受率下降时，保留原 hidden-feature/独立 drafter 与 target-only 路径。<!-- source-family:SF-2026-ARXIV-2610-20503 -->
+
+即使上下文来源不变，短窗训练的轻量drafter也可能因远距离位置映射失配而降低接受率。直接裁近期窗口最省读取，但丢掉全部远证据；另一分支只改draft Attention：local仍保留精确相对位置，far条目共享一个虚位置，并保留全部历史。未旋转key的side cache让query一次旋转后读取远区；这里压掉的是远区细粒度位置，不是内容、数量或target的原位置语义，target仍独立验证并拥有commit。
+
+远区条目变多还会稀释注意力，因此段内sharpness与far相对local的总mass须分别控制，不能只把位置映射改掉就认为长窗问题已解。[FOLD的有限长上下文对照](https://arxiv.org/html/2610.20392v1)不改变target verifier，却仍需线性随历史增长的读取与额外side cache；排Prefill的单请求greedy TPOT和request速度比均值不授高并发或端到端SLO。部分streaming基线更快、短窗及低接受组仍有反侧。映射、side-cache revision与内存占用需和drafter一起验收；读完整历史不合算、接受率退步或显存不足时，保留近期窗口、已验证检索、原drafter或target-only。<!-- source-family:SF-2026-ARXIV-2610-20392 -->
+
 ### Drafter 更新从离线训练演进为受 Gate 的在线状态循环
 
 离线训练并冻结 drafter 的做法并没有错：当 target revision、请求分布与接受率长期稳定时，它把训练故障隔离在
@@ -1290,3 +1298,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 - `SF-2026-ARXIV-2604-17397` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17397v1) §2–5/Eq1/T1–2，2+2+2=6，continuousblock quality arbitration/decoder rollback与双历史分责gap深入。非exactrejection/跨modelKVcopy；force-reject+random .0771与ours.0773及表/正文锚定口径冲突，2A6000/BF16/质量proxy和全部费用保报告，不授98%全质量/targetcache实现。root必要Source/逐字PRE及指定位置通过并授窄lease，作者已写并顺读完整邻接；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实读回；不授复现或DAY。
 
 - `SF-2026-ARXIV-2604-17701` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17701v1)必要Source与本日SUP有效，2+2+2=6，具体接口差额必要深入。采用上述受限机制，不授完整概率路径等价、语义真值、全任务质量或服务SLO；支持、反侧与全费近正文。root实际owner/逐字PRE、保存正文完整两侧及本人注POST均通过，窄lease释放；作者仅行政同步并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-20503` — Daily2026-10-16，live_oct16_author；[ReaDy exact-v1](https://arxiv.org/html/2610.20503v1) §2–4.4/§6，2+2+2=6，因新增 committed-recurrent-state query 接口必要深入。逐位置learned query/低秩reader/residual不推进target，不恢复future writes；5.68%是对no-state FT的局部TPS对照，7.97%还含继续适配，原文未充分证明两者完整训练预算严格相等；singleB200/Qwen3.8-27B/BF16/concurrency1/greedy/block7/max1024及排Prefill口径保正文，不授随机采样、全cache恒定或生产SLO。reader实际必要Source/具体owner/逐字PRE通过，root只授本两段与本注窄lease；作者保存后顺读正文完整局部与本注，reader实际两段/完整邻接及本注差额POST通过，root已接纳并释放窄lease；作者仅行政同步并实读回。未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-20392` — Daily2026-10-16窗10-15；[exact-v1](https://arxiv.org/html/2610.20392v1)必要Source及采用/反侧见本日LIVE A7–8与R10/root具名层，2+2+2=6，具体owner差额深入。仅本轮两段的受限接口与理论边界，全部费用及旧路径近正文，不授通用加速/质量、代码核验或复现。reader A8/R15逐字PRE通过，root授指定两段/heading与本人注窄lease；作者已保存并实际读回，独立reader R17实际正文、完整邻接与本人注POST通过，root已释放指定窄lease；作者仅行政同步并实际读回，不授DAY。

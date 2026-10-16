@@ -84,6 +84,8 @@ group rollout 便宜且同 prompt variance 可测时 GRPO 仍合理。SPPO 的�
 
 这条分支以 critic 自回归生成、冷启动监督和额外训练换取更强的受限估值能力，并新增 score 解析失败、policy hint 过时与分析迎合监督等风险。[GenAC 的支持范围](https://arxiv.org/html/2604.10701v1#S5)是 Qwen3 数学训练、Monte Carlo continuation 估值和所列校准/排序对照；生成分析不证明解释忠实，较少 actor samples 也不代表总算力更少。其 FLOPs 是带分段长度和 prefix 复用假设的估算，且六个任务并非全部改善，不能签发通用 critic 更优或 wall-clock 加速。预算不合算、policy 改变后失准或解析不稳定时，保留一次 forward 的 scalar critic、真实 rollout 估值或 group baseline，并独立验收 actor outcome。<!-- source-family:SF-2026-ARXIV-2604-10701 -->
 
+长轨迹若每次环境动作都有可核的dense反馈，critic也不必复制actor的整套语言模型：可让小型视觉网络读取每turn观察，回归该策略下的discounted return，再把turn advantage交给生成该动作的policy更新。此处value时间单位是环境交互，不是文字token，也不让当前frame自动成为完整Markov state。[必要游戏对照](https://arxiv.org/html/2605.00347v1)支持所测CNN critic相对critic-free分支的稳定作用，不证明所有长任务都需critic或小网络总够用；只保正advantage及其人口归一又改变目标，不能附带原无偏/安全保证。真实rollout、critic与完整actor训练、teacher冷启动都计费，多任务逆轨迹长度采样也须与真正难度/保留质量分验。观察不足、value漂移、负样本过滤损害行为或总费用不合适时，保留原token/turn critic、可信group baseline、更多真实状态支持与独立controller，不由局部进度提升批准通用Agent或物理执行。<!-- source-family:SF-2026-ARXIV-2605-00347 -->
+
 #### 同一昂贵状态的候选复用，不等于多条真实 Transition
 
 当在线状态来自延迟高、不能可靠 fork 的 GUI 环境时，每次实际动作都让环境进入下一状态，直接收集同状态的多条后续轨迹很贵。一条条件分支先用真实执行轨迹训练 action-value critic，再在已观察状态上由当前策略独立抽取多个候选动作，只用 critic 估值而不执行；每个候选的优势减去其余候选 Q 值的均值。它以更多 action 采样和 Q forward 换取较少环境交互，也省去单独的 state-value baseline，却没有获得这些候选的真实 transition 或扩大已观察 state 的覆盖。过程奖励与真实终局结果形成 critic target，二者的身份和误差仍须分开，不能把未执行动作的预测值当作环境真值。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
@@ -475,6 +477,8 @@ PPO 把 policy rollout、advantage estimation 和受限更新组织成循环。P
 代价是训练状态与系统复杂度显著上升：actor、critic、reference、reward、rollout 和 old logprobs 必须版本一致。PPO 提供优化稳定性机制，不提供 reward 正确性证明。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00347` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00347v1)，2+2+2=6，具体gap深入。必要Source/date/反侧见唯一SUP A20/R38；root C20实际owner完整邻接/逐字PRE通过，授单段与本人注。数学/实验边界及全费近正文，不授完整配方、普遍性能或安全；作者已保存，root C21非writer实际正文/完整局部及本人注POST通过，窄lease释放，不预签DAY；未核实现/复现。
 
 - `SF-2026-ARXIV-2603-12324` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12324v1) §2–5/Appendix A–B/Eq4–9/Algorithm1，2+1+2=5，近期reward时间自协方差调节熵系数观测量差额深入。root必要原证/实际owner及逐字一段PRE经resume_review17_18独核通过，resume_mar17不重复原证，仅顺读实际Ch32 278–350完整局部后依root窄锁落实。平均奖励ASAC/平稳混合慢驱动、replay偏差、五次单环境而非LLM/PPO、总成本/原系数回退近文；非writer resume_review17_18实际Ch32 310–347完整局部邻接及449–461本人455注回对已核PRE/必要Source，局部POST通过；更新本人注后最终定点回读待核，不授DAY、一般最优、artifact核验或复现。
 

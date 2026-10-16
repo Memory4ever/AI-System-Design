@@ -196,6 +196,9 @@ next-observation generation
 
 行动计划与视觉生成也可共享训练目标，而不组成推理闭环：[UniDrive-WM 的 plan-first 接口](https://arxiv.org/html/2601.04453v1)把 plan tokens 放在 image tokens 之前，让后者消费计划，联合视觉监督更新共享参数；它不是先生成未来图像再送回 planner，更不证明计划具有物理因果资格。训练目标与 decoder 配置须一起比较：Eq11 的 flow-matching 与随后 deterministic reconstruction 口径不能当作唯一可执行 loss，AR 的 192×128 与连续生成的 256×256 也不是纯 decoder 匹配。有限设置中 L2/box collision 改善仍伴 mASE 反退，不能由开放环指标或 Bench2Drive 闭环签发真实道路安全。8 H200、16-step history、LoRA 及 visual head/训练费用限定了采用条件；共享监督损伤规划或总账不合算时，保留专用 planner、reactive 真实观测和原 action schema。<!-- source-family:SF-2026-ARXIV-2601-04453 -->
 
+共享历史也可以交给两个独立的连续预测消费者，而不先把未来画面生成完再规划。[一条受限分支](https://arxiv.org/html/2506.24113v1)以同一历史表示提出连续轨迹和下一帧，视觉分支另读取预测或外给的下一步motion；仅需轨迹时可以跳过视觉采样，但不免联合训练与状态编码成本。为让下一次预测见到部分自产误差，训练可周期性地从noisy样本和当前velocity作一步clean估计，再把它放入后续context；这份历史不是从纯noise跑完整部署采样器所得，有限展开也没有消除全部训练—推理错配。应分别绑定两条输出的目标时间、action来源、history生成方式与梯度边界，并独立验视频、轨迹及真实行动结果；画面长、轨迹短时误差低或共同loss下降都不构成物理辨识与动作许可。Codec、双head训练、额外forward和全部采样/回归均付费，有限history、自产误差或控制质量失配时，保留真实观察、专用planner、已验视频模型与短horizon反馈，不把模块计时或共享表示签成完整实时闭环。
+<!-- source-family:SF-2025-ARXIV-2506-24113 -->
+
 共享监督之外，还可以把生成的未来观测回送训练中的planner，而不让在线动作路径每次都运行视频生成器。一条受限分支由LLM不同query分别形成waypoint与world条件，视频generator消费后者；单步联合训练后，冻结generator，在短展开中把预测视频再次送入感知/语言路径，让生成损失继续更新planner。这是训练期的自生成feedback与参数适配，不是已经执行的未来观测，也不同于plan-first只让image消费计划。<!-- source-family:SF-2026-ARXIV-2604-08719 -->
 
 [LMGenDrive的有限驾驶对照](https://arxiv.org/html/2604.08719v1)在线只输出planning并丢弃diffusion，离线视频路线才持续自回馈；两者的费用、累计误差与验收人口必须分开。移除world query/generator联变、相同iteration不等相同FLOPs，故不认证视频监督唯一因果；长horizon生成会漂移，CARLA闭环DS不授真实道路安全或最坏deadline。预训视觉、联合与多步训练、离线视频、真实观测和controller全部计费；生成反馈失配、规划回归或成本不合算时，保留专用planner、原联合监督与短horizon真实反馈，不把好看的未来帧交为事实或动作许可。
@@ -280,6 +283,8 @@ o_hat = D(z)
 ```
 
 它可以更快 rollout，却可能丢失 contact、object identity 或安全关键细节。reconstruction 好不证明 latent 对 control sufficient；必须用 action-conditioned outcome 验证。
+
+表示也能先排除一类无效状态：将定长链写成base位置、相对单位旋转与固定link length，再以前向运动学解码，可以避免独立预测Cartesian点时的链段伸缩。这种运动学不变量不包含接触、自交、摩擦或正确动力学；[受限绳索rollout对照](https://arxiv.org/html/2604.28161v1)中，仅替换baseline坐标仍不能维持长程拓扑，须另验action-conditioned时序预测，而非只看当前状态重建。训练、状态转换、rollout与独立拓扑/位置检查都付费，投影交叉配置的匹配也不是三维无碰撞证明。固定物性、动作及模拟人口之外仍须重验；长horizon失准时缩短想象窗口、刷新真实观察并回退显式模拟/已验证模型，不把“定长合法”或单步速度批准为真实机器人闭环安全。<!-- source-family:SF-2026-ARXIV-2604-28161 -->
 
 连续随机动力学使用低维latent时，还要检查坐标变换是否保住局部漂移与噪声方向，而不只看点的重建。若已有观测空间的drift与covariance，一条受限分支用decoder Jacobian张成的切空间约束噪声方向，再加encoder/decoder的局部逆一致性；学好chart后冻结它，以Itô变换得到的latent drift与covariance作为动力学目标。Itô漂移包含encoder曲率项，不能把随机过程当作确定性坐标代换；低重建误差也不直接控制导数。这里学习的是所声明chart上的随机模型，不因latent维数小就获得完整环境状态或action后果的资格。<!-- source-family:SF-2026-ARXIV-2604-16282 -->
 
@@ -686,6 +691,9 @@ RGB rollout 在数据规模和开放生成优先时仍更简单。
 共享一套state与多个输出heads之外，还可把appearance与估计geometry建成两条共同去噪的状态流：同一diffusion time下分别加入noise，让RGB与XYZ分支通过双向cross-attention交换条件。这样显式保留两种表示及其相互约束，却没有取消几何teacher：若XYZ来自单目depth模型与camera反投影，两个分支的误差可能相关，联合生成不等于独立几何证据或严格物理状态恢复。<!-- source-family:SF-2026-ARXIV-2603-12639 -->
 
 [RoboStereo的受限paired分支](https://arxiv.org/html/2603.12639v1)可以为trajectory筛选或policy adaptation提供预测，但视觉匹配和learned权重只是消费者的proxy，真实结果仍由行动后观测决定。其奖励聚合记号及joint平均表存在待澄清映射，这里不采用精确优化recipe或联合成功率headline；twin状态、teacher预处理、joint训练/生成和policy回归均计费，单frame速度也不等控制频率。geometry、camera或proxy质量失配时保留独立RGB/可信几何分支与已验证controller，不让两流互相支持代替真实证据。<!-- source-family:SF-2026-ARXIV-2603-12639 -->
+
+显式几何也可以在生成之后修订，而不直接把某个预测head当最终场景。[一条受限RGB-DN分支](https://arxiv.org/html/2504.20995v1)共同预测颜色、深度与法线，再用法线约束局部深度、用预测视频的光流提出跨帧对应，兼顾与原深度的距离，最后物化pointcloud供独立inverse-dynamics消费者读取当前与目标状态。这个过程改善的是所用相机/表示下的内部几何一致性，不把伪depth/normal或flow升级为真实米制观测；单视可见表面也不等完整世界，文字任务条件不等任意action介入的transition合同。应保存teacher/codec、相机、区域mask、对应/正则权重和生成horizon，并分验几何、RGB、预测目标与真实动作outcome；各head相互支持仍会共享偏差。伪标、联合生成、光流/逐帧优化、几何驻留与动作模型训练/回归全部计费，有限模拟任务仍有控制反退。遮挡/尺度或consumer失配时，回到可信当前几何、原RGB/独立predictor和短horizon controller，以新observation刷新状态，不由较低重建误差签发全场景一致、完整物理辨识或真实执行安全。
+<!-- source-family:SF-2025-ARXIV-2504-20995 -->
 
 系统必须区分两种 consumer：生成 branch 可为诊断或 imagination 物化 future；实时 policy 可以读取同一模型的
 内部 predictive feature，却不能把它升级为 environment truth。该 feature 的 identity 至少绑定 observation、
@@ -1976,3 +1984,9 @@ Agent World Model 支持 synthetic environment 作为训练分支，但不证明
 - `SF-2026-ARXIV-2604-16282` — Daily2026-04-21补Apr20；[exact-v1](https://arxiv.org/html/2604.16282v1)，2+1+2=5，chart/Itô目标具体差额深入。必要Source/精确条件与关键反侧、全费/旧路径均近正文，不授通用保证/物理安全或SLO。fresh实际Source/owner与修订PRE通过，root授本窄lease，作者仅写两段与本人注；fresh非writer实际正文/完整邻接/本人注actualPOST通过，root接纳指定lease释放；作者仅行政同步，不授DAY，未核artifact/复现。
 
 - `SF-2026-ARXIV-2604-22240` — Daily2026-04-28补Apr27；2+1+2=5，v1§3.2～3.4/5.1～5.3/SuppA1/B1/B3/D2，prefix固定与future预测交接具体差额深入；保Table4/5 precision0.48/0.58不混、>8s限制、20Euler与traininghardware/precision未披露，不授zero shift、真实future/碰撞安全。reader必要Source/date/实际owner与逐字PRE通过，root授本两段+本人注窄lease，reader非writer实际正文/完整两侧/本人注POST通过，root接纳释放窄lease；作者仅行政同步本注并实际读回；未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-20995` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20995v1)3.2/4/5/Tables2–5/§7/Appendix1.1–1.3与current必要域，2+2+2=6，生成后geometry→inverse consumer差额深入。保相对/伪geometry与可见单表面、文字条件非任意actiontransition、Eq3/warp/参数未闭、realRGB/控制反退与全部费用，不授全世界状态/真机安全/精确solver或速度；未核图像视频/代码/复现。Newton§69必要Source/实际owner/逐字PRE通过，root已核当前完整两侧/本人注并授本单段窄位；Godel已保存并顺读完整新增/两侧/本人注，Newton§77一次非writer实际完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2604-28161` — Daily2026-05-02补May1；exact-v1 III–VI必要层，2+1+2=5，运动学不变量/动力学差额深入；保GA短期更准、topology proxy/非real闭环、不同容量计时与全费，未核代码/复现。root C16实际必要Source/owner/逐字PRE通过并授本单段与本人注窄lease，作者已按许可保存，作者已actual顺读完整新增/两侧/本人注；root C18非writer实际POST通过并释放指定窄lease，作者仅行政同步既成事实并读回，不授DAY。
+
+- `SF-2025-ARXIV-2506-24113` — Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.24113v1)§3–5/Tables1–7及current必要域，Newton§8另实际B/Table8反侧，2+2+2=6，双消费者/周期性一步历史估计的具体差额深入。保生成动作非执行、proxy非完整sampler、detach/shape/loss未闭、10帧实际上界/跨论文预算与FID/规划分项反侧、4090模块计时非实时闭环，全部费用近文；未核图像视频/代码/复现，不授SOTA/物理安全。Newton§8必要Source/6分与具体gap通过，作者初提泛覆盖NC已据明确组合差额纠正，root已核逐字PRE与当前完整邻接并授本单段及本人注窄位；Godel按许可保存并顺读新增/完整两侧/本人注，Newton§11一次非writer实际完整新增/前后/本人注及限定diff POST通过，root已实际完整消费接纳并释放指定窄位；本注仅同步既成事实，不授DAY。

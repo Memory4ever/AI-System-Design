@@ -68,6 +68,12 @@ GPU变快后，入口的重复工作会反而成为主瓶颈。工具循环每�
 
 连接局部缓存增加内存、状态归属和失效处理责任。从系统设计上，只有旧状态身份、模型/工具配置与策略仍合资格，才能复用旧处理结果；把部分校验改成delta处理，不代表新旧内容组合的约束被自动证明。官方工程披露支持这种增量分支，但未给断线恢复、跨连接迁移或所有安全规则的完整保证。若旧状态不可取、资格变化或增量验证不能建立，就显式重建/重新验证；短请求和无会话场景仍可使用stateless入口。收益应分解API前处理、工具时间与模型推理，不能把更快模型或up-to结果全归给WebSockets。
 
+### 入口状态的归属与协议兼容
+
+单会话直连能少一跳，多方通话使用SFU也便于集中媒体策略；当主要负载变为用户与模型的一对一实时交互，Kubernetes弹性扩缩却会放大每会话公开UDP端口和有状态协议终结的矛盾。可把小而固定的公开媒体入口交给薄relay，由transceiver独占ICE、DTLS、SRTP密钥与session lifecycle；首个STUN包中的server ICE ufrag携带cluster和owner提示，relay据此转发，再以client地址到owner的soft mapping处理后续包。这里的入口只决定包送往哪里，不解密媒体、不取得模型token/KV或Agent任务完成权。<!-- source-family:SF-2026-OPENAI-WEBRTC-RELAY -->
+
+这以额外转发hop、映射协调及过期清理换取较小公开端口面和稳定的hard-state归属。relay重启后的mapping可由后续STUN重建，Redis缓存可加快恢复，但路由重建不等于transceiver的ICE/密钥状态可迁移或已恢复；相应保证仍需另行验证。官方工程披露没有量化可比端到端延迟、并发或尾部SLO，不能从“thin relay足够”推出通用低延迟、零丢包或无需kernel bypass。小规模直连、多方媒体SFU仍各有适用域；无法维持owner映射时，应显式重新协商连接，不把流量改投新进程当成原会话连续性。
+
 协议normalize还要区分“回到同一provider格式”与“换到另一provider”。可用中立typed IR保存message/content、tool call和generation controls，并在preserve模式另存provider-specific metadata，使同格式往返可检查结构保持；strip模式或目标不支持的字段却会丢失cache、sampling等能力。这不是所有provider语义本来相同，warnings也不认证丢字段无影响。Gateway应显式判断本请求哪些字段可转、哪些是不可降级合同，不兼容时拒绝或固定原provider，而非用JSON成功替代会话语义验收。<!-- source-family:SF-2026-ARXIV-2604-09360 -->
 
 流式转换另需request-scoped状态：current block、tool-call identity/name、未完整的argument buffers，以及提前到达的finish/usage事件。累计part与delta、隐式与显式block边界不是可直接拼接的同一对象；转译只交付格式与顺序，不执行tool或批准effect。[LLM-Rosetta的有限测试](https://arxiv.org/html/2604.09360v1)支持四schema下的接口分支，255条stream测试与10条cross-provider案例不授所有API演进或transitive保真，自写测试与六个外部compliance案例亦有限。映射维护、buffer、校验、serialization和额外proxy hop都计费；字段新变、stream重建失败或总成本不成立时，重核adapter或保留provider-native客户端/原直连，不从converter微时延推出生产SLO。
@@ -311,3 +317,5 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 - `SF-2026-ARXIV-2604-09360` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.09360v1)§3.1–3.2/4.3/5.2–5.4/5.6/6.1–6.3，2+2+2=6协议边界深入；只采preserve同provider/strip跨provider分责和request-scopedtypedstream，不采普适semantic/transitive保持、無损或serviceSLO。保unsupported/topk/cachecontrol丢失与warnings、255/10/6测试人口、自写test循环风险、CPython3.10单硬件与proxy额外hop；未核artifact/实际API部署。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回。
 
 - `SF-2026-ARXIV-2604-09377` — Apr14补Apr13，exact-v1§3–4及必要synthesis-cost/假设反侧，2+2+2=6具体cold-start支持域gap深入；仅taxonomy synth→allcandidate quality/cost标签与type-mixture预测分责，不采Eq6→7/9实际ELBO或trueposterior/校准。保4×2000/7:1:2、17880/15200 QA与不同judge协议、domain .5402优于difficulty .5274、LR五runs非全主表、造数14.34/10.03非总费及hardware/runtime/SLO ND。reader必要Source有效，有限date/light与reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回；未核实现/复现。
+
+- `SF-2026-OPENAI-WEBRTC-RELAY` — May05补May04，[官方工程披露](https://openai.com/index/delivering-low-latency-voice-ai-at-scale/)Architecture/Routing/Global Relay/Implementation/Results，2+2+2=6具体入口分责gap深入；仅采用ufrag首包路由、薄relay soft map与transceiver hard-state分责。未核公开artifact、真实部署、负载/尾部性能或hard-session无损恢复；不以SO_REUSEPORT/thread pinning推任意flow亲和保证。root必要Source、逐字PRE及实际正文/完整邻接/本人note POST已在May05唯一SUP R2通过，作者行政同步并实读回。

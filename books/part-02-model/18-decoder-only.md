@@ -333,6 +333,10 @@ explicit token trace
 
 停止条件须分开“输出不再变化”和“已有可提交结果”。相邻循环分布的 KL 很小，可能只是停在高熵的含糊分布；一个受限替代是同时要求 KL 小与输出熵低，再决定是否停止。它增加阈值校准和逐轮 readout 成本，也不能阻止稳定、低熵的错误；熵是集中度 sensor，不是真值。作者用于解释 overthinking 的正确 token logit margin 依赖答案标签，不能直接当作线上可用停止器。该分支目前由从头训练的合成关系任务支持，不能外推到任意预训练 LLM；超出已验训练/推理循环范围时，仍应保留循环上限、固定预算与显式验证。<!-- source-family:SF-2026-ARXIV-2604-07822 -->
 
+在某轮已能读出正确答案，也不表示该hidden state已能停止更新并供后续位置复用。可以把三件事分开干预：在指定loop检查计算结果，继续运行观察答案是否保持，再从该轮冻结状态、让依赖它的后续计算继续执行。缓存一个已验证答案与冻结生成它的全部hidden state不同；后者可能同时携带尚未完成的顺序、时间或交互信息。只用最后位置/固定exit监督而得到的保持性，也不代表随机位置或更长执行预算下同样稳定。
+
+[有限Mealy-machine与递归maze诊断](https://arxiv.org/html/2610.19768v1)中，正确读出、延后保持与freeze复用确有分离；成对swap能支持所测位置对后续计算的counterfactual sufficiency，却不证明唯一符号编码，freeze失败亦不证明信息已经丢失。多轮诊断、状态保存与干预都增加费用，部分forward匹配不等同完整反传/FLOPs匹配；用clean未来最后变化定义的到达时间是离线oracle，不能直接充当线上停止器。没有可核验复用边界时，保留统一执行预算、原recurrent更新和独立任务验证，不把延后若干loop当跨任务通用修复配方。<!-- source-family:SF-2026-ARXIV-2610-19768 -->
+
 ### 循环中的读取位置与表示更新也不必同时冻结
 
 即使监督与停止有了明确约束，每一轮是否都要重新查找全部历史，仍是独立的成本问题。循环深度还带来另一种可分离的状态：模型可能较早确定“去哪里读”，但隐藏表示仍需多轮更新才能决定“怎样使用”。在所测 recurrent decoder 中，早期全局 Attention 可发现 query 的 block-level working set；后续循环仅复用这些位置，仍用当轮 Query/Key/Value 重新计算集合内权重与表示，而不是冻结 attention matrix 或停止推理。这样把反复全局路由的计算换成 support 选择误差、稀疏 kernel 和 discovery 深度调参；若 support 随任务继续变化，必须延长全局发现或回退全 Attention。作者证明依赖收敛与非退化间隔假设，实验只支持所测 recurrent backbone/任务的 attention 工作量与质量取舍，不是普通单遍 decoder 的通用加速。具体执行优化交给推理章节。<!-- source-family:SF-2026-ARXIV-2609-27373 -->
@@ -443,3 +447,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-01206` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.01206v1)§3.1–3.3/4.1/C3.3–3.6，2+1+2=5，仅single-query scalar readout与next-token/targetscale接口分责；保parameter-matched/STS tie、ranking≠RMSE和冻结前向/训练/候选费用，不授数值真值或全任务/SLO，未核实现/复现。
 
 - `SF-2026-ARXIV-2610-12545` — Daily2026-10-13；[AutoIndexer exact-v1](https://arxiv.org/html/2610.12545v1)§2–3/5/AppA.1–3及必要protocol，2+2+2=6，causal generation/display编辑具体gap深入。CoE缓存不授普通fresh-forward等价，deletedspan不物理freeKV，pointer/marker/inverseedit训练及有限exactrepair/matchedLoRA反侧保留。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2610-19768` — Daily2026-10-16窗10-15；[exact-v1](https://arxiv.org/html/2610.19768v1)必要Source/实际命题与反侧见本日LIVE A9/R16及root具名独核层，2+1+3=6，具体owner差额深入。只采本两段的测量/状态接口，不授因果真值、普遍质量/加速或部署停止保证，全部费用、直接反侧与旧路径近正文。reader A9/R20逐字PRE通过，root授指定两段与本人注窄lease；作者已保存并实际读回，独立reader R21实际正文、完整邻接与本人注POST通过，root接纳并释放指定窄lease；作者仅行政同步本注并实际读回，不授DAY。未核代码/复现。

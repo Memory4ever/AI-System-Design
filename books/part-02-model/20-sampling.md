@@ -265,6 +265,10 @@ Reasoning model 让停止条件进一步变成 compute policy：runtime 可以�
 
 名义上限相同，也不意味着模型实际使用了相同推理预算：同一道题加入无关长前缀、换成第二轮或嵌入子任务，可能改变模型自主结束thinking的行为。因此还应把context条件、turn位置、子题分摊规则与实际生成/验证行为写入评价身份，分别检查最终质量和完整Prefill/Decode费用。[受限context对照](https://arxiv.org/html/2604.01161v1)观察到verification文本与生成长度变化，同prefix末段重采样支持有限stop差额，却不证明质量变化全由少验证造成；个别模型/条件也生成更长，子题token除二不是同单题budget。无关前缀本身增加Prefill，较短trace不自动节省总成本，外层cap和deadline仍保留；条件变化或质量退步时应回到原单题/turn人口与独立答案验收，不把compaction或继续生成视为已经验证的修复。<!-- source-family:SF-2026-ARXIV-2604-01161 -->
 
+逐 token 的长度预测还可以采用与答案效用分开的监督目标。对固定生成 policy 采得的长度为 $L$ 的轨迹，在位置 $t$ 为每个非终止步赋负成本 $-(1-\gamma)$，可直接构造 $G_t=-(1-\gamma^{L-t})$，再用带标量 head 的预测器回归其条件均值。它无需额外人工长度标注，却仍要支付完整 rollout 与预测器训练；实现的 $G_t$ 越接近零，表示该样本剩余步数越少，不能把长度 value 解释为答案正确率或任务价值。折扣将不同长度压到有界区间，也会压缩长尾分辨率；未来结果相关的重加权还会改变所学条件目标。<!-- source-family:SF-2026-ARXIV-2604-27039 -->
+
+这项预测也不是未经校准的容量承诺。对一个样本的 $G_t$ 取逆可恢复剩余长度，但对其条件均值取逆通常不等于剩余长度的条件期望，因而不能直接拿它替换调度器的平均长度预算；模型、生成 policy、终止与截断规则改变后，应重新验证预测误差。将候选下一状态送入预测器还增加 forward 成本，较短生成不自动意味着较低总时延。[固定policy监督与受限长度对照](https://arxiv.org/html/2604.27039v1#S3)只支持这一额外长度信号分支，不授已验证的RL优化或服务SLO；精确控制公式与收益归因尚有原文符号争议时，保留自然EOS、硬长度/deadline预算和独立答案验收。
+
 文本信号还可以定义一种不同于答案正确率的停止风险：在完整、model-relative 的 wellposed 校准轨迹上，先固定 keyword lexicon、token bin 与统计函数，取每条轨迹所有 bin 的最大值，再用有限样本 order statistic 设阈值。测试轨迹任一 bin 严格越阈值才停止；在校准与测试完整轨迹可交换、统计函数固定的前提下，这把反复窥视的 ever-cross 事件一次纳入校准，而不是把每个局部检验的风险直接相加或当独立事件。它控制的是 wellposed 轨迹被误停的概率，不是提交答案错误率，也不保证识别所有坏推理。模型、lexicon、bin 或任务分布变化需重新核查；所测 OOD 的误停率仍有高于目标的反侧，缺少可区分文本信号时检测能力有限，粗 bin 会漏掉短轨迹，在线统计与离线完整生成也有成本。Renewal/Šidák 的近似分支不具有同一有限样本证书；普通 EOS 和硬 token/deadline 预算仍是无可靠信号时的回退。<!-- source-family:SF-2026-ARXIV-2602-13935 -->
 
 另一种early-exit建议可以用完整轨迹构造离线监督，再让因果读出在当前prefix上预测是否已出现原轨迹的最终答案；它预测的是与原full-CoT答案的一致性，不是答案正确性，也不保证截断后一定生成同答。[TERMINATOR的受限证据](https://arxiv.org/html/2603.12529v1)把label生成与在线停止分开，但文字/Eq3标签方向及最早同答与语义首次到达的关系尚未明确，不能把其精确recipe或经验结果称为已证实最优。离线完整生成、标注/verifier、额外读出与阈值/窗口均付费，局部token或batch1延迟下降也不授fleet SLO；labeltarget、模型或任务失配时保留普通EOS、硬budget与独立答案verifier，不以“已到达原答”批准正确提交。<!-- source-family:SF-2026-ARXIV-2603-12529 -->
@@ -328,6 +332,10 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 在转向多条完整轨迹前，还可以让不同模型在一条共享文本前缀上提出局部续写。单模型逐 token 选择最省状态；当模型的 tokenizer 不同，直接对齐 vocabulary logits 不再有明确共同坐标，一个替代分支让各模型先完成到 word boundary，再对同一候选文本分别重新编码与评分。首 token 的 top-1/top-2 margin 只作为是否继续延长局部 span 的代理，低 margin 时在当前词结束后重评分，并以词数上限防止长时间失去交叉反馈。各模型按自己的 token 数归一化 NLL、再取均值，只形成跨模型排序的 heuristic，不使不同 tokenization 变成共同 posterior，也不证明高 margin 对应正确答案。[受限双模型对照](https://arxiv.org/html/2601.06022v1)中固定 pair 在部分数学任务弱于单模型，不能用 oracle 选择的最佳 pair 替换实际部署比较；双份模型状态、候选重编码与同步仍付费，word boundary 对新语言也需验收。延迟或质量收益不稳时，普通单模型采样、独立候选加 verifier 仍然合理。
 <!-- source-family:SF-2026-ARXIV-2601-06022 -->
+
+当目标本来就是多个模型在同一前缀上的非负归一概率混合，还可先按混合权重抽一个模型，再从它的条件分布抽token；全概率公式给出的next-token分布与先计算全部模型再平均相同。这里必须固定共同输出事件、词表映射、prefix和混合算子；它不保持argmax、logit平均或混合后任意Top-k变换的语义，更不意味着整条回答由同一个模型负责。<!-- source-family:SF-2026-ARXIV-2605-00419 -->
+
+随机切换模型又引入状态成本：被选回的模型须先补算它未见的已提交prefix，维护各自KV，再产生下一个token；不同模型的cache不能直接互换。一次extend批处理缺失tokens可摊薄weight加载，却不消除历史token计算、多份权重/KV与词表转换费用。[受限采样与执行对照](https://arxiv.org/html/2605.00419v1)存在低于最好单模型的任务，最佳混合权重也经过搜索，不授免费增益或所有负载近单模型延迟。前缀差额大、状态预算不足、需要确定性决策或质量回归时，原单模型、全分布ensemble或独立候选加verifier仍合理。
 
 ### 多个 Token Draw 也可以只推进一个连续 State
 
@@ -650,6 +658,10 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 这些选择会在自回归循环中持续改变后续状态，因此必须与模型、prompt、seed、停止条件和 Evaluation 一起版本化。Sampling 控制能力如何表达，不创造模型没有的能力。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00419` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00419v1)必要§3/4/A.1–3，2+2+2=6。reader R15必要Source/date/具体owner通过，root C4 actual逐字PRE与完整邻接并授两段+本人注；只采probability-mixture随机选择等价与lazy prefix/KV分责，保λ搜索/局部反退及全部同步状态费用，不授argmax/logit/top-k任意等价或通用单模型延迟。作者已实际保存，root C5非writer实际正文/完整局部邻接及本人注POST通过，窄lease已释放，不预签DAY；未核artifact/复现。
+
+- `SF-2026-ARXIV-2604-27039` — 原路由为Daily2026-05-02补May01（保留历史字段，非已核公开日）；reader R79/R80发现早提交至registered跨日且有限原始日组未恢复，实际May1归属未确认，隔离于本窗候选/覆盖/整合计数；技术审阅与有效正文保留，取得该ID官方首公告日或同日有效组合后仅恢复日期层；exact-v1 §3/4、必要E/F/G，2+1+2=5，因具体知识差额及控制符号冲突深入。只采用固定policy MC长度value/非线性inverse与extra-forward成本；Eq11/12解代数相符，但负beta偏更负value与shorter文字相反，精确tilting/相应性能因果保留争议，不默修或授RL已验。reader必要Source反核R3、actual owner/逐字PRE R8通过，root授指定两段及本人注窄lease；作者已保存并顺读完整邻接，非writer reader actual POST R10通过，root接纳并释放该窄lease；仅行政同步本注，不授DAY。未核实现/复现。
 
 - `SF-2026-ARXIV-2604-22345` — Daily2026-04-28补Apr27；2+1+2=5，referenceNLL单headmask选择→原/masked双流profile条件采样，PCS非偏好专属/唯一storage、generic仍含profile、共享prefillKV/净费未证及反侧近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
 

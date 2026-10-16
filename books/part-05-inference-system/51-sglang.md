@@ -133,6 +133,8 @@ model logits
 
 对固定长度、可枚举的合法 ID 集合，还可把约束本身编译成静态张量：浅层 prefix 使用 dense mask，深层 trie 则扁平化为 CSR 的 row pointer、token 与 next-state 数组，每个 beam 保存当前节点，以固定最大分支宽度 gather，再用 padding mask 排除不存在的边。这用预处理和更多驻留状态换取无需每步 CPU 往返、可进入 static-shape 编译的约束路径；beam 选择后必须同步继承对应节点，终止节点、越界与重复 token 的处理也须绑定实际实现，算法图并不自动证明代码等价。[STATIC v1 §4–5](https://arxiv.org/html/2602.22647v1) 的单 TPU v6e、3B、固定 SID/beam 对照只支持约束附加开销，不是完整请求的千倍收益；只检 top-50 的近似对照也不能与 exact mask 合并。Dense 前缀随词表/深度膨胀，深层 gather 随最大 fan-out 增长，HBM、编译和索引更新均有费用。集合频繁变化、分支过宽、状态身份不匹配或目标 kernel 未验收时，保留 CPU trie/较浅约束或生成后 verifier；这是约束执行的替代分支，不声称 SGLang 已实现该稿。<!-- source-family:SF-2026-ARXIV-2602-22647 -->
 
+约束的固定部分还可以预先编译，在线只为字面值等可变span执行动态检查；这比每个token重走完整grammar更适合反复出现的模板，却要求按实际tokenizer而非字符边界划分职责。一个token可能跨越固定文本与变量span，边界附近的上下文就须重新交给动态约束，否则离线合法的片段拼接仍可能错误。[模板约束的受限SQL对照](https://arxiv.org/html/2604.28028v1#S3.SS3)支持这项分工，但选择了错误模板时，格式合法并不挽救任务语义。模板编译、匹配、动态检查与cache身份都付费；模板少复用、语义匹配不可信或边界处理未核时，保留完整在线GCD或普通生成加verifier，分报正确性、质量和端到端延迟，不把省掉mask计算当作无损全链加速。<!-- source-family:SF-2026-ARXIV-2604-28028 -->
+
 ### 输出 Span 还可以绑定输入序列
 
 JSON 合法并不保证抽取字段逐字来自输入。对 NER、拼写检查或错误定位，一条约束分支在进入 text 字段后先选择输入中的候选起点，再只允许沿匹配的输入前缀继续复制或关闭字符串。Runtime 因而要维护输入序列、候选位置和复制状态，并处理同一文本的多种 tokenization、引号与字段边界；“允许输入词表里的 token”不足以保证连续 span。它改变的是输出与输入的绑定接口，不是给 schema 添加一个新类型。<!-- source-family:SF-2026-ARXIV-2601-16946 -->
@@ -314,6 +316,8 @@ SGLang 展示了 runtime 可以利用比“独立请求”更丰富的结构：t
 下一章将视角从单个 Serving engine 提升到分布式 inference runtime：多个 engine pools、KV transfer、routing 与 autoscaling 怎样形成系统级 control loop。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-28028` — May02补May1，v1§3/Algo2–3/4.1/5.3–5.5，6分，static/dynamic分区及跨边界token缺口深入；保误配/质量/速度反侧，不采layernorm因果或全局倍率。未核实现/复现；非writer D11必要Source/owner/逐字PRE通过，root窄写本段与本人note，非writer D12实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
 
 - `SF-2026-ARXIV-2601-16946` — Daily 2026-01-27；[LogitMatch exact-v1](https://arxiv.org/html/2601.16946v1) §4.1–4.3、§5–6/Limitations。2+1+2=5，因输入 span 与 constraint state 的具体接口缺口定点深入并重开准入；采用复制状态与 tokenization/occurrence/标签分责，不采用通用质量或性能保证。未运行实现或复现实验；root 非作者实际原源→134–138正文/邻接及本注写后复核通过，日级 Gate 待验。
 

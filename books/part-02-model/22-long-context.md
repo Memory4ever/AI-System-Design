@@ -536,6 +536,8 @@ y_t = sum_(i=1..t) C A_bar^(t-i) B_bar u_i
 
 当 A_bar、B_bar、C 跨位置不变时，展开式是只依赖距离的卷积：训练可并行计算整段，逐 token Decode 可用递推。这两种执行方式承载同一算子；实际模型通常约束 A 的结构，避免每步密集 N×N 状态转移。连续时间参数的离散化是构造 A_bar、B_bar 的一种方式，不是所有递推都必须采用的定义。
 
+输入相关不必一概等于失去卷积并行：另一类模型先以因果local算子生成两条序列v与g，再令`y_t=Σ_(j≤t)v_j*g_(t−j)`，以至少2L零填充的FFT乘积、逆变换及前L截取实现线性而非循环卷积。两路只消费各自prefix时，此输出不看未来，却将同一实例的mixing限制为每channel的下三角Toeplitz结构，不是任意query-key匹配，也不自动获得SSM的定长递推state。[必要因果结构与反侧](https://arxiv.org/html/2605.00292v1)中，局部attention/短conv仍有价值，精确检索低于完整attention；标准FFT也须支付投影、padding/workspace与整段计算，训练吞吐不等逐tokenDecode或服务SLO。检索精度、在线state或净成本不合适时，保留完整/窗口attention、已有SSM及匹配过的hybrid，而不把O(LlogL)当普遍替代证明。<!-- source-family:SF-2026-ARXIV-2605-00292 -->
+
 固定 dynamics 还把“状态能否稳定运行”与“这些 dynamics 能否高效学出”分开。在线数据和更新预算很少时，预设 recurrent basis、只拟合 readout 是合理分支；开放学习 pole 则增加 BPTT、识别和曲率压力。[受限线性分析](https://arxiv.org/html/2602.21454v1)中，两非重合实 pole 即使都远离 unit circle，其无限 impulse-response 平方误差的最优 Hessian 也可在 pole 相近时变得任意病态；forward 稳定不保证 pole-learning 好优化。互异非零 pole/gain、零初态、无噪声及已知可逆输入下的有限识别条件，不能迁成 noisy 神经网络的样本/收敛保证；无线实验的 recurrent-matrix condition number 也不是 loss Hessian。固定 basis 用较简单更新换取表达限制，basis 与任务失配或数据充足时仍应比较 learned transition、输入相关 gate 与显式 Attention，而不是因局部曲率反例宣布所有 pole 都不该学习。<!-- source-family:SF-2026-ARXIV-2602-21454 -->
 
 固定卷积核擅长稳定的距离规律，却难以让某次写入随内容决定“记住还是忽略”。Selective SSM 让步长 Delta、写入 B 和读出 C 依赖当前输入，离散后的转移便随 token 改变；不必把基础 A 也改成逐 token 预测。固定卷积不再适用，但在本层输入已知时，仿射状态更新可组合成 parallel scan，Decode 仍逐步递推。并行 scan、融合与反向重算解决执行问题，不证明模型能保留无限关联。
@@ -1232,6 +1234,8 @@ Long Context 不是一个模型参数，而是一组联合约束。位置机制�
 不同方案只移动特定瓶颈：位置扩展、IO 优化、稀疏连接、分布执行、cache 压缩与检索各有不同失败模式。正确决策必须同时看质量、延迟、并发和成本。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00292` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00292v1)，2+1+2=5，具体owner差额深入。必要Source/date与直接反侧见本日唯一SUP R23，不授超该原证的普遍理论、质量/性能或安全保证；全部制备/运行/训练费用及旧分支退路近文。root C9实际owner完整邻接/逐字PRE通过并授本窄段及本人注；作者已实际保存，root C11非writer实际正文/完整局部邻接及本人注POST通过，窄lease已释放，不预签DAY；未核实现/复现。
 
 - `SF-2026-ARXIV-2604-22050` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～5/Tables1～4。12full/19SWA64/5identity、QKVO LoRA、主40M与non-subquadratic边界、跨base/任务选择与评价口径、A10/1024×1024/avgTTFT、precision/version未披露均保留；root非作者必要Source/日级日期合证/逐字PRE通过，作者按单段窄lease保存正文，root非writer实际新正文、完整两侧与本人注POST通过，窄lease释放；作者仅行政同步并实际读回。未核全Appendix、代码或复现。
 

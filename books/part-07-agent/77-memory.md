@@ -90,6 +90,8 @@ candidate event
 
 高价值事实可要求用户确认或 authoritative source。Model-generated summary 必须标记为 derived，不应伪装成原始事实。
 
+抽取管线还可把“对象是否出现、字段是否给出、值是什么”拆开，避免一个缺失字段拖着整条记录反复生成；已通过局部检查的slot保留，未完成组合先留在request/session工作区，只有通过整体验证的版本才进入持久事实库。[schema-grounded memory的受限分支](https://arxiv.org/html/2604.27906v1#S6)把这几段责任分离，但schema/type通过不证明值真实，阶段间错误仍会传播，字段间有关联时也不能任意独立重试。简单扁平记录的一次抽取仍合理；分阶段多付模型调用、校验和组装状态，以更细失败定位换取维护成本。字段缺失、互相矛盾或来源不能确认时，保留原始材料与pending并回到联合抽取/澄清，不因结构完整而批准事实。<!-- source-family:SF-2026-ARXIV-2604-27906 -->
+
 ### Write / Hold 不足以定义下一状态
 
 把 write policy 压成 `Write` 或 `Hold`，只能回答“是否立即追加”，不能唯一决定正确的
@@ -185,6 +187,8 @@ Typed memory 的写入语义还可以在同一存储事务中执行，而不只�
 任务效用和规范可接受性还可能需要两份不同的经验 proxy。一个受限分支让 evaluator 检索 executor 的任务经验与 evaluator 的规范经验，先产生 utility draft，再作规范 refinement，最后交给 executor 执行；执行结果分别驱动双方经验更新，而不是把“高任务分”自动写成可信策略。两份 bank 并不提供独立事实真值，规范 judge 也不拥有安全 authority，refined plan 仍是受约束 proposal。它增加检索、生成/评价调用和共同偏差积累；[受限任务对照](https://arxiv.org/html/2602.03224v1)中，数学与其他任务的效用/规范趋势不一致，不能由双轨更新保证安全或永久避免坏经验。没有可靠规范、judge 漂移或两侧目标冲突时，应停用自动经验演化，回退原始 evidence、现有写入/执行 policy 与人工或规则核验。<!-- source-family:SF-2026-ARXIV-2602-03224 -->
 
 ## Memory Read 是受约束检索
+
+调试经验的读取还要决定“是否允许这条记忆影响当前修复”，而不只选top-k。可把根因pattern、具体命令/路径或stack变体、以及实际episode/验证反馈分层保存，再以相关性、候选差距、结构兼容和反馈历史提出单项注入、多项摘要、不注入、弃权或求反馈；独立override仍可否决policy。这个risk-sensitive选择把误注入与错过复用分开计价，不让表面相似的报错直接取得执行权。[受限RSCB-MC smoke对照](https://arxiv.org/html/2604.27283v1#S3)没有运行真实LLM修复，静态弃权分支也可取得零误注入；把安全不注入算作proxy成功不等问题已修好，不能据此批准可靠性或端到端微秒SLO。Schema、候选、选择/override及原始反馈lineage需共同保存，检索、特征、policy更新、摘要与真实验证全付费。反馈不可信、variant失配或校准人口改变时，回退原始issue证据、无记忆路径和独立修复验证，不以更多历史成功自证当前适用。<!-- source-family:SF-2026-ARXIV-2604-27283 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-25092:start -->
 长期记忆增长后，固定执行 sparse+dense+fusion 会把每次读取成本绑定到语料规模。一个 workload-adaptive 分支先运行 BM25，用 top-k margin 判断 sparse 证据是否已足够；只有不确定 query 才启用 dense channel，并按 query 选择 fusion。Time-partitioned index 再把活跃增量与历史分区分开，使物理检索成本不必随全部历史同步增长。Router 只拥有执行计划，不能把 margin 当成事实置信度。
@@ -777,6 +781,8 @@ COSPLAY 的游戏实验支持 co-evolving skill bank 在其 Qwen3-8B 和 reward 
 Policy 与 skill bank 同时训练时，历史成功还混合了 policy 自身变强和 skill 的辅助作用。一个有条件的维护接口在同一任务、同一当期 policy 下，把 rollout group 分成有/无 skill 两半：task-level guidance 使用两组成功率之差，step-level guidance 使用所在轨迹的结果减无注入基线均值，再以平滑更新维护效用。效用与语义相关性共同决定下一次检索和容量淘汰，并给新 skill 一段保护期；验证时冻结库，避免把验证轨迹继续写回训练经验。这使 bank 的维护参照随 policy 演进，而不是把旧分数永久当作新 policy 的能力证书。
 
 这种比较仍是有限采样 proxy：同 policy 不代表相同环境路径，同轨迹多个 step skills 共享结果也不识别单个 skill 的因果贡献。`arXiv:2603.28716v1` §3/§4 的有限 ALFWorld/WebShop 对照支持联动维护，但 best-over-run validation、任务反退与弱模型失败限制其迁移；shaping 还改变 policy 的训练回报，不能以效用上升证明原任务或自动编辑安全。额外基线 rollout、反思模型、索引与库维护、检索和回归全有成本；policy/任务人口或技能前提变化时重估、冻结或回退静态库，执行资格仍由前述独立验证和当前 workflow 判断。<!-- source-family:SF-2026-ARXIV-2603-28716 -->
+
+即使policy权重冻结，持续追加的context-specific skill也可能被后期更难的自造任务带偏，因此最新版本不自动优于历史版本。一个受限选择接口保留每轮成功与失败的代表性probe，循环结束后冻结同一组probe，让各历史skill版本重新作答，再共同检查困难项收益与原有容易项保持；选中版本绑定context、policy和judge身份，而非只发布最终文件。[Ctx2Skill的局部回放对照](https://arxiv.org/html/2604.27660v1)支持比较这条分支，不使其乘积选择分数成为无退步保证；由同一模型系统生成并判分的probe仍可能共享偏差，也不能认证未见任务或独立事实。候选保存、跨版本重答、判分和部署skill额外prefill均计费，原context并未因此消失；标签、任务人口或版本兼容失配时，回到已验证旧skill、固定人工规则或无skill基线，不让一次自评胜出直接获得执行权限。<!-- source-family:SF-2026-ARXIV-2604-27660 -->
 
 Memory policy 本身也可能成为可学习、可版本化的 procedural asset。固定 write/update rule 易审计，却难适应不同 interaction pattern；直接让 Agent 自由改写 memory 又会放大偶然成功、prompt injection 与自确认。中间路线是把每项 memory skill 拆为 applicability condition、extract/update procedure、source episodes 与验证结果：
 
@@ -1836,6 +1842,12 @@ GUI routine 也可以被编译为可搜索 transition graph，避免每屏从头
 两条分支分别用 graph drift/错误合并与 delayed-credit bias 换取适应性；有限 conversation/long-memory benchmark 和 LLM judge 不证明生产长期状态可靠。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-27906` — May02补May1，v1§5/6/8/9必要层，6分，write阶段责任缺口深入；schema非truth、flat反侧、symbolic成本非实测保留。未核artifact/复现；非writer D11必要Source/owner/逐字PRE通过，root窄写本段与本人note，非writer D12实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
+
+- `SF-2026-ARXIV-2604-27660` — Daily2026-05-02补May1；v1§3/4.1–4.3/B，2+1+2=5，历史skill×冻结easy/hard回放选择差额深入；保原context、共同Judge、非等预算与全费用，不授无退步或独立真值；未核artifact/复现。R63非writer必要Source/owner/逐字PRE通过，root仅授本单段+本人注窄lease，已真实保存，R66非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；作者仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27283` — Daily2026-05-02补May1；v1§2–5，2+2+2=6，pattern/variant/episode与non-injection/override差额深入。保无LLM烟测、proxy/真实修复、静态零FP及反馈污染；不授bandit唯一因果/SLO/安全。未核artifact/复现；reader R36必要Source/owner/逐字PRE通过，root授本单段及本人注窄lease；作者已实际保存，reader非writer实际正文/完整两侧/本人注POST R37通过，root接纳并释放本窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
 
 - `SF-2026-ARXIV-2604-21144` — Daily2026-04-25补Apr24；[exact-v1](https://arxiv.org/html/2604.21144v1) §3–7/T1–2/Fig5/7必要机制/主控/直接反侧，2+2+2=6。生成场景记忆的POV/可描绘与命题分工具体差额深入；生成图非新观察、自验证非truth，检索关系遗漏与全费近文。非作者supp_apr25_review_fresh actualSource/owner/PRE有效，root字面/插点通过授两段＋本人注窄lease；作者已保存，非writer已实际顺读新正文、完整前后与本人注及限定diff，POST通过，root接纳释放本窄lease；作者仅行政同步并实际读回；未核代码/复现，不授DAY。
 

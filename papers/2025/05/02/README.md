@@ -7,17 +7,22 @@
 **冻结候选日期：** [原报告](../_sources/daily-20250502/baseline-before-supplement-20261007.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-11T11:19:39+08:00
+**检查时间：** 2026-10-16T13:28:57+08:00
+**本轮修复基线：** [2026-10-16修复前完整报告](../_sources/daily-20250502/baseline-before-repair-20261016.md)，不覆盖20261007旧基线；旧27完整行/日期/评分/window保持。旧§4整体原件保于baseline，当前首段按root点名纠正旧时点；AMIE起及原26篇证据连续原块保持，不声称当前整节§4仍等于原hash。
 
 ## 1. 结论
 
+2026-10-16修复完成：[root唯一独核](../_sources/daily-20250502/REPAIR_REVIEW_20261016.md)§20已实际完整六节独核通过，现据既成裁决保存完成态。原14项及另八项May1日证/窄准入已核；14中21303/21205/21228为[May1既有事件](../01/README.md)，只保必要证据修正、不重复列新家族。当前27冻结+11非重复+8具名恢复=46家族。本轮19新增中16项受限Source通过，LIFT/Covert/DEEVISum三项中心争议暂缓；已接纳实际整合9、具体已有覆盖7。Coyote/CoCoDiff/Essay三个新段及完整两侧/本人注已root§19实际POST通过并释放，本人注已同步，无Books余锁。CachePrune Ch72有效书改归May1既有事件修正，不重复计新增。root§10的50个v1为Apr30公告、May1窗前；§12已接纳十跨日有限隔离和LIFT首次5分。当前普通研究/Books待办无；必要日期、历史来源和三争议保留不正面采用、不宣无遗漏。root§21已实际完成态读回接纳；本日报停止写入，不自行修改共享计数。
+
 原26家族保留原公开日2025-05-02、原评分、精确版本有效审阅及已有覆盖决定；原321=26+295只属于旧inventory，不是补查分母，不继承旧完成结论。
 
-14个每日源实际重新访问，历史恢复限制逐源隔离；4个有界arXiv具名主题134次出现去重为110完整当前题摘：root实际读18个具名exact-v1 core并通过五新关闭，当前校准74P/36C，均非确定May1候选。LIFT保留P及中心梯度实现争议，不因争议改C/降分。Anthropic仅产品可用性贡献前关闭；AMIE May1官方事件准入及5分已获root通过，Meta Cutouts和OpenAI事故维持关闭/操作反侧。Google Pubs另实际恢复2025+language model首页15/37目录身份，日期搜索0条不作无遗漏。没有catchup或全年正文队列。
+20261007/11旧层实际访问14个每日源，本轮复用身份/采用命题/停止范围未变的观察，不声称重新访问全部14源。原4个有界arXiv主题134次出现去重110题摘和18个必要exact-v1 core有效层保留；原74P/36C中Manicod/CoCoDiff因具名评价时点/训练消费者接口重开两项，现76P34C，不动其余108。原74身份日期仍按50窗前v1/14同日/10跨日分责，另六新身份不吞入110。八项不是继承May1整池或current摘要：只交接精确原件/日证，固定v1必要Source逐篇核；Sparse唯一TRAIN-PRETRAINING/Ch28而非Ch24，Coyote跨host/FPGA接口6分，DEEVISum不造正面覆盖。机构有限处置复用，Google Pubs首页15/37主题目录与日期搜索0条不授无遗漏；没有catchup或全年正文队列。
 
-**本轮补查及独立整日复核通过，按带隔离保留项的安全终态完成。** LIFT中心争议隔离、AMIE受限标准及Ch81具体已有覆盖、Google Pubs有限恢复复用[第三批有效裁决](../_sources/daily-20250502/review-supplement-20261007.md#第三批本轮内容闭合冻结日期校验仍未通过)，兼容修正和六部分最终验收见[本轮独核](../_sources/daily-20250502/compatibility-review-20261011.md#最终独立裁决)。新增确定候选/标准审阅完成/具体已有覆盖各1，实际Books写入0；74日期潜力和历史来源缺口继续隔离，不正面采用、不授全Coverage/Evidence或无遗漏。用户于2026-10-11明确允许窄范围校验兼容及回归测试，30项测试和本日V3通过，原26日期/评分/审阅/owner及52正文块保持；没有把静态通过替代独立语义验收。
+20261007/11通过记录仅属历史；有效研究层沿[原裁决](../_sources/daily-20250502/review-supplement-20261007.md)和[历史兼容复核](../_sources/daily-20250502/compatibility-review-20261011.md)定点复用，不沿用旧74统一日期隔离或旧日级完成。当前判断以本六节和本轮唯一root记录为准。
 
 ## 2. 来源覆盖
+
+下表机构来源及发现请求为20261007/11旧有效层复用，不继承旧日期隔离/全覆盖/日级完成。原14同日中3D归May1，11非重复含9有限Source/两争议；另八件精确May1日证恢复后七有限Source通过/一中心争议。root§10一次限定50 DOI关闭其v1本窗资格，§12接纳十跨日的有限原始事件恢复/精确隔离，不能用登记晚或搜索空排窗。只定点承接八身份、不重扫机构全站/110全文；实际日期、版本角色和Source边界见[修复包§25–39](../_sources/daily-20250502/REPAIR_20261016.md#25-八个已知may1事件定点承接非重扫may1池)及root§12–18。
 
 本轮仅每日组，无每周全站扫描。实际URL、请求参数、UTC执行时刻及原件见[同日补查](../_sources/daily-20250502/supplement-20261007.md)和[请求索引](../_sources/daily-20250502/supplement-20261007/request-index.md)；当前目录/失败/越界空响应均不作为历史零命中。
 
@@ -36,11 +41,13 @@
 | SRC-BAIDU-ERNIE | 技术博客首页和page2日期导航读到最早Jun30 2025，停止page2；没有恢复May1，不扫repo全历史。 | 受阻 | 最早当前保留条目不是源成立日；需要May1官方论文/技术博客列表，不写不适用。 |
 | SRC-XIAOMI-MIMO | 官方首页current首newsMay12及官方MiMo README当前HEAD，用于身份/日期导航，未冻结代码版本；停止首页+README。 | 受阻 | 未恢复May1历史发布，不将Apr30已知身份静默搬入本日。需要May1官方变更/发布快照；不能用HEAD日期证明v1。 |
 | SRC-MINIMAX | 英文/中文blog（中文官方redirect minimax.cn）可见日期段至Jan15 2025；技术blog官方页当前仅May13 2026，止本页。 | 受阻 | 当前保留博客日期片段没有May1行，不代表全部研究release无事件；无零命中/不适用推断。 |
-| SRC-ARXIV | 4具名Advanced主题：language model；LLM AND inference；vision language OR world model OR video generation；agent AND LLM。CS含crosslist，first-submitted Apr29～30仅发现，size100，announced_date_first；model101按start0/100读完，systems10/multi11/agent12单页读完；134出现→110唯一完整题摘，root校准74日期隔离潜力+36关闭，非formal；LIFT另保留中心机制争议。官方月表cs.DC May skip0/show25只浏览标题到#8；cs.CL Apr skip1500/show100只浏览到#1506，不扫全分类。 | 受阻 | 公告年月/提交不是May1公开日期。API模型total187首100未筛选不分页；错误400/404/越界空列表均不作阴性；宽May2提交query已收窄而非转待办队列。CaGR-RAG从月表定点读题摘，v1提交May2只作窗外线索，不计本窗候选。 |
+| SRC-ARXIV | 原4具名Advanced主题/有限月表停止范围复用，134出现→110题摘；原74P36C中具名两C重开为76P34C、其余108不重。原74日期=50 v1 Apr30窗前/14 May1同日/10跨日；14中3D。另八May1身份仅精确交接原件/日证并各核v1必要Source，六新身份不混入110。root§10/12–18及修复包§23–39可查。 | 受阻 | 十跨日外部保留已root§12接纳，不把月粒度Advanced误作日证，旧API失败不重试；另三v2只轻核必要修订信号、不借v1界。目录/失败/未筛首100不支持全主题召回或无遗漏，不将50 v1窗前扩成全family无事。 |
+
+本轮非arXiv来源只复用身份/事件/停止范围未变的旧有效层，具体恢复入口见[修复包§5](../_sources/daily-20250502/REPAIR_20261016.md#5-来源恢复只沿本日旧范围)。AMIE冻结候选及受限Source/已有覆盖保持；Anthropic产品可用性、Meta Cutouts与OpenAI事故的有限关闭不因日期方法改变而升级。MiniMax模型与独立Agent入口分责，Hunyuan正确API当前2026与错误host/浏览器失败分开；其余历史必要段缺失仍不授全覆盖。没有本轮重访全部14源的声称，也没有为补新增扩多源全池。
 
 ## 3. 候选与判断
 
-旧26行公开日/评分/审阅/Books决定保持原值。Anthropic原拟准入已关闭；新增AMIE是May1官方博客事件，准入5分、受限标准证据及Ch81具体已有覆盖均已独核通过。74日期未定潜力仅放§5，不用submitted或后出论文搬日。
+旧27完整行（原26论文及AMIE）冻结。本轮14 May1日证=3D+11，另八已知May1事件与现表无重复，当前46行；19新增=16受限Source通过+三中心争议。LIFT首次2+1+2=5已root§12接纳，非降低旧分或Source通过；DEEVISum同保5分争议，不强造书改。50窗前v1/十日期隔离/后版事件分别保留。Manicod/CoCoDiff重开只影响旧C两项，依据见各自§4，非因领域名或更高指标准入。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -72,12 +79,31 @@
 | [Rethinking Memory in LLM based Agents: Representations, Operations, and Emerging Topics](https://arxiv.org/html/2505.00675v1) | 2025-05-02 | 把 agent memory 从 storage taxonomy 重构为 parametric/contextual representation 与 consolidation、updating、indexing、forgetting、retrieval、condensation 六类显式操作，使 lifecycle 风险能落到具体 transition。；2 + 2 + 3 = 7（原评分冻结） | 深入完成 | 已有覆盖 `AGENT-MEMORY` [章节](../../../../books/part-07-agent/77-memory.md#L1185)；原决定不动 |
 
 | [AMIE gains vision（May1官方事件）](https://research.google/blog/amie-gains-vision-a-research-ai-agent-for-multi-modal-diagnostic-dialogue/) | 2025-05-01 | 隐式对话追踪→state/knowledge gaps驱动phase目标判断及主动请求观察→比较状态控制/过早停止边界；2 + 1 + 2 = 5（准入/评分已独核通过） | 标准完成 | 已有覆盖 `AGENT-WORKFLOW` [Ch81具体正文](../../../../books/part-07-agent/81-workflow.md#clarification-与-workflow-level-speculation-都是有损-admission)；§4受限标准及具体已有覆盖已获root第三批通过，无共享写入 |
+| [Talk Before You Retrieve: Agent-Led Discussions for Better RAG in Medical QA](https://arxiv.org/html/2504.21252v1) | 2025-05-01 | 相似/事实正确片段仍可不适用于当前问题→需求构造与答案核验分开，并保负判fallback及额外费用；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `AGENT-RAG` [Ch76具体query-side链](../../../../books/part-07-agent/76-rag.md#文档结构查询改写与答案核验必须分层消融)及query约束/sufficiency；root已实际接纳No Change |
+| [Pretraining Large Brain Language Model for Active BCI: Silent Speech](https://arxiv.org/html/2504.21214v1) | 2025-05-01 | 重叠信号局部重构的shortcut假设→完整未来窗口移出输入并联合时域/频域target→比较目标及conditioning替代；2 + 1 + 2 = 5 | 深入完成 | 整合 `TRAIN-PRETRAINING` [Ch28受限目标分支](../../../../books/part-04-training-system/28-pretraining.md#更多-context-可能降低知识写入参数的压力)；root实际非writerPOST通过/接纳并释放，非日级 |
+| [Phi-4-Mini-Reasoning: Exploring the Limits of Small Reasoning Language Models in Math](https://arxiv.org/html/2504.21233v1) | 2025-05-01 | prompt长度预筛/困难题过采样与组内正负重平衡改变retained population；条件化归一/全费及回退分责；2 + 1 + 2 = 5 | 深入完成 | 整合 `TRAIN-GRPO` [Ch33 DAPO分支](../../../../books/part-04-training-system/33-grpo.md#dapo-把朴素-grpo-的运行失败拆成四处修补)；root §6实际POST接纳并释放，非普遍recipe/日级 |
+| [Efficient LLMs with AMP: Attention Heads and MLP Pruning](https://arxiv.org/html/2504.21174v1) | 2025-05-01 | 校准输入下head/MLP结构重要性选择须与物化、恢复训练及实测速率分责；两分数不同，不授参数减幅即服务收益；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `INFER-TENSORRT-LLM` [Ch49结构物化](../../../../books/part-05-inference-system/49-tensorrt-llm.md#静态图可以固定接口而不必固定每个-adapter-值)及全成本/回退；root实际当前对读后接纳No Change |
+| [Memorization and Knowledge Injection in Gated LLMs](https://arxiv.org/html/2504.21239v1) | 2025-05-01 | 逐记忆LoRA由base query表示全局门控，必须另核gate取得与adapted forward/KV时序及容量费用，不推定免费单次前向；2 + 1 + 2 = 5 | 深入完成 | 整合 `TRAIN-LORA` [Ch30参数记忆分支](../../../../books/part-04-training-system/30-lora.md)；root §9实际POST接纳并释放 |
+| [GLIP-OOD: Zero-Shot Graph OOD Detection with Graph Foundation Model](https://arxiv.org/html/2504.21186v1) | 2025-05-01 | 真实OOD类名/仅ID名/LLM提名伪OOD名是不同输入支持，零目标训练不等无语义先验；保评价身份/ID退步；2 + 1 + 2 = 5 | 深入完成 | 整合 `PLATFORM-EVALUATION-SYSTEM` [Ch66标签支持分支](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；root §9末实际POST接纳并释放 |
+| [BiasGuard: A Reasoning-enhanced Bias Detection Tool For Large Language Models](https://arxiv.org/html/2504.21299v1) | 2025-05-01 | 规范条件下按最终标签筛teacher轨迹后SFT，再采样正确/错误作DPO；固定SFT reference不等PPO，标签不授理由忠实或规范真值；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `TRAIN-DPO` [Ch34 pair/criteria/reference分责](../../../../books/part-04-training-system/34-dpo.md)；root §9具体No Change通过 |
+| [Covert Prompt Transmission for Secure Large Language Model Services](https://arxiv.org/html/2504.21311v1) | 2025-05-01 | 压缩/变换与传输约束联合设计有窄潜力，但token映射可逆性、索引及KL声称存在具体冲突；2 + 1 + 2 = 5 | 争议 | 暂缓 `PLATFORM-SECURITY` Ch72；root §8保5分安全中心争议，不作Source通过或写书，重开条件见§4 |
+| [Graph Synthetic Out-of-Distribution Exposure with Large Language Models](https://arxiv.org/html/2504.21198v1) | 2025-05-01 | 识别可见节点伪OOD与给定OOD类名合成节点是不同训练支持，是否构边另分责；不由合成量授自然OOD覆盖；2 + 1 + 2 = 5 | 深入完成 | 整合 `TRAIN-DATA` [Ch27 exposure分支](../../../../books/part-04-training-system/27-data.md)；root §11完整实际POST通过并释放 |
+| [Birdie: Natural Language-Driven Table Discovery Using Differentiable Search Index](https://arxiv.org/html/2504.21282v1) | 2025-05-01 | 固定base/逐批FFN LoRA隔离后各自beam，只选一个候选分支；容量/选择错误与串行/复制base费用替代参数遗忘；2 + 1 + 2 = 5 | 深入完成 | 整合 `AGENT-RAG` [Ch76参数索引分支](../../../../books/part-07-agent/76-rag.md)；root §11实际POST通过并释放 |
+| [LIFT: LLM-Based Pragma Insertion for HLS via GNN Supervised Fine-Tuning](https://arxiv.org/html/2504.21187v1) | 2025-05-01 | 结构监督与token CE结合有窄潜力，但离散pragma/编译/图构造后GNN MSE回传LLM路径未闭合；2 + 1 + 2 = 5，root§12首次评分通过 | 争议 | 暂缓 `TRAIN-SFT` Ch29；日证/分数不解除中心争议，不作Source通过/写书，精确重开见§4 |
+| [Early Exit and Multi Stage Knowledge Distillation in VLMs for Video Summarization](https://arxiv.org/html/2504.21831v1) | 2025-05-01 | 多阶段蒸馏/early-exit预算有潜力，但中间head/prototype获得、summary标签与计时口径未闭；2 + 1 + 2 = 5 | 争议 | 暂缓 `INFER-TENSORRT-LLM` Ch49；root§15保分/中心争议，不授Source或正面已有覆盖 |
+| [AdaR1: From Long-CoT to Hybrid-CoT via Bi-Level Adaptive Reasoning Optimization](https://arxiv.org/html/2504.21659v1) | 2025-05-01 | 组正确率选择style再构pairs，不授chosen逐条正确，须分开pair事实方向、generator/reference及费用；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `TRAIN-DPO` [Ch34事实关系/相对质量](../../../../books/part-04-training-system/34-dpo.md#preference-pair-需要先验证事实关系)；root§18具体No Change通过 |
+| [Precision Where It Matters: A Novel Spike Aware Mixed-Precision Quantization Strategy for LLaMA-based Language Models](https://arxiv.org/html/2504.21553v1) | 2025-05-01 | 局部spike使精度格式与投影位置需按架构选择，动态范围不授质量/执行收益；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `INFER-TENSORRT-LLM` [Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)具体角色/层段/敏感矩阵与kernel边界；root§13通过 |
+| [Coyote v2: Raising the Level of Abstraction for Data Center FPGAs](https://arxiv.org/html/2504.21538v1) | 2025-05-01 | 模型compiler产物接入可重配置shell/host stream，编译/搬运/执行分责；baseline混杂不授普遍LLM速度；2 + 2 + 2 = 6 | 深入完成 | 整合 `INFER-TENSORRT-LLM` [Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)指定单段；root§19实际POST接纳并释放 |
+| [Sparse-to-Sparse Training of Diffusion Models](https://arxiv.org/html/2504.21380v1) | 2025-05-01 | 从头mask/prune-regrow改变训练拓扑/质量预算，非生成factorization；无支持kernel时FLOPs不等真实加速；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `TRAIN-PRETRAINING` [Ch28 Dynamic Sparsity](../../../../books/part-04-training-system/28-pretraining.md#dynamic-sparsity-的-topology-update-也是-training-state-transition)；root§18通过，Ch24只保采样交接 |
+| [Does the Prompt-based Large Language Model Recognize Students’ Demographics and Introduce Bias in Essay Scoring?](https://arxiv.org/html/2504.21330v1) | 2025-05-01 | 推断人口的识别覆盖/条件误差不能混总体，观察关联/IPW不授因果；T3限制正文普遍QWK说法；2 + 1 + 2 = 5 | 深入完成 | 整合 `PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#平均值切片与不确定性)指定单段；root§19实际POST接纳并释放 |
+| [CoCoDiff: Diversifying Skeleton Action Features via Coarse-Fine Text-Co-Guided Latent Diffusion](https://arxiv.org/html/2504.21266v1) | 2025-05-01 | fine描述条件去噪/coarse多正对比两消费者，Stage2联训/推断移除辅助；KL标签未闭/λ与T反退；2 + 1 + 2 = 5 | 深入完成 | 整合 `MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)指定单段；root§19实际POST接纳并释放 |
+| [Detecting Manipulated Contents Using Knowledge-Grounded Inference](https://arxiv.org/html/2504.21165v1) | 2025-05-01 | 原news标签、后检索网页及模型prior时点冲突限制detector归因，检索来源真值是待核假设；2 + 1 + 2 = 5 | 标准完成 | 已有覆盖 `PLATFORM-EVALUATION-SYSTEM` [Ch66 Dynamic Reference](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#dynamic-reference-必须与-agent-共享同一-live-state)及时间/OBS边界；root§18通过，不强Ch76 |
 
 ## 4. 证据与知识整合
 
 ### 本轮具名改判
 
-root已实际完整首读110题摘及机构core，并实际读18个具名exact-v1 core及AMIE §2.1/C.3/C.4，通过五P→C与AMIE准入5分。当前74P/36C、110分母不变且非formal；[首裁决原件](../_sources/daily-20250502/review-supplement-20261007.md)不由作者改写通过。LIFT按最新R1明确为中心可微实现缺口：离散pred→compiler→ProGraML→冻结GNN的loss不能仅因加CE就回传LLM，明确不采用“GNN监督已直接更新LLM”；保留P/争议，重开须可接受surrogate、gradient estimator、implementation或不依赖该声称的证据，不能改C/降分绕过。其余未受影响18不重读。LIFT隔离已获root第三批通过。实际写回见[差额](../_sources/daily-20250502/core-revisions-20261007.md)，未授DAY。
+root已实际完整首读110题摘及机构core，并实际读18个具名exact-v1 core及AMIE §2.1/C.3/C.4，通过五P→C与AMIE准入5分。旧轮时点为74P/36C、110分母不变且非formal；当前仅Manicod/CoCoDiff两具名C重开后为76P34C，不动其余108；[首裁决原件](../_sources/daily-20250502/review-supplement-20261007.md)不由作者改写通过。LIFT按最新R1明确为中心可微实现缺口：离散pred→compiler→ProGraML→冻结GNN的loss不能仅因加CE就回传LLM，明确不采用“GNN监督已直接更新LLM”；保留P/争议，重开须可接受surrogate、gradient estimator、implementation或不依赖该声称的证据，不能改C/降分绕过。其余未受影响18不重读。LIFT隔离已获root第三批通过。实际写回见[差额](../_sources/daily-20250502/core-revisions-20261007.md)，未授DAY。
 
 ### [AMIE gains vision（May1官方事件）](https://research.google/blog/amie-gains-vision-a-research-ai-agent-for-multi-modal-diagnostic-dialogue/)
 
@@ -359,30 +385,142 @@ shortcut 分析与缓解绑定论文模型、模板和攻击；没有证明重�
 
 这是 survey/taxonomy，不是对六个操作统一实现或 benchmark 的 primary validation；所列 tools 与未来方向不能升级为跨系统性能结论。 对照目标及相邻章节后，增量未越过长期机制门槛，决定为 `No Change — Existing Coverage`。<!-- books-review:SF-2025-AGENT-MEMORY-OPERATIONS:end -->
 
+### [Talk Before You Retrieve: Agent-Led Discussions for Better RAG in Medical QA](https://arxiv.org/html/2504.21252v1)
+
+精确v1及[完整角色/日证](../_sources/daily-20250502/REPAIR_20261016.md#7-获授权后的首批实际恢复交-root-亲核)已root实际核准May1公告日；不是submitted或registered单字段断言。复用本日原v1 §2–4/6，采用事实正确/主题相似仍不适用当前问题的局部反侧，以及不直接答题的需求构造、后置片段判定和fallback。四个离线QA、相同textbooks/MedCPT/gpt-3.5条件没有隔离两模块/等总调用预算，不采用医疗效果或摘要收益。Ch76实际79–98、675–727、752–769及866–895承载需求表达、答案支持/适用性和全费用分责；作者实读后root亦实际读回认可已有覆盖，不写Books。
+
+### [Pretraining Large Brain Language Model for Active BCI: Silent Speech](https://arxiv.org/html/2504.21214v1)
+
+May1日证及v1 §3.1/3.3/4.2的窄准入/5分和objective/可见性替代已root实际通过，May3 v2不回填v1。只采用重叠patch重构与完整移出未来窗口、联合wave/amplitude/phase目标的替代选择；不授全部shortcut已消除、分类收益因果或医疗效能。Ch28现有NTP/MLM/future-token目标不等于已承载连续信号这一具体压力，作者实际对读后形成单段PRE，root已读原源/完整邻接并授窄许可。该段、source-family marker与本人末note已实际保存并顺读，root实际读回新正文/完整两侧/本人注及前注和5新增0删diff，非writerPOST通过、接纳实际整合并释放窄锁，实存唯一REPAIR_REVIEW§2；[实际保存与POST](../_sources/daily-20250502/REPAIR_20261016.md#85-实际保存与作者顺读非作者post待root)指向Ch28受限分支及SF-2025-ARXIV-2504-21214本人注；作者仅同步已发生行政并实际读该条，不重复Source/正文或收据。
+
+### May1既有事件必要证据修正：21303 Bayesian
+
+原事件归[May1报告](../01/README.md)，不是本日新增候选；本次更正下述采用范围，不改原行/原评分。原review的prior/anchor/选题偏差边界可复用，但泛称pairwise/judge不能替代本文已知答案QA上的锚点响应率测量。
+
+May1日证及受限准入/5分由root实际核准；新保存exact-v1 §2–4/讨论必要域支持逐题锚点响应率、端点平均/混合和条件独立的计算分支，不授calibration superiority。uniform theta不是无假设客观，Eq4依赖线性插值，Eq6端点binomial混合不等于连续theta上的积分；同题筛选/定锚/排序/估后验、首M题非随机减题，都限制coverage解释。更尖后验或重叠误差条不是覆盖率验证，6×50×10=3000前期anchor响应与在线少题/重估成本分账；未披露precision/decoding/服务费用不补齐，HTML讨论尾部结构异常不授未读尾段全部可用。作者实读Ch66 435–461、521–550、1055–1082、1742–1762和4584–4612，条件后验、独立推断、选题/全锚费用及失效回退已有具体正文；root亦实际读关键局部接纳No Change。仅采用的长期边界已有覆盖，不声称现文已有本稿Eq4/6配方或算法优越，不改Books。
+
+### [Phi-4-Mini-Reasoning: Exploring the Limits of Small Reasoning Language Models in Math](https://arxiv.org/html/2504.21233v1)
+
+May1公告日、受限准入/2+1+2=5及v1 §2–4/5.3/5.5已root实际通过。仅采用sample-admission分支：长度预筛prompt、困难题过采样、保留正reward并等量抽负reward和temperature退火，不复制四阶段完整recipe。若在保留组内重算mean/std，其描述保留人口而非原始独立rollout人口；原文未完整披露顺序，不替作者补实现。联合recipe及局部DAPO退步不隔离各操作因果、不授无偏或普遍稳定；teacher/再核、丢弃rollout、长生成、调温和前阶段费用都在。作者实际对读Ch33后形成具体gap/PRE，root已实际顺读保存新段/完整两侧/本人注与前注及限定5新增，非writer POST通过并释放，唯一REPAIR_REVIEW§6实存。本人注只同步既成事实，不改正文/他注或重Source。
+
+### May1既有事件必要证据修正：21205 SecRepoBench
+
+原事件归[May1报告](../01/README.md)，不计本日新增。旧泛段的unit tests非完整安全边界仍有效，但原冻结标题混入Code Agents/Completion，不是本v1的LLMs/Generation；repair trace泛述不代下述两个oracle与采样配置事实，原行保留由原报告块后补正。
+
+May1日证、窄准入及2+1+2=5已root通过；标准Source实际到v1 §2.1/3.1–3.2/5.1–5.2/5.7.3/6。secure仅已知OSS-Fuzz触发输入不crash，secure-pass再与相关developer tests功能通过取交集；单函数/C/C++/可复现crash及至少一个通过测试均是筛选人口。名称mutation不证明语义污染全消除；repository与self-contained排名错位同时受CWE、上下文、greedy与部分榜单temperature0.4/10样本等影响，不授context独因果/普遍排名或全漏洞安全。原tests对新生成代码泛化仍有假设，构建/动态测试/context/生成与审校均计费。作者实际读Ch66 70–115、1742–1788、2340–2395、4065–4083及4956–4978，root又实际核五层成功/交集和真实Contract局部，接受具体已有覆盖No Change；不写论文榜单或新增Book note。
+
+### May1既有事件必要证据修正：21228 CachePrune
+
+原事件归[May1报告](../01/README.md)，不计本日新增。旧review的attribution不是真值/效用回归可复用；旧eviction/pruning泛段及state/evidence/authority式No Change没有承载本v1的KV特征维度mask。下述受限深审与Ch72真实整合保留为原事件必要修正，不撤有效书稿，也不追改旧评分/日期。
+
+May1日证/准入与2+1+2=5已root通过，安全受影响Source实际到v1 §2/4.1–4.2/5/T1–4。只采用已知context span的非测试clean/poison参考归因、跨token max与KV维度mask；Eq5字面sup不能直接作有限可执行阈值，不采用完整阈值recipe/理论保证。前缀trigger代理未覆盖回答末尾注入效应，两模型有限QA/修改WildChat仍有clean F1或quality弱于对照，不授全面无损、权限认证或开放攻击免疫。参考、生成、forward/backward、mask与回归全费。Ch72现有为attention-logit重写/整层bypass而非该KV维度分支，root实际核具体gap/PRE后授窄位；作者真实保存并顺读，root实际完整新段/两侧/本人注及前注和5增0删diff POST通过接纳、释放，唯一REPAIR_REVIEW§6末实存，本人注仅行政同步并读回。
+
+### [Efficient LLMs with AMP: Attention Heads and MLP Pruning](https://arxiv.org/html/2504.21174v1)
+
+May1日证、准入/2+1+2=5与受限Source已root通过；实际原v1 §III–V/Alg1/T1–3域见修复包§14/16。MHA分数包含output投影，MLP gate/up乘积未乘down，两者不补成同一度量。校准、恢复微调及完整测量付费，Phi质量反侧及有限batch1 latency不授跨硬件SLO，Green/费用为估算非生产证据。作者实读Ch49 15–38/78–96及Ch48/50分工；当前结构代理→成对投影/FFN物化→后端资格、质量回归与全费/回退已有具体承载，root实际读78–100接纳No Change。不声称书内逐式已有AMP公式，不新增同义段或note。
+
+### [Memorization and Knowledge Injection in Gated LLMs](https://arxiv.org/html/2504.21239v1)
+
+日期/受限Source/5分见root§5/7；v1 §3.2–3.5/4.3–4.5/5/T1–2支持逐记忆LoRA及base query全局gate对完整低秩增量加权，不是分别相加A/B后相乘。gate来自base近末层，但消费者为adapted权重，原文未闭合同一次prefill复用适配后states/KV；不照录无额外计算、不发明已实现单/双pass。每记忆adapter/key、混合、制备/iRAG生成、线性容量及干扰费用保留，单模型小数据和四类MMLU不授全能力保持/脑机制。当前Ch30程序bank及Fisher之间的实际差额已按许可写入，root§9完整新段/两侧/本人注及限定diff实际POST接纳并释放；本人注只同步既成事实。
+
+### [GLIP-OOD: Zero-Shot Graph OOD Detection with Graph Foundation Model](https://arxiv.org/html/2504.21186v1)
+
+root§8受限v1 §3/4.1–4.2/T1/4.5及5分通过。采用真实OOD名、ID-only与从可见全图提名伪OOD名的支持分责，不授零先验/自然OOD或安全真值；Eq5未闭合归一不作概率recipe，LLM分支并非普胜、ID可退步，评价设置中的labeled-OOD validation不认证所有部署分支。GFM/编码、可见节点、类别切分/提名聚合及全费近文。Ch66当前representation/detector之后真实新增这一窄分支，root§9末实际完整正文/两侧/本人及前Noether注POST通过并释放；不再待POST或新Source。
+
+### [BiasGuard: A Reasoning-enhanced Bias Detection Tool For Large Language Models](https://arxiv.org/html/2504.21299v1)
+
+root§8实核v1 §2–4/T1及5分；teacher按最终标签筛SFT，再从SFT高温采样正确/错误作DPO，reference是SFT而不是另一个“teacher答案”。Eq1未显式规范s不补实现；标签正确不认证理由忠实/规范真值，仅三项accuracy最佳，SBIC/Toxigen及OF误正例分母保留。四/八轨迹、规范/teacher、训练与独立评价均付费。作者实际读Ch34 140–158/269–318，root§9再读连续完整局部，确认pair/criteria、生成policy/reference policy、final-correct/step-coherence及全费已有具体承载，已有覆盖No Change，不改书或新增note。
+
+### [Covert Prompt Transmission for Secure Large Language Model Services](https://arxiv.org/html/2504.21311v1)
+
+root§8实际原v1 III-D/IV/V-A–B/VI-A–B支持窄潜力但中心安全争议，维持2+1+2=5/Books暂缓，非Source通过。Eq33按token值取offset不保证一一映射，V=3、o0=1/o1=0会碰撞；Alg2 L′与词表索引、示例的位置offset未统一，permutation不能逆转已碰撞值，不据此断言作者代码必同错。小预算head/tail后TopK可负，surprisal非任务重要性；无线不可检出、保密与任务质量不能互授。best-of-group改变行为分布、单点log-ratio非KL、γ=0不授长期推理，VI误称GRPO无KL及μ复用保留。重开需精确变换/逆过程、威胁模型和决定结论的必要实现/评价澄清，不为作者修算法，不以日期通过解除争议或进入Books。
+
+### [Graph Synthetic Out-of-Distribution Exposure with Large Language Models](https://arxiv.org/html/2504.21198v1)
+
+root§8实际v1 §3–5/T1–4/Limitations受限Source/2+1+2=5通过。identifier只给ID类名、在可见全图提名伪OOD；generator获得OOD类名、生成文本并按声明规则选择是否构边，训练消费者不同于GLIP推断候选空间。transductive/类别先验、labeled-OOD validation、符号方向未闭合不作recipe、ID退步和binary结果未全报均保留；生成、编码/可选构边、训练与校准全费。Ch27合成入口之后真实新增该窄分支，root§11实际完整新段/两侧/本人及前注POST通过并释放，非自然OOD/安全保证；本人注仅行政同步。
+
+### [Birdie: Natural Language-Driven Table Discovery Using Differentiable Search Index](https://arxiv.org/html/2504.21282v1)
+
+root§8实际v1 §2–3/4.1/5.2/6.1/6.4/T6受限Source/5分通过。固定base后逐批FFN LoRA、各分支beam、synthetic-query pool只选一个分支，不是候选全融合/混权重。原串行延迟与并行完整base副本显存随分支数增大，单base多LoRA encoder-decoder共享只是未来，不能补成已实现；三静态表集增量模拟、长表退步和P@K唯一真表命中分母不授动态删除/多表答案或无遗忘。训练/query制备、beam/选择与映射全费，保显式外部索引/原checkpoint退路。Ch76固定ID更新段后真实新增，root§11完整新段/两侧/本人及前注POST通过并释放，不由合法ID签答案有据。
+
+### [LIFT: LLM-Based Pragma Insertion for HLS via GNN Supervised Fine-Tuning](https://arxiv.org/html/2504.21187v1)
+
+日期由root本轮§3完整角色/规则联合约束核为May1；复用已独核v1 IV-B/C 130–190必要域，不重全文。潜力为图结构监督进入代码生成训练目标，本次首次2+1+2=5（Design Delta2、单训练组件Reach1、可复用结构监督边界Durability2）已root§12接纳；不是因争议降分免审。论文声称预测pragma插入C后经LLVM/ProGraML离散图、冻结HARP GNN形成embedding MSE，并与CE/latency组合用于backprop，但所核域没有闭合MSE穿过离散预测/编译/构图到LLM参数的可微连接/估计器。CE可回传不能证明结构MSE已监督生成，HLS加速数字不是LLM训练加速，也不能填这个断点。保P/中心争议/Books暂缓，不正面采用GNN监督有效性。重开仅需具名可接受surrogate、gradient estimator、实际implementation对该链的解释，或不依赖直接回传主张的独立机制证据；不要求FPGA全复现、不改C/删反证。
+
+### [Early Exit and Multi Stage Knowledge Distillation in VLMs for Video Summarization](https://arxiv.org/html/2504.21831v1)
+
+八件May1联合日证采用root§13/May1 Newton§17有效层，固定v1与后版分开，不将current元数据当v1摘要。root§15实际§3/4.1–4.3/5/6.2–6.5/T3–6，保2+1+2=5、中心接口争议/Books暂缓。28B teacher/10B mentor/3B student的局部表支持蒸馏预算取舍，却不证early-exit实现：新增中间二元head和jointly learned prototype与“不改训练/不监督head”并存，1–5输入分数到summary标签亦未闭合。cosine过阈值不能自签质量校准。
+
+15视频/20人标注的715→507秒约29.1%，不是文称21%；61.1→59.8为1.3 F1点，不是另称2.1% absolute。语言metadata/diarization反退，更大teacher非全优；硬件/精度/batch及ASR等完整费用Not Disclosed，不授服务加速。重开仅需head/prototype取得方式、标签接口与可核计时配置；不改C/降分或强造Ch49已有覆盖，不入正面Evidence/Books，详[必要域](../_sources/daily-20250502/REPAIR_20261016.md#29-deevisum-21831多教师与inference-only-early-exit有限提案)。
+
+### [AdaR1: From Long-CoT to Hybrid-CoT via Bi-Level Adaptive Reasoning Optimization](https://arxiv.org/html/2504.21659v1)
+
+root§15实际§3.2/4/5/T2–3/6.1/AppA，5分受限标准通过。长短模型组均正确率差选择style后从组间Cartesian pairs抽样，偏好组可有错误、另一组可有正确；组内最短正确对最长也不保证rejected错误。空正确集、附录采样/归一与主文K/M不闭合，不补实现；同源merge/template兼容、额外短模型训练、双模型采样/judge/reference和训练全费。八A800、2500数学题、4096cutoff/2epochs有限实验有质量反退，token减少不是实测端到端加速，关键词Thinking Ratio不认证推理深度。
+
+唯一TRAIN-DPO/Ch34；作者实际269–318与488–505，root§18具体已有覆盖通过：pair事实方向、风格/长度/内容分账、generator/reference及采样费用已近文，非以GroupDPO内存段代数据分组覆盖。不永久复制本篇未闭合recipe，无写书或新注；[实际比较](../_sources/daily-20250502/REPAIR_20261016.md#351-adar1ch34具体已有覆盖提案)。
+
+### [Precision Where It Matters: A Novel Spike Aware Mixed-Precision Quantization Strategy for LLaMA-based Language Models](https://arxiv.org/html/2504.21553v1)
+
+root§13实际§3.1–6/T1–6，5分受限标准/Ch49具体No Change通过。采用模型/投影位置条件下的局部精度分配，非固定两层通用配置；三seed随机位置对照有限，Mix+Rand命名与替代叙述不补实现。E5M2扩大范围换精度，FP8/per-token局部反退、6bit accuracy与PPL排序不同，Attention/Norm仍FP16。四模型/WikiText2/七zero-shot与2048context不授全任务无损；硬件及端到端速度Not Disclosed，校准/选址/转换和目标kernel计费，不引用intro QAT/QLoRA泛述。
+
+Ch49 1018–1097角色/格式/层段、1359–1400架构outlier与高精度退路、1474–1510敏感矩阵/真实kernel和质量分验已具体承载采用判断。层号和榜单不必变永久recipe，无新书注/写入；[Source与具体覆盖](../_sources/daily-20250502/REPAIR_20261016.md#27-21553具体已有覆盖其余七准入及两旧c定点重开)。
+
+### [Coyote v2: Raising the Level of Abstraction for Data Center FPGAs](https://arxiv.org/html/2504.21538v1)
+
+标题v2为arXiv精确v1，非修订号。root§16–17受限标准Source/2+2+2=6通过：hls4ml把受支持模型转IP，Coyote shell接入应用并负责host/搬运/执行，host stream bypass先复制HBM。神经网只为入侵检测、U55C250MHz；未优化baseline与Python→C++控制共同变化，不单归stream，更非LLM实测。MMU/credits设计不是安全/故障全证，未来ML API不冒实现；综合/bitstream/重配置、搬运/真实执行和质量回归全费，未核图像/代码/全部microbench。
+
+唯一Ch49缺这个模型产物→可重配置shell consumer界面，非HLS array→stream证明同义段。root§18指定窄许可后，一段/marker/本人注已逐字保存并顺读完整两侧，两层QA通过；root§19非writer实际新增/完整两侧/本人注POST通过，接纳并释放，作者只同步本人注既成状态。[具体差额/批准稿](../_sources/daily-20250502/REPAIR_20261016.md#36-coyote具体差额及ch49逐字pre未授锁)及[真实保存](../_sources/daily-20250502/REPAIR_20261016.md#39-root18后实际保存三段当前post可读)。
+
+### [Sparse-to-Sparse Training of Diffusion Models](https://arxiv.org/html/2504.21380v1)
+
+root§17实际§3–4/T1–3必要全域，5分受限Source通过。从头固定mask与周期MagRan/RigL prune-regrow改变训练拓扑，不改生成factorization；latent diffusion只稀疏U-Net而非dense AE，ChiroDiff另分。原硬件不支持unstructured直接加速，参数/FLOPs非实际内存/墙钟/能耗。六有限无条件数据、短epoch/部分子集、三run、单V100/A100，所列VMNIST稀疏点均弱于dense；p和增加denoising步可反退，表中归一FLOPs与文述口径不拼成本保证。拓扑/dense梯度/配置搜索及前置AE全费，未核代码或全部附录。
+
+唯一TRAIN-PRETRAINING/Ch28而非Ch24。作者实际Dynamic Sparsity 323–339，root§18顺读314–346接纳具体已有覆盖：mask/optimizer状态、物理pattern/布局及恢复训练、代理非墙钟、全费/回退已有论证；不把Adam冷启动机制冒本篇实现。Ch24只保生成采样交接，无重复书写/注；[当前对读](../_sources/daily-20250502/REPAIR_20261016.md#352-sparse-to-sparse唯一ch28非ch24)。
+
+### [Does the Prompt-based Large Language Model Recognize Students’ Demographics and Introduce Bias in Essay Scoring?](https://arxiv.org/html/2504.21330v1)
+
+root§17实际§3–5/T1–4，5分受限Source通过。六题5592篇/60%评价与40%few-shot、GPT-4o API/五改写prompt，多数属性标签与平均评分分责；具体API revision Not Disclosed。性别高准确率仅在非Uncertain的4–13%识别人口，不能报全样本；Correct对错误+Unknown改变人口，独立session/IPW不消未测文风/质量混杂，关联不授因果歧视。§4.2“Correct QWK全高”被T3多处反侧限制，T4 interaction也非各题同向；human score是协议非绝对真值，提示/API投票/人审全费，不支持真实录取部署。
+
+唯一Ch66原切片/条件分母/相关因果已有，但同文推断属性的识别覆盖选择差额未具名承载。root§18逐字PRE批准后，一段/marker/本人注已保存/self-read完整两侧；root§19实际POST接纳并释放，作者仅同步本人注，不再重Source/PRE；[具体差额](../_sources/daily-20250502/REPAIR_20261016.md#38-essay具体差额及ch66逐字pre未授锁)。
+
+### [CoCoDiff: Diversifying Skeleton Action Features via Coarse-Fine Text-Co-Guided Latent Diffusion](https://arxiv.org/html/2504.21266v1)
+
+原110第89项C仅因新具名接口重开，不动其余108。root§16实际IV-A–D/Alg1/V-A–C/TI–VI，5分受限标准通过：fine动作描述条件逐步去噪，coarse类名/同义词多正对比；先在已有GCN特征训diffusion，再新GCN与diffusion联训，分类消费原/增强特征，推断移除辅助。不把Stage2说成冻结teacher，原KL方向/多正标签归一未闭合不修成recipe；λ/T有反退且最佳T随backbone变。RTX4090/90epochs/NTU与Kinetics特定帧/批协议，前置encoder、文本、生成/联合训练及搜索全费，无部署diffusion只限所测分类路径，不授语义真值/普遍速度。
+
+唯一Ch23；原条件/consumer论证未承载这份生成条件与对比监督分工。root§18批准逐字单段/marker/本人注已保存、完整两侧实际self-read；root§19实际POST接纳并释放，作者仅同步本人注；不在Ch24重推去噪。[具体比较/稿](../_sources/daily-20250502/REPAIR_20261016.md#37-cocodiff具体差额及ch23逐字pre未授锁)。
+
+### [Detecting Manipulated Contents Using Knowledge-Grounded Inference](https://arxiv.org/html/2504.21165v1)
+
+原110第74项C由明确temporal-evaluation反侧重开，不是普通RAG+新数据。root§17结合§14已读3/4/5.1–5.2及B/D/E必要域，5分受限Source通过。新闻原标签、后检索网页与模型过期prior不同时，原news检测较差不能全归detector；网上证据真值是作者假设，可信站更正/同URL内容变化仍在，模拟search date不冻历史正文。三URL/五chunks不同角色、反爬跳过改变来源人口，三次多数/Unknown判错及操纵解释规则绑定评价；生成负样本/选模型调prompt不等独立真值，检索/编码/索引/调用与人工制标全费。
+
+唯一PLATFORM-EVALUATION-SYSTEM/Ch66而非强Ch76。作者实际live-state/reference及时间/OBS链，root§18具体No Change通过：同一时刻state/snapshot/reference、陈旧gold隔离和release/elicitation/评价日期已有承载，不以RAG名字代覆盖。无新书写/注；[实际比较](../_sources/daily-20250502/REPAIR_20261016.md#353-manicodch66具体已有覆盖提案)。
+
 ## 5. 缺口与下一步
 
-**当前普通待办：无。** [第三批](../_sources/daily-20250502/review-supplement-20261007.md#第三批本轮内容闭合冻结日期校验仍未通过)研究差额及[本轮最终独核](../_sources/daily-20250502/compatibility-review-20261011.md#最终独立裁决)均通过，不再重抓110/18、读论文或产生Books差额。授权的窄范围兼容只按显式同日原档案匹配旧精确版本身份和原公开日，原标题/窗口须一致，重复原表列名报错，评分、证据与Books字段继续校验。新增材料只按May1完整自然日检查；30项回归、本日V3及非作者六部分验收通过，不扩窗迁日。
+**当前普通待办：无。** root§20已实际完整六节独核通过，当前无可执行扫描、候选审阅或Books落实待办，已据此保存完成态。三新段§19实际POST接纳/释放，本人notes已同步并实际读回，无Books余锁。19新增为16受限Source/三中心争议，9实际整合/7具体已有覆盖/三暂缓；旧27行/window及两段连续旧证据保持，旧§4首段仅纠正时点。下列外部/争议缺口均为本窗终态保留项，不支持正面证据、Books或无遗漏断言，定点重开条件逐项保留；不将其改称普通研究已完成。root§21已实际完成态行政读回接纳，本日报停止写入。
 
-**日期外部保留：** [校准74P与原110轨迹](../_sources/daily-20250502/admission-calibration.md)只有公告year-month、v1 submitted/当前摘要或定点v1 core，不能定位May1北京时间首次公开。一次性请求对应ID历史官方首次公开列表/公告或作者具名首发，不要整类月份清单，不由常规时间表/后修订推算或搬日。当前不正面采用、不进Books、不计确定候选、不支持无遗漏，材料到达只重开对应事件。五新关闭已获root通过；LIFT另须上述中心机制证据，不由日期恢复自动授训练有效性。
+**十项日期外部保留（root§12已接纳有限隔离）：** 21053/21061/21063均L=Apr30 08:00 BJT，U分别May1 09:49:11/23/26；00033/00036为Apr30 08:00–May2 09:29:25/30；00038/00047为May1 08:00–May2 09:29:32/47；00742为May1 08:00–May5 09:25:15；01449/01448为May1 08:00–May6 10:29:32/31。完整角色/唯一v1及联合界已核，L来自有效日程、U为findable/arxiv.content精确DOI注册的条件上界，不是实际公告。26个精确查询、v1页和具名作者目录/项目的有限恢复未闭合所需日证；root另核TRIP/HyPerAlign、Advanced只支持年月，Zoomer raw一次cache miss不授无仓库。十项不入确定候选/Books、不支持无遗漏，重开只需绑定各ID的官方公告/延期或作者带日首次正文公开依据；不再重复DataCite、表单或扩全文池。逐项范围/原件见[§23.3](../_sources/daily-20250502/REPAIR_20261016.md#233-十个跨日身份有限公开事件恢复)，不是十篇贡献无效或全arXiv受阻。
 
-**LIFT中心争议保留：** [2504.21187v1](https://arxiv.org/html/2504.21187v1) IV-B/C的MSE+CE/backprop声称与离散pred→compiler→ProGraML→冻结GNN梯度断点同时保留。#77仍属P，明确不采用“GNN监督已直接更新LLM”，不正面采用结构监督训练有效性、不进Books；未确认日期与中心机制争议是两个独立门槛。只有可接受surrogate/gradient estimator/implementation，或不依赖直接回传声称的独立证据到达，才重开具名机制；仅恢复日期不能解除争议，不改C/降分或以HLS数字绕过。
+**三项中心争议（不正面采用）：** LIFT21187的离散预测→编译/图→冻结GNN结构loss回LLM路径，Covert21311的token映射可逆性/索引与概率/KL主张，DEEVISum21831的中间head/prototype获得、summary标签和计时配置；精确反例/重开材料分别见本日§4及root§8/12/15。三项保5分潜力/争议/Books暂缓，不改C、降分、删反证或假称Source通过。日期恢复不解除机制争议，无新增书写许可。
 
-**来源外部保留：** DeepMind/pubs、DeepSeek、Hunyuan、ZAI、ERNIE、MiMo等历史必要条目未恢复；一次性请求May1官方Research/技术发布目录快照或具名原文，当前失败/现代列表不支持历史Coverage。只重开受影响源/日，不反复扩扫历年；Hunyuan动态浏览器失败与正确API当前仅2026明确分开。Qwen/Kimi/Seed/MiniMax的有界日期切片不扩为全渠道保证。
+**有限来源与历史缺段：** root§12已认可旧有限层有效复用，§20已实际核其安全隔离；§2逐源保真实切片/停止点和外部历史材料缺失，不伪称本轮重访全部14源。OpenAI/DeepMind与Google Pubs/Meta/DeepSeek/Hunyuan/ZAI/ERNIE/MiMo等必要历史目录/条目未恢复，Qwen/Kimi/Seed只支持实际日期切片；MiniMax model/独立Agent入口分责，Hunyuan正确API当前2026与错误host/浏览器失败分开。当前列表/无效year查询/错误host/搜索空均不授历史零命中；重开只需May1官方目录快照或具名正文/发布条目，不重失败或扫历年。精确来源外部保留不用于Coverage/Evidence全通过或无遗漏，日级通过不使这些缺段变成已恢复。
 
-**窗外线索（不阻塞本窗）：** [CaGR-RAG](https://arxiv.org/abs/2505.01164)从cs.DC月表#7定点题摘恢复，cluster grouping/opportunistic prefetch有检索系统潜力；官方v1提交2025-05-02，提交不是公开日期，当前无May1作者首发依据，不计本窗候选，不迁移原候选。月表其他标题不转候选/审阅队列。
+**非本窗交接：** root交Godel的45个Apr30线索归[May1报告](../01/README.md)，不挂本日普通队列；21303/21205/21228三重复事件只按本日§4提供原owner必要修正，有效Cache书改不撤。TAMO20462/Unlocking20801/Ascendra20828 v2最早可May1，只实际轻核固定版本必要说明，未见具名重要纠错，不因版本号扩双版全文或借v1注册界；Trace20946v2最早May2。不作全family无新事声明。[CaGR-RAG2505.01164](https://arxiv.org/abs/2505.01164)是有限月表具名线索、v1提交May2而非公开日，无May1作者首发依据，不进本窗、不搬旧候选。
 
-上述日期/来源/中心争议均为已独核隔离的终态保留项，不是当前普通未读；不用于支持正面证据、Books、完整覆盖或无遗漏。具体替代依据与定点重开条件如上，独立整日复核已签通过。只处理本日；Books及公共合同无修改，index不写，无stage/commit/push。
+旧20261007/11完成/兼容验收只作历史路由，已被当前日证分解取代的“74全未知”等不作现在时。本轮日级通过依据root§20，完成态差额已root§21实际读回接纳；不改共享State/计数/索引或合同，不stage/commit/push。
 
 ## 6. 复核
 
-复核者：Anscombe（本轮非报告/代码写入者）；root的2026-10-07非作者研究差额裁决继续有效，原作者Boole。本轮兼容修改及报告同步由root负责，不作为独立复核者自证。
+复核者：root（本轮非报告作者）；作者Boyle。
 
 结论：通过
 
-验收范围：带精确终态保留项的安全验收，不是完整历史来源覆盖或全部潜力的正面证据验收。
+root§20已实际完整六节独核通过，作者据此保存完成态；root§21已实际完成态读回接纳。
 
-既有研究复核范围：root首读110题摘及机构core、第二批18 exact-v1 core/AMIE论文准入校准均复用，74P/36C非formal。第三批执行锚点2026-10-07T21:17:10+08:00，已实际核Blog第113～195行、Ch81相关正文及Ch80/82、Pubs两份200请求和有限停止、26行/52块机械冻结与V3错误类型，LIFT隔离、AMIE受限标准/具体已有覆盖、Pubs有限恢复均通过。实际裁决见[独立第三批原件](../_sources/daily-20250502/review-supplement-20261007.md#第三批本轮内容闭合冻结日期校验仍未通过)，作者不修改；该历史停点的兼容问题现已闭合，不继承当时未验收状态。模型继承未调整。
+已发生范围：[唯一REPAIR_REVIEW](../_sources/daily-20250502/REPAIR_REVIEW_20261016.md)§1–19包含原14精确日证/窄准入、50 v1窗前、十跨日有限隔离、LIFT首次5分与争议；既有六新增整合和Cache既有事件修正的真实POST/释放已通过。新增八件May1日证/窄准入有效，七受限标准Source及分数通过（Coyote6、其余六5），DEEVISum5分中心争议/暂缓。21553具体已有覆盖§13及AdaR1/Sparse/Manicod三个No Change§18已接纳；三指定逐字段已保存/self-read，root§19真实非writer新增/完整两侧/本人注POST通过、接纳并释放，作者仅行政同步本人notes。当前新增合9实际整合/7已有覆盖/三争议，无Books锁。
 
-本轮实际独核：Anscombe读取当前六部分、兼容代码/测试差额、原档案及第三批有效裁决，独立核26原行/52完整块，并复现重复日期列静默覆盖反例。该R1已拒绝所有重复列名，两个负例经实际重跑不再放行；其余有效研究及六部分回读复用，不伪称重新审阅110/18。最终DAY实际通过见[独立原件](../_sources/daily-20250502/compatibility-review-20261011.md#最终独立裁决)。
+复用范围：110题摘/18必要v1 core及机构旧有限层按身份、版本和采用命题复用；只对Manicod/CoCoDiff两项旧C具名重开为76P34C，非全池重读。三跨日重复修正、三v2必要轻核、八身份日证的直接原件交接各保角色，不用current AB回填v1。20261007/11的[研究裁决](../_sources/daily-20250502/review-supplement-20261007.md)和[兼容复核](../_sources/daily-20250502/compatibility-review-20261011.md)只支持未变化有效层，不代本轮日级验收。
 
-机器校验：2026-10-07原26日期报错是真实历史停点，不作当前输出。2026-10-11用户授权后已增加显式同日原档案兼容，30项日期/档案/接口回归与本日V3通过；新增材料不能借用旧窗口在May2的09:00前段，不能通过改原日期、版本或缺档案得到豁免。实际比对原26日期/三维评分/owner/审阅值无差额，52个完整原review/Books正文块逐字保留；限定`git diff --check`通过。以上只确认结构和原值保持，独立语义验收由上面的实际裁决另行支持。
+验收范围：root§20已实际顺读当前六节、逐源真实入口与停止、46候选及19新增证据、保留项/重开条件、复用与Books处置，并独立核V3、旧27行/window、两原证连续块/QA改述、77本地引用及限定diff。通过的是有限约定主题/来源和带精确外部/争议保留项的安全终态，不是全部历史来源恢复、全学科召回或所有主张的正面证明；不是由旧完成标签或机器通过代签。完成态行政差额已由root§21实际读回接纳，不重Source/完整six，本日报停止写入。
+
+机器检查：本轮46行保存稿V3通过，旧27完整行/日期/评分与原window逐字保持；旧§4整体原件仍在baseline，当前首段仅按root要求纠正旧时点，不再声称该整节53216bytes/原hash连续保持。实际连续保持的是AMIE标题起至原§5前52380bytes（SHA256 986a9baf4beaacf42f793350a55894b24874bb01df5231d22c75f4fa8d86b6e2），其中原26篇Position起49874bytes（SHA256 1c6c9a0b19b3c0e75faef29e20f26f004db85c1f18bf54349b57b9af6869eb22）亦逐字连续保持。77本地引用/32路径存在，限定两层diff-check通过；同步既成POST/本人注和措辞差额后已再次限定QA。这些只验证结构/保护范围，不代替实际研究/写后/日级复核。

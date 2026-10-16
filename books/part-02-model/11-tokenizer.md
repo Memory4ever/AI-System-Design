@@ -275,6 +275,10 @@ tokenizer state 与 KV state 分开管理。前者体积通常更小，可以在
 编码仍然是更简单、也可能更快的方案。因此增量 tokenization 与 prefix KV reuse 是
 `Layering / Dependency`，不是新实现对旧实现的单向替代。
 
+仍需完整编码的新请求不能靠会话缓存加速，但并行切块也必须保持同一离散接口。切点不仅要落在BPE不跨越的pre-tokenizer边界，还要确保它在子块末尾仍成立；不能切开任何special-token字符串，normalization也必须可在此独立执行且不改变归一化后的边界。只有冻结配置满足这些条件时，分块各自编码后的IDs才能按原顺序拼接，BOS等序列级处理只做一次。仅有重叠区域token相同或足够长，不替代这些条件；找不到合格切点就减少并行或完整reference回退。
+
+合法切点还改变CPU服务的不可抢占粒度：长stateless请求拆成chunk，短增量可在chunk结束时进入，而不是等整条长输入完成；session初始化仍可能在home worker整条执行。更小chunk减少阻塞，却增加dispatch、额外worker内存和局部状态管理，池没有专用核时也未必获益。[受限SGLang实验](https://arxiv.org/html/2610.19801v1)区分超长输入被tokenize后拒绝与真正进入GPU的流量；全部长文都需新Prefill时收益会被GPU成本掩盖，不把tokenization提速等同所有TTFT/SLO提升。<!-- source-family:SF-2026-ARXIV-2610-19801 -->
+
 ## 多语言中的隐藏不公平
 
 如果 tokenizer 的训练语料主要来自某种语言，该语言的高频片段更容易获得较长 token；覆盖较少的语言可能被拆得更碎。对于相同语义，不同语言的 `T` 可能不同，从而影响：
@@ -485,3 +489,5 @@ Primary-source 校验入口：
 
 - `SF-2026-ARXIV-2603-15953` — Daily `2026-03-19`补`03-18`自然日；[HAT exact-v1](https://arxiv.org/html/2603.15953v1) §3.1–3.4/4.2/6/7.1–7.3.1及直接质量反侧，2+2+3=7。只采用rule-split/learned-word接口、旧backbone适配与byte/word双clock/KV成本；tokenizer-free非无规则，压缩非吞吐，FLOP-matched批处理反退/任务质量反侧近正文。不授热换兼容、普遍质量/加速或生产SLO；未核代码或复现实验。
 - `SF-2026-ARXIV-2604-07737` — [exact-v1](https://arxiv.org/html/2604.07737v1) §3–4/Limit必要范围，仅数值/索引保持的delimiter格式分支，保小模型/复杂任务反退、Q/K变化与tokenizer限定，不采严格sink隔离界；response长度非全token/墙钟，未核代码/复现。
+
+- `SF-2026-ARXIV-2610-19801` — Daily2026-10-16窗10-15；[Delta exact-v1](https://arxiv.org/html/2610.19801v1)必要§3.2–3.4/4.1/4.5–4.8/Limit/S2–4，2+2+3=7。只采stateless safe-cut三条件与CPU chunk服务粒度，不把TokTier July2026已有session repair称本次首创；保byteBPE/dropout off/unsupported reference、runtime输入人口和dispatch/内存全费，不授生产恢复/全TTFT保证。root实际必要Source/date/具体owner有效，reader A7/R13逐字PRE通过，root授两段与本人注窄lease；作者已保存并读回，独立reader R14实际正文、完整邻接与本人注POST通过，root已接纳并释放指定窄lease，作者仅行政同步并实际读回。未核代码/复现，不授DAY。

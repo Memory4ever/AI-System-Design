@@ -171,6 +171,8 @@ SwiGLU(X) = SiLU(X W_gate) elementwise_mul (X W_up)
 
 Gate 允许模型根据当前 token state 动态调节哪些 candidate features 通过。代价是多一个 `d_model x d_ff` projection，因此实际模型常调整 `d_ff`，在参数预算下比较，而不是保持所有维度不变。
 
+当同一基础模型要随任务、风格或 persona 切换时，还可固定主权重，把条件控制放到 activation 的斜率：以条件文本作为 query、当前层状态作为 key/value 做低维 cross-attention，加层身份后生成相对 1 的偏移 beta，再以 `x*sigmoid((1+beta)*x)` 控制 SwiGLU gate，beta=0 回到原 SiLU。给定控制量后的 FFN 仍逐位置执行，但控制器读取条件与序列状态，整条适配路径不能再被描述成只有当前 token 的局部非线性。这以新增控制器、条件版本耦合和每层执行开销换少量可训练参数；冻结 base 不保证不遗忘或遵从任意 persona，条件错配、held-out 任务退步或额外费用不合时，保留原 SiLU/普通 prompt 或独立适配。有限 Llama/Mistral 对照仅证明这条控制接口可行，不授普遍优势或推理加速。[受限证据](https://arxiv.org/html/2605.01973v1) <!-- source-family:SF-2026-ARXIV-2605-01973 -->
+
 ## 参数量与 FLOPs
 
 忽略 bias，标准两层 MLP 参数量约为：
@@ -264,6 +266,8 @@ FLOPs_GEMM ~= 2 * M * N * K
 
 因此更准确的表述是：MLP 提供高容量逐位置非线性特征变换，并参与存储和调用训练中形成的关联；它不是可按 key 直接检索的数据库表。
 
+定位候选neuron也可以先把“对输入扰动有反应”与“朝指定输出方向写入”结合：由两组首token的unembedding均差定义读出方向，将它与每个down-projection列的耦合乘上原/扰动输入的activation差，只把高分项交给后续消融、patch和恢复测试。这个两次forward的提名不是完整因果验证；跨层传播、normalization和prompt聚合会破坏简单可加解释，取绝对值或RMS后还须另保符号。[Perturbation probing的受限对照](https://arxiv.org/html/2604.27401v1#S3)主要改变首token gap与拒绝模板，不能由模板翻转推出安全知识删除或完整生成已顺从。Token集合、扰动、层/地址、剂量和读出对象需共同绑定，完整validation sweep、生成判分与非目标回归都计费。模板proxy失准、分布式路径或normalization使提名失效时，保留原checkpoint、其他归因方法和直接行为验证，不让高importance自行授权权重或激活编辑。<!-- source-family:SF-2026-ARXIV-2604-27401 -->
+
 语义关系的干预还要注明被改变的是哪一个读出对象。一个稀疏特征子集可以提高线性probe对某关系的margin，移除同一子集也可以使probe改判；这只是在固定probe空间定义的sufficiency/necessity，不等于后续网络会因果使用它、更不认证next-token或完整生成的关系正确。[有限WordNet对照](https://arxiv.org/html/2603.17624v1#S3.SS4)同时比较Attention、MLP和完整post-residual，并显示关系种类、模型及提示改变时的读出与干预效果不同；不能由近邻cosine、某个peaklayer或“高sufficiency”把关系当作单一可编辑槽位。采用时应分别冻结有向关系标签、template、probe/SAE revision与干预位置，另验原模型输出、无关关系和上下文回归；这是工程验收要求，不冒称原论文已验证生成编辑。特征选择、字典训练与重复干预都付费，probe shift不稳、标签方向或selection口径未闭合时，保留原checkpoint与外部关系证据，不从probe成功提交权重变更。<!-- source-family:SF-2026-ARXIV-2603-17624 -->
 
 读出关联之后，还可在冻结权重下直接测试生成时的gate介入，但必须明确地址：对gated MLP的非线性后gate选定维度，在与另一内容分支相乘及输出投影之前缩放、加偏移或置零，而不是修改整个residual或权重。一个受限语音生成分支先按目标情绪匹配与内容误差筛选成功样本，再从其激活概率差别选稀疏地址，以同情绪、跨情绪及等稀疏随机掩码比较输出。筛选人口、模型/layer、hook位置、掩码与强度共同定义该干预；相关地址和局部效果不证明单一情绪槽位，也不证明它与内容能力正交。<!-- source-family:SF-2026-ARXIV-2603-17231 -->
@@ -348,6 +352,8 @@ MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP �
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-27401` — Daily2026-05-02补May1；v1§2–6及L必要层，2+1+2=5，coupling×扰动提名/实际因果分工差额深入。保RMS/abs符号、norm/下游传播、logit/模板/完整行为与CAA分类器待rerun；不授RLHF唯一因果、安全删除或普遍优势。未核artifact/复现；reader R42必要Source/owner/逐字PRE通过，root授本单段+本人注窄lease；作者已保存并顺读，reader非writer actual正文/完整两侧/本人注POST R44通过，root接纳并释放窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
 - `SF-2026-ARXIV-2602-21307` — Daily `2026-02-27`；[SymTorch exact-v1](https://arxiv.org/html/2602.21307v1) §4.1/5.1，PCA/原MLP/符号代理/identity对照及KV-off完整forward。2+1+3=6，具体函数近似缺口深入，仅采用投影与代理误差分账、离线搜索与dense/gated回退；不采用后版吞吐、跨域无损、内部算法唯一解释或生产SLO。root必要原源/实际owner PRE及实际正文/完整邻接/自身末注非作者POST通过，窄锁释放。未核代码或复现实验，不授整日完成。
 
 - `SF-2026-ARXIV-2601-04600` — Daily `2026-01-10`；[exact-v1](https://arxiv.org/html/2601.04600v1) §4/5.1/5.2 Table2–3与§7 key-drift/跨层copy代价。原3+1+2=6，设计反证对应具体缺口深入，只采用edit recall与多跳access分账及复制干预的locality/fluency成本，不采Eq1形状、唯一hop-layer因果或普遍编辑失败。工程验收与回退为受限推断；未核代码或复现实验。root必要原源/实际owner写前通过；jan02_v3实际正文244–267及本注非作者写后复核通过，未重复原源审阅，日级Gate待验。
@@ -374,3 +380,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-02990` — 04-07补04-06自然日；FedSQ exact-v1 III-A/B/Alg1、IV/T1。仅采用固定input gate下输入affine与joint参数平均分离，5x/4x为本章公式的数学推断，不是论文保证；DualCopy存储与trainable分账、binary surrogate、central schedule及CNN反退保留，不授Transformer迁移或联邦收敛。root非作者已实际核必要Source、具体owner/逐字PRE与写后正文/完整邻接/本人note，POST通过；作者同步本记录后释放窄锁。未核artifact/复现，不授日级完成。
 
 - `SF-2026-ARXIV-2604-17673` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17673v1) §3–4及AppA/C/E/G/H必要，2+1+2=5。仅采用输入粒度×首轮聚合前非线性/深度的有限替代检验；toy无序operandpair划分、Fourier吻合非唯一因果、classifier与训练/heldout分母边界保报告，额外token/训练/采样全费。fresh实际必要Source及root actual owner/A49单段逐字PRE通过并授窄lease，作者写入并顺读局部；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，不授实现复现或DAY。
+
+- `SF-2026-ARXIV-2605-01973` — Daily2026-05-06补May05；[MeGan exact-v1](https://arxiv.org/html/2605.01973v1) §5.1–5.3/6/Tables4–7、A2/A7/B2必要；2+1+2=5。只采条件query/层状态key-value、相对1的activation slope偏移接口，保混合对照/失败persona与全部控制器费用，不授冻结base即不遗忘、全局稳定或推理加速。root实际必要Source/具体owner及修后A4 PRE通过，授SwiGLU末尾指定单段及本注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码或复现。

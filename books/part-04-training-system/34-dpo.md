@@ -125,6 +125,8 @@ loss ~= -log(0.646) ~= 0.437
 
 若 chosen/rejected relative log-ratio 顺序反过来，`u<0`，loss 增大。DPO 优化的是相对 margin，不要求 chosen 的绝对 log probability 在每一步都上升。
 
+目标margin也可以随pair的可区分程度改变，而不要求所有chosen/rejected拉开相同间隔：先用固定的回答距离提出目标，再从policy/reference的有符号log-ratio中减去这项目标后计算logistic loss。它改变的是训练压力，不是偏好标签或距离的真值权限；否定词、数值或安全条件只差少数字符，也可能决定两答案是否等价。[结构感知margin的受限对照](https://arxiv.org/html/2604.27733v1#S5.SS3)支持这条可试分支，不证明语义相近就应该平局、低surrogate loss保证真实排序，或loss在score上凸就使参数优化凸。理论还依赖假设类、可实现程度与剩余gap，有限ranking accuracy不能替代生成质量。距离模型、标签审校、训练和独立行为回归均付费；距离失准、容量难以满足间隔或质量退步时，保留原DPO、可信人工pairs和固定reference，不由更大的margin批准答案。<!-- source-family:SF-2026-ARXIV-2604-27733 -->
+
 相对 margin 增长之外，还可在同一固定模型/样本上检查 winner 与 loser 的两条 score gradient：更新是二者带激励系数的差，只有它们的夹角、范数比和系数比相容时，局部梯度流才同时增加 chosen、降低 rejected。[RC 的有限诊断与校正](https://arxiv.org/html/2604.18239v1)据此用 stop-gradient 的反向缩放分别调整两项，forward loss 数值可以不变，实际梯度已经改变。这个条件带只属于单 pair、正激励和相应夹角下的理想连续更新，不自动覆盖 mini-batch 交叉项、AdamW 预条件或有限步；output-head 范数、EMA 和 clipping 只是廉价近似，不保证每 pair 都留在真实全参数条件带。梯度统计、训练和超参搜索都付费，初始弱基线恢复也不等充分训练后普遍增益；代理漂移、强基线无益或实际更新不相容时，保留原 DPO/偏好目标、独立 chosen/rejected likelihood 与 held-out 行为验收，不由 ratio 控制名称授予全程单调性。<!-- source-family:SF-2026-ARXIV-2604-18239 -->
 
 ## Sequence Log Probability 怎样得到
@@ -152,6 +154,8 @@ Pair 的任务身份也必须相同：让模型解题，与给定一道题及候
 [Forward/Backward DPO 的必要原证](https://arxiv.org/html/2601.07199v1)只支持这个任务与标签分账，不证明生成和验证是正交技能或普遍互不迁移。受限数学对照中，评测模型使用的样本数不同，错误识别还条件于各自生成的错误答案，不能把它当同一固定错误池上的因果比较；CalibF1 的正类定义与表中数字不一致，不能由读者改正后当作已验证校准。采样正确/错误轨迹、构造候选、检查 verdict、训练及两个任务的回归都需计费，模型自评不是真值。普通解题 pairs 在只需生成能力、标签可靠时仍合理；验证标签或保留能力不过关时，应回退可靠 pairs、外部验证与原 checkpoint，不能靠更强自我确认取得答案发布权。<!-- source-family:SF-2026-ARXIV-2601-07199 -->
 
 轨迹终局失败时，逐动作构造 pair 还需要明确反事实分工：PRM 只定位候选 failure state，在同一历史替换一个 expert action，再让当前 policy 执行后缀，以 outcome evaluator 验证是否翻转结果，最后冻结相同 prefix 下的原动作/替代动作作为 step-level preference。终局收益因此提供这次 intervention 的资格，不是让 PRM、expert 或一个成功后缀直接证明动作普遍因果必要。它支付分支执行、后缀方差、网络/工具与 evaluator 成本；gold-based judge 也会误判，[受限 Agent 对照](https://arxiv.org/html/2602.03412v1)的 PRM 定位或验证反侧与不同 pair 数量不能授予 noise-free 标签或匹配总预算因果保证。状态不可重放、验证不可靠或后缀收益不稳定时，保留可靠的普通 preference pairs，而不把整条成功轨迹静默拆成全部正确动作。<!-- source-family:SF-2026-ARXIV-2602-03412 -->
+
+视觉描述的偏好也可由当前policy在句级树中生成：以同一模型的对象自检概率提出局部分数，另用dataset的canonical object集合对完整rollout作外部终局门，再从路径和同prefix的兄弟分支构造偏好，逐轮冻结更新前reference。这将探索、proxy与标签真值分责，不是由生成者自行证明没有幻觉；[OSCAR的必要机制与反侧](https://arxiv.org/html/2605.00323v1)中，COCO对象名门没有验收全部属性、关系或开放对象，teacher样本退步也未排除数据/训练差异，搜索消融不完全匹配reward与预算。覆盖和部分能力可退步，全部树展开、验证、外部标注与训练均付费；对象支持、proxy或保留质量不稳时，保留可信普通pairs、独立grounding与原checkpoint，而不从自检高分取得事实发布权。<!-- source-family:SF-2026-ARXIV-2605-00323 -->
 
 Vanilla DPO 使用 sequence log-probability sum。较长 response 包含更多 token terms，因此 length distribution 会影响 log-ratio。Length normalization 或其他 variant 会改变 objective，不能悄悄加入后仍称为原始公式。
 
@@ -181,6 +185,8 @@ DPO 常让 `pi_ref` 是 SFT policy 的 frozen copy。它提供两个作用：
 相对坐标也会留下一个容易被总 loss 掩盖的盲区。令 `Delta_theta = log pi_theta(y_chosen|x) - log pi_theta(y_rejected|x)`，`Delta_ref` 为同一对回答的 reference margin；普通 DPO 的 sigmoid 输入是 `beta * (Delta_theta - Delta_ref)`。当 `Delta_ref < Delta_theta < 0` 时，policy 比 reference 更偏向 chosen，相对 margin 已为正，sigmoid 的更新权重可能逐渐衰减，但 policy 自身仍给 rejected 更高的 sequence likelihood。因而 loss 下降不自动意味着 raw preference margin 已翻正。[一个受限分支](https://arxiv.org/html/2602.11902v1)把所有负的 `Delta_ref` 截为零，让 reference 不再以更负的起点提前满足该对目标；这是 objective 的改变，不是原 KL-constrained 最优解或生成正确性保持不变的证明。<!-- source-family:SF-2026-ARXIV-2602-11902 -->
 
 这个修正仍信任 pair label：如果 reference 正确反对一个误标的 chosen，截断反而可能把 policy 更强地推向错误回答。验收要同时记录 raw chosen/rejected margin、各自 likelihood、相对 reference 的 KL 和 held-out behavior，而不能只看 relative loss 或 judge 总分；还要计入获取 reference logprobs 的必要 forward、缓存一致性及训练/搜索成本。作者同 SFT、同参数设置的有限对照支持这一失败条件值得单独检查，但主结果还混入 reference 与 margin 设置变化，不授通用胜出或全 pipeline 免费。标签质量、held-out 行为或 KL 回归失败时，保留原 DPO 与原 reference anchor，而不是把截断当作正确性门。
+
+多个rejected也不必先平均其log-ratio再共用一个sigmoid：容易negative增多时，聚合loss可以下降而少数raw margin仍未翻正。一条受限分支先保留当前policy赋予更高likelihood的negative；若没有违序，再按negative likelihood聚类选靠近positive的一组，并按双margin调节各项scale。它改变训练人口和目标，不由数量分组恒等式证明梯度必然被压倒，也不把未点击或高likelihood认证为真实拒绝/语义相似。[必要机制与有限对照](https://arxiv.org/html/2605.00327v1)只支持所测多负例推荐协议，非所有DPO或开放生成的塌陷定律。全部负例评分、reference、选择/聚类及训练均计费；scale变化要另验gradient、KL、raw margin与held-out行为，标签噪声或选择偏置增大时保留经审校pair、固定scale或普通多负例目标，不由更低loss或局部Hit@1批准普遍改进。<!-- source-family:SF-2026-ARXIV-2605-00327 -->
 
 ## Beta 怎样影响更新
 
@@ -503,6 +509,12 @@ reference-free objective 免去 reward 中的反复 reference forward，缓存�
 pair validation 增加 judge 和标注成本，judge noise 也可能制造新偏差。两个 benchmark、8B 以内模型与 LLM judge 不证明普遍收益；证据不闭合时回退 verified preference pairs、CPT/SFT 或保留不更新。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00327` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00327v1)，2+1+2=5，具体owner差额深入。reader R27实际必要Source/date/直接反侧；root C12实际owner完整局部邻接/逐字PRE通过，授本单段及本人注。采用限制和全部费用近正文，不授普遍理论/性能/安全；作者已保存，root C15非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00323` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00323v1)，2+2+2=6，具体owner差额深入。必要Source/date与直接反侧见本日唯一SUP H02，不授超该原证的普遍理论、质量/性能或安全保证；全部制备/运行/训练费用及旧分支退路近文。root C10实际owner完整邻接/逐字PRE通过并授本窄段及本人注；作者已实际保存，root C11非writer实际正文/完整局部邻接及本人注POST通过，窄lease已释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-27733` — Daily2026-05-02补May1；exact-v1§2–7及B/C必要层，2+1+2=5，pair-dependent shifted目标差额深入。严格Hγ存在性/NN前提、approximation gap、小edit非语义和RA非outcome保留；不采用通用不一致/越大越好/已除幻觉。未核实现/复现。reader R56必要Source/owner/逐字PRE及R58保存后完整正文、邻接、本人注actualPOST通过；root接纳并仅行政同步，不授DAY。
 
 - `SF-2026-ARXIV-2604-23712` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23712v1)§4.2/4.3/5.2/5.6；2+1+2=5。formal-valid/预算内stagnant/成功proof人口分账，不把预算耗尽判不可解；Eq7方向冲突/非正规seqprob完整recipe不采，费用与旧路径近文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 

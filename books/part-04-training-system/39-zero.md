@@ -59,7 +59,9 @@ ZeRO-1减少副本数，低比特optimizer则减少每个副本的`b_o`；二者
 
 ### 低秩状态还需要保存坐标身份
 
-减少副本数与减少每个状态的 bit 数，都没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
+低秩状态可以直接来自梯度，而不必先改变 activation 的保存方式。设某层梯度为 `G∈R^(m×n)`，选择 `r≤min(m,n)` 列的正交基 `U_r∈R^(m×r)`，则投影 `U_rᵀG` 为 `r×n`；在这个空间保存 moments、得到同形状更新 `Δ_r` 后，以 `U_rΔ_r` 更新完整权重。这不同于冻结基座的 LoRA，也不等于完整 Adam 更新。[GaLore2 的有限研究](https://arxiv.org/html/2504.20437v1)用随机截断 SVD 近似梯度谱，并调整基的刷新频率；随机 SVD 不等于任意随机投影，刷新过勤还可能受基的随机性和符号变化影响。rank、基及其版本、moment 坐标和刷新规则必须共同记录，但这不表示原研究已验证完整 checkpoint 恢复。它用投影、SVD、基存储和近似更新换容量，不自动降低 activation 峰值或全部通信；按层与 FSDP 组合还须另核 shard 形状、accumulation、global clipping 和更新边界，不能从组合概述推出任意布局等价。原文非方阵投影记号存在不一致，上述 shape 是用于解释机制的自洽例子，不冒充已核执行配方；子操作更快和局部质量接近也不是端到端普遍收益。谱不集中、刷新成本过高或质量回归失败时，保留更高 rank 或完整状态分片。<!-- source-family:SF-2025-ARXIV-2504-20437 -->
+
+直接压缩梯度状态仍没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
 
 基随训练变化后，旧 moment 不能直接沿用原坐标。一个实现用 Oja 更新并重正交化 basis，以新旧基的重叠运输一阶 moment；二阶 moment 只保存逐坐标统计，无法精确恢复全部 cross-coordinate covariance，因此需要近似运输。basis、rank、运输规则和 moment 共同构成训练状态，而不是可随意替换的压缩附件。它用投影、重正交化、统计运输和近似更新换取容量，rank 或 subspace learning rate 失配会损害质量；梯度不集中、漂移过快或质量回归失败时，保留完整 activation、recompute 及普通分片更可靠。[OASIS 的有限实验](https://arxiv.org/html/2604.09406v1)有低 rank 退步，不能把 exact forward 写成精确训练或大规模分布式收敛保证。<!-- source-family:SF-2026-ARXIV-2604-09406 -->
 
@@ -388,6 +390,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 它不是通用 OOM 开关。Activation、workspace、network、offload 层级和恢复语义必须分别建模。正确 ZeRO 配置应从 memory breakdown 出发，并用通信、吞吐、数值与 restore 共同验证。
 
 ## Review notes
+
+- Daily `2025-05-01` 补查：`SF-2025-ARXIV-2504-20437`，[GaLore2 v1](https://arxiv.org/html/2504.20437v1) §3～7、Appendix A/C、Tables1～7，2+2+2=6；采用直接梯度谱投影、刷新与完整权重更新的分支，和 activation-basis/ZeRO 分开。非方阵原记号、任意 FSDP shard/accumulation/clipping、恢复正确性及全生命周期收益未闭合；未核代码或复现。root 必要原证与当前章节/邻接比较后保存，Newton §31 已实际检查新正文、完整前后与本注并通过；root 已接纳，不据此授日报完成。
 
 - Daily `2026-10-08`：`SF-2026-ARXIV-2610-07593`，[TRANSIT v1](https://arxiv.org/html/2610.07593v1) §3.3–4.2/5；UVM shim的prefetch与zero-copy两政策分开，migration非reuse，midpoint为heuristic。H100/host2TB/PCIe4或5/有限链路、精度与offloaded bytes混杂保留；per-GPU效率非job总吞吐，cluster部分模拟，质量与任意API兼容未证。
 

@@ -39,6 +39,8 @@ status
 
 自然语言可以描述意图，typed state 承担控制。
 
+解释已经产生的搜索树时，还可让自然语言问题先进入受限query类型与参数接口，分别读取节点属性、派生关系和分支时序条件，经logic/scorer计算后再由语言模型组织叙述；知识问答的检索内容须与树内证据保不同来源。这里新增的是已搜状态到解释的consumer，不是由流畅回答重新创造一棵树或批准原计划。[LogiEx的有限接口](https://arxiv.org/html/2505.00610v1)支持这份分层，但树只包含已搜索部分，parser、变量定义和CTL/scorer各自可能失配，形式求值正确也不证明自然语言被忠实编译或世界状态完整。对参考文字的FactCC/相似度分数不是每层逻辑验证或真实用户信任，有限query菜单之外不能悄悄套用近似类别。Query/schema、树与scorer版本、检索证据及最终解释应可分别回读；路由、树恢复/计算、检索、全部生成与人工参考均付费，短答案不证明低端到端时延。语义、树支持或计算不可核时，保留原节点/变量与确定性输出、澄清或Unknown及人工检查，不让解释取得行动或完成的提交权。<!-- source-family:SF-2025-ARXIV-2505-00610 -->
+
 ## 从目标到状态图
 
 设环境状态为 `s_t`，action 为 `a_t`，observation 为 `o_(t+1)`：
@@ -83,6 +85,8 @@ supersede 必须分开。该 ledger 为 replanning 提供 mismatch evidence，�
 
 这条分支用额外模型调用和状态校准换取更早的错误拦截，也会引入共享盲点、distribution shift 和错误否决。状态不可结构化、transition confidence 失准或风险不足以支付校验成本时，纯 LLM planning 仍可用于低风险 proposal；高风险或 OOD 状态则必须回到规则、真实 rollout、tool observation 或人工复核后再推进。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-27806:end -->
+
+模型估计与policy求解也不必每条新轨迹后同步重跑：在模型可实现、offline估计器和精确planning oracle都满足声明条件时，可分epoch固定探索policy，并将各horizon位置的数据分别交回估计器，再更新下一轮计划。拉长epoch可减少两类昂贵oracle的调用次数，却不减少其内部计算、每epoch的horizon分段、样本获取或长时间持有旧policy的代价。[必要条件与调用界](https://arxiv.org/html/2605.00393v1)区分known/unknown总时长及tabular/线性模型，线性情形的统计界仍较弱；不能把oracle次数独立于状态/动作空间大小写成整个算法同样廉价。估计资格、探索支持或漂移条件不成立时，保留更频繁更新、真实rollout和已有短horizon规划，旧model只能生成候选，不认证环境事实或真实执行安全。<!-- source-family:SF-2026-ARXIV-2605-00393 -->
 
 若环境能被可靠隔离并恢复，还可先获得真正的局部transition观察，而不只预测它：从当前界面提议有限动作，逐个在沙箱中试执行，保存前后screen与Activity，再恢复同一snapshot，才把这组观察交给有界路径搜索。筛选后的动作不是全部可行支持，LLM生成的变化摘要也不是原画面真值；snapshot恢复更不覆盖外部服务已经发生的副作用。[LTGDroid的受限对照](https://arxiv.org/html/2603.29623v1)支持这种pre-assessment分支，但75reports/45apps排除特殊初始化、filter漏动作与不支持的gesture限制可达性。较高成功率付出更多trial、restore、调用与等待，原无预评路径更快；100动作/60分钟上限是本配置预算，不是开放环境可解保证。恢复不完整、观察/摘要不可信或总费无益时，保留当前真实观察、短horizon/直接执行或人工排障，不从沙箱试成功批准真实effect。<!-- source-family:SF-2026-ARXIV-2603-29623 -->
 
@@ -190,9 +194,16 @@ plan graph + resource / temporal constraints
 语义目标不能全部形式化。TAPE 的合成任务支持 feasibility/execution-conformance 分离，不证明形式求解器能覆盖
 所有 Agent planning。短任务和低副作用场景仍可用轻量 plan + observation-triggered replanning。
 
+可行性通过之后，还应单独验优化质量：在固定地图/环境、目标、约束和离散时段内，可用枚举或可靠solver产生有界参考，再比较候选是否满足约束及其objective gap；语言上合理的计划并不等最优。[一个有限规划benchmark](https://arxiv.org/html/2605.00276v1)将reference从普通可行itinerary换为模板下的最短时间标签，但单标签exact-match还可能拒绝等成本替代，未公开的tie/容差规则不能补成唯一最优证明。离线traffic与模型化停留时间也不代表实时、多目标或开放环境真值；参考制备、全部候选/工具调用和修订计费，同模型同tools不等同搜索预算。目标或参考不可靠时保留可行性与执行符合的分层结果、澄清及已验证轻量计划，不用一个accuracy归因通用编排优越或批准真实行动。<!-- source-family:SF-2026-ARXIV-2605-00276 -->
+
+外部求解还必须冻结“缺少证据”怎样进入推理。默认规则允许在当前不能导出反例时暂时成立，新事实到达便可能撤回原结论；这与把未知当作现实为假不同。采用answer-set求解时，还要区分一个stable model支持与全部stable models支持的答案。[LLM翻译加ASP反馈的受限对照](https://arxiv.org/html/2604.27960v1#S3)说明这条非单调分支可以接入计划验证，却不证明自然语言被忠实形式化，模型回答PASS也不是独立认证。规则翻译、参考制备、solver与有限修订都计费；默认、例外或查询语义不明时保留Unknown、人工澄清与原轻量规划，不让可满足性替需求正确性签字。<!-- source-family:SF-2026-ARXIV-2604-27960 -->
+
 若同一 domain 的约束长期重复，每个 query 都重新生成求解代码还会重复支付建模成本。[一条受限分支](https://arxiv.org/html/2601.09097v1)先用示例 query/answer 导出组合参数、约束参数与输出结构，再生成枚举、过滤和交付函数；之后每个 query 只提取参数，消费已编译的 domain artifact，而不改 solver。这样把可变的语义抽取与可复用的确定性执行分开，但确定性只属于已编码约束：参数遗漏、错误 schema 或渲染失真仍会让一个正常运行的 solver 交付错误计划。<!-- source-family:SF-2026-ARXIV-2601-09097 -->
 
 Artifact 应绑定 schema、约束解释、代码与输出版本，除构造示例外还用 held-out query 检查覆盖与失败路径；禁止硬编码的提示和单例 refinement 不证明无过拟合或全域完备。收益须按复用次数摊销 schema/code/refinement 的离线成本，枚举空间过大也可能转成新的资源瓶颈；作者的闭合任务与有限消融不支持把采样/枚举预算改变都归因于单模块。新 domain、参数无法确认或隐藏约束暴露时，应重新建模/版本化 artifact，或回退逐 query 求解、轻量计划和澄清，而非继续套用旧函数。
+
+复用也可以发生在同一任务内部，而不只复用跨query的domain solver。[一条受限地图分支](https://arxiv.org/html/2504.20628v1)先以重复片段及其平移、旋转等变换提出近似地图程序，再为每类片段求一次局部策略，遇到对应位置时复用；片段之间的访问次序另由当前目标与有限启发式决定。程序压缩改变了规划支持，不证明保留全部环境细节、得到全局最优，选出的单个程序也不等已校准后验或人脑机制。应分别检查程序重构、片段对应与策略适用条件，并以真实观测更新belief；观察与近似程序冲突时，失效相关复用，退回未压缩状态上的普通规划或澄清。程序提案、解析/重构、局部求策、对应检查与回退都付费，有限规则地图上的人类行为拟合不能认证开放环境省算或行动安全；结构不重复、变换不保动作语义或验证成本不值时，原逐query求解、轻量计划和observation-triggered replanning仍合理。
+<!-- source-family:SF-2025-ARXIV-2504-20628 -->
 
 若需求本身仍在变化，先固定 solver 也可能过早：用户可能尚未决定“哪个群体、哪些字段、按什么口径”才算满足问题。一条关系数据分支把这份解释外化成目标关系集合与其上的答案程序；目标列、语义和群体定义可由用户修订，数据物化则负责用已检索源构造这些关系，最后执行程序得到答案。对表内容不确定时，先查询实际值、分布和结构，再改目标或补来源，而不是让字段名、几条样本或流畅答案暗中决定统计人口。转换依赖图与可重跑脚本使构造过程可检查；它们展示的是已编码操作怎样产生结果，不证明目标忠实于用户、源数据完整或语义生成列真实。
 
@@ -227,6 +238,9 @@ candidate_nodes ≈ 1 + b + b^2 + ... + b^d
 ```
 
 Pruning、heuristic、budget 和 verifier quality 决定是否值得。模型自己生成并评分候选可能共享同一盲点，搜索更多不等于可靠性单调提高。
+
+搜索的变化也可以发生在候选结构之间，而不只让语言模型重写整段文本。[一条受限结构分支](https://arxiv.org/html/2504.20643v1)先把已有候选解析为树，再沿两树的最小编辑路径提出中间结构，经任务value约束筛选、另按novelty排序，最后才交模型转回文本。编辑路径规定的是proposal空间，不保证每个中间树语义有效；解析/修复后的合法结构、筛后新颖与未筛全体质量必须分账，不能让共享parser或模型摘要兼任独立真值。结构解析、候选枚举、约束/ranking、回译和人审都增加费用，有限领域中更多变化也伴value退步；结构不适配、parser失真或价值约束不可信时，应回到原候选、普通文本变体与独立任务验证，不由树距离或新颖排序自签创造力/安全。
+<!-- source-family:SF-2025-ARXIV-2504-20643 -->
 
 开放环境里，搜索剪枝还须区分“当前前置条件不满足”与“永久不值得探索”。一条[受限规划分支](https://arxiv.org/html/2602.17622v1#S4)把 observation、hypothesis 与 proposed action 保存在外部 typed evidence tree，以预计剩余步数和启发式 difficulty 分配预算；剪掉的分支仍留在树中，新证据或可用凭据改变其 precondition 时重新评价并恢复候选。这里可撤销的是 search-support 决定，不是已发生的世界 effect；LLM 预测 horizon 与经验难度阈值均是排序代理，不授完整性、MCTS soundness或执行授权。Tree／证据传播、重复评价与额外模型调用有费，也可能受外部假证据、遗漏分支和 token预算误导；原三模型／三 trial 的 best-of-three与mean表述不一致、累计组件消融和不同tool接口不能证明reopen单独造成headline成功率，公开walkthrough还限制任务外推。证据未能可信满足前置条件、heuristic失准或预算不值时，应保留更宽搜索、真实observation与独立终局verifier；简单稳定任务继续普通静态剪枝，不从一次未成功授永久排除。<!-- source-family:SF-2026-ARXIV-2602-17622 -->
 
@@ -352,6 +366,9 @@ calibrated prior over task state
 
 合成环境中拟合的 prior 不能直接当作生产概率；cost 也不只是 token 数，还可能包括用户中断、工具价格、延迟与不可逆副作用。因此 expected utility policy 必须受 hard safety override、预算上限和低置信 fallback 约束，并按 deployment slice 重新校准。固定 rule 在样本少、概率失准或风险极高时继续合理；Calibrate-Then-Act 只为受控低维任务中的 uncertainty/cost-conditioned exploration 提供实验性证据，不证明现实 Agent 已获得全局最优行动策略。
 
+未知环境可反复交互时，还可以把不确定状态显式保存在规划器之外，再按episode采一个环境假设。[一条受限探索分支](https://arxiv.org/html/2504.20997v1)以文本摘要保留已经观察的统计与仍未知的转移，从该状态提出假设、按假设选择动作，真实episode轨迹再用于下一次摘要更新；假设在本轮保持一致，不代表它是真实环境或已校准Bayesian posterior。计数记住了也可能没有正确集中概率，长horizon和随机转移还会使planner失败；按假设较优的动作也不一定最有信息。摘要、假设、policy/cache与真实observation须分开回指，不能让模型补出的状态覆盖实际记录或获得行动授权。轨迹更新、假设采样、每步规划、缓存及交互验证全部计费，整体轨迹与逐tuple更新又有遗忘/调用取舍；统计不可复查、假设失准或随机长程不稳定时，保留可靠统计更新、固定探测/短horizon与独立执行检查，不由近似posterior或有限胜率签发通用探索、安全或regret保证。
+<!-- source-family:SF-2025-ARXIV-2504-20997 -->
+
 求助信号也可以来自原控制 policy，而不是语言模型自报：对冻结 policy 多次 MC Dropout，按 action 分布的聚合 entropy 触发外部语言建议，把原 policy 动作一并给建议者，无法解析时回退原动作。这是一条不重新训练 policy 的条件化介入分支；这个聚合 entropy 信号不是已认证的 OOD 或安全概率，高 uncertainty 也不证明建议者更可靠。调用率、实际改写动作的比例、改写后收益应分别验收，并另保目标、合法动作与可信执行 gate。<!-- source-family:SF-2026-ARXIV-2604-02226 -->
 
 [ASK 的受限导航对照](https://arxiv.org/html/2604.02226v1)只在 deterministic FrozenLake、Qwen2.5 与按 evaluation set 调参的阈值下给出局部证据：同尺寸多数持平且可退步，缩小地图时大模型组合能恢复部分结果，却在该 shift 上全部调用语言模型，不能再以“选择性”宣称省费。百次 policy 前向、建议 prompt/回答及阈值搜索都付费；咨询次数不等有益覆盖，也不由 token 或 episode steps 签发 wall-time、安全或一般规模定律。原 policy 足够、建议弱或预算不可验时，保留原动作、固定咨询规则或明确停止，不让 uncertainty 自己授予动作正确性。
@@ -378,6 +395,8 @@ Ledger 减少重复违反，却增加 conflict、staleness、token/selection cos
 preference 与 immutable policy 也不能由同一 judge 随意改写。一次性 planning 在约束完整稳定、交互预算低时仍
 合理。AdaPlanBench 的 text-only household simulator 只支持“terminal constraint-valid 不等于 plan effective”以及
 局部 repair 会回归的受限证据，不证明 text plan 已在真实环境成功执行。
+
+重新规划不必只由失败触发：完成一个subgoal后，资源、内在需求或目标间的边际价值也可能已经改变。可以在保留已完成证据与有效约束的前提下，重新评价尚未完成目标，合并、重排或删除冗余项，再把新目标交给符号planner；persona/value权重只提出偏好，不拥有世界事实、用户授权或安全优先级。[ValuePlanner的受限模拟对照](https://arxiv.org/html/2604.27699v1#S5)支持比较成功后重估与固定序列，却没有在价值、偏好对齐和执行失败上全面占优；模型打出的value分数也不能独自认证长程coherence。状态估计、目标/critic调用、形式建模、全部搜索与重新验证均付费，solver未找到计划不自动证明真实目标不可达。偏好不稳、形式域遗漏或收益不足时，保留固定已授权目标、原milestone与显式澄清，不以一次成功为由悄悄改写剩余承诺。<!-- source-family:SF-2026-ARXIV-2604-27699 -->
 
 Active-constraint ledger 保存已接受的约束，却不能替代尚未解决的澄清承诺。Planner 若已识别缺信息，可以维护带 item ID 的可变 question pool，让每项在提交前获得 asked 或显式 drop disposition；pool 非空时阻止最终提交，避免自由文本计划在后续推理中悄悄遗失问题。这只保证显式 accounting：初始 pool 可能不完整，drop 理由、用户回答与问题映射仍须独立核验，不能把移除视作已获得真值。
 
@@ -465,6 +484,8 @@ PbD pipeline 不把录制动作平铺给 agent，而先按命名 subgoal 建层�
 
 <!-- source-family:SF-2026-ARXIV-2607-24720 -->
 
+规划策略的训练目标也可以在只预测下一动作之外，加入对已观察转移的历史动作解释；原forward-only监督最直接，保有目标与可信轨迹时，另一受限分支让同一GUI策略同时输出下一action与导致当前画面的上一action，检验历史表达是否与当前观察相容。这里的“回溯”是辅助监督，不是实际undo或已验证的环境动态；训练输入保留哪些history、目标action是否仍可见、自然语言指令与原始action格式怎样转换，都必须独立声明。[ScaleTrack的有限对照](https://arxiv.org/html/2505.00416v1)中train/test历史表达匹配较失配好，但公式输入仍含被回溯target、图示文字又不同，不能据此发布无泄漏recipe或从截图唯一识别历史原因。辅助目标后部分grounding退步、一个离线step成功率不变；在线结果另用GPT4o规划、该模型定位，不归辅助目标独立因果。轨迹与截图制备、两阶段训练、历史/输出tokens及外部planner评价均付费，step预测与完整任务成功分别验；输入支持、历史格式或净收益不合格时保留原forward-only策略、已验历史编码与真实observation后再规划，不让自述历史取得执行或环境事实权。<!-- source-family:SF-2025-ARXIV-2505-00416 -->
+
 Planner 与 executor 还可以在训练中交替适应，而不只在部署时互相重试：先生成一份候选 plan pool，按当前 executor 的实际成功反馈筛选或重排，再让 executor 练习已掌握技能与至多一个新增技能的组合，随后更新 plan 偏好。这里改变的是供给给 executor 的训练计划分布；后续 DPO 不等于每轮都自由生成新计划，LLM 给出的 prerequisite 也不是真实依赖 oracle。[有限共适应对照](https://arxiv.org/html/2604.20601v1)支持计划选择相对固定供给的局部作用，却仍有新对象反退；同环境步数不包含 ontology、初始 plan、筛选、planner DPO 和全部 executor 训练费用。应共同绑定技能定义、掌握阈值、pool 与两端 checkpoint；依赖图有环、技能误判或迁移回归时，保留固定可信计划、简单 curriculum 与独立执行验收，不让计划偏好批准环境完成。<!-- source-family:SF-2026-ARXIV-2604-20601 -->
 
 ### 环境的排序不应改写用户目标
@@ -518,6 +539,14 @@ owner 批准目标变化。这样提高可重放性，却增加语言设计、to
 冻结模型和有限 research trajectory 只支持受限可读性；模型特化或误判会把合理探索提前终止。信号不稳时回退显式 workflow、固定预算和外部 verifier。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00393` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00393v1)，2+1+2=5，具体gap深入。必要Source/date/反侧见唯一SUP H17/R39；root C24实际owner完整局部/逐字PRE通过授单段及本人注。限制、全费与旧分支近正文，不授完整理论/recipe、普遍性能安全；作者已保存，root C27非writer实际正文/完整局部及本人注POST通过，窄lease释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00276` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00276v1)，2+1+2=5，具体owner差额深入。必要Source/date/直接反侧见唯一SUP R35；root C15实际owner完整邻接/逐字PRE通过，授单段及本人注。费用、反侧和旧分支近正文，不授普遍性能/安全/完整理论；作者已保存，root C19非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-27960` — May02补May1，v1§2.2/3/4必要层，5分，default/answer语义具体缺口深入；PASS非翻译真值，不采SMT表达能力/全费速度强断言，保局部反退。未核artifact/复现；非writer D11必要Source/owner/逐字PRE通过，root窄写本段与本人note，非writer D12实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
+
+- `SF-2026-ARXIV-2604-27699` — Daily2026-05-02补May1；v1§3–6，2+2+2=6，成功后remaining-goal重分析差额深入。保十场景、NoAdjustment价值反侧/对齐反退、LLM评分与形式域限制，不授coherence唯一因果/真实安全。未核artifact/复现；reader R36必要Source/owner/逐字PRE通过，root授本单段及本人注窄lease；作者已实际保存，reader非writer实际正文/完整两侧/本人注POST R37通过，root接纳并释放本窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
 
 - `SF-2026-ARXIV-2604-22934` — Daily2026-04-29补Apr28，supp_apr29_author_fresh；[exact-v1](https://arxiv.org/pdf/2604.22934v1)PDFp2–6/B2/C1/C4/C6，2+1+2=5，probe-first控制接口必要深入。Planner coverage非完备证明，SQL→NL verifier非formal等价，680→351只modelled非实测2×；搜索/并发混变、合法空行与全费反侧近正文，不授生产SLO/数据库副作用许可。root必要Source/actual owner/A21逐字PRE通过并授本段+本人注窄lease；作者实际保存并顺读完整邻接/本人注，root非writer实际新正文、完整前后邻接与本人注POST通过，窄lease释放，作者仅行政同步并读回；未核代码/复现，不授DAY。
 
@@ -656,3 +685,13 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2604-17821` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17821v1)必要Source与本日SUP有效，原分5，具体接口差额必要深入。仅采用上述条件机制，支持/直接反侧与全费用近正文，不授一般无偏、真值、无损、安全或SLO。root实际owner/逐字PRE及保存正文、完整两侧与本人注POST均通过，窄lease释放；作者行政同步并实际读回；未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-20601` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20601v1)A5必要机制/评价及直接反侧，2+1+2=5，A7具体owner差额深入。有限采用命题、失败退路与全费近正文，不授全主张/生产保证；非作者必要Source按A5 root/fresh具名结果有效复用，root实际现局部/逐字PRE通过并授单段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-20643` — Daily2025-05-01补Apr30；[DishCOVER exact-v1](https://arxiv.org/html/2504.20643v1)§4.1–4.5/§6.1–6.3/§8/AppendixB必要Source，2+2+2=6，proposal算子差额深入。只采两已存结构间编辑路径的候选接口；保parse/repair非语义、value与novelty人口/反退、共享摘要非独立真值与全部费用，不授烹饪安全/Science迁移或创造力保证；未核代码/复现。Newton§39实际Source/owner/逐字PRE通过，root授指定单段/marker/本人注；Godel已按稿保存，Newton§41非writer实际完整新增/两侧/本人注POST通过，root读回接纳并释放指定单段；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20628` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20628v1)Methods/GMM/FP/Alg1、Results/Discussion与current必要域，2+2+2=6，片段策略复用接口差额深入。仅采用近似程序→局部策略消费者及失效回退，保Eq2方向未闭不发布recipe、单程序非后验、30人/20规则地图/均匀先验与fallback未验证、全部费用，不授人脑因果/全局最优/开放Agent安全；未核代码、图像像素或复现。Newton§55实际Source/具体owner通过；root已授compiled-domain两段后/需求变化前指定窄位；Godel按逐字稿保存，Newton§62一次实际非writer完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20997` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20997v1)§4–7/A.1–A.2/B.1/C与current必要域由Newton§60实际核，2+2+2=6，显式epistemic state消费接口差额深入。仅假设/观察/状态更新分责；保stochastic RiverSwim/规模反退、缓存非stationary能力、更新遗忘/费用及协议数量差，不授真实posterior/全探索或行动安全；未核代码/全prompt/图像/复现。逐字PRE及完整邻接经Newton§60/67实际核/root指定窄位通过；Godel按稿保存，Newton§70一次非writer实际完整新增/两侧/本人注POST通过，root已实际消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00416` — Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00416v1)§3–5/Tables1–7必要域及Figure2文字，2+1+2=5，联合前后action监督的历史支持/target可见性差额深入。Ohm§53必要事实/§61受限Source与唯一AGENT-PLANNING通过；保Eq2/模板未闭合、train/test格式、grounding反退/step分母及在线外部planner角色，异常硬件标签未修。未看截图/曲线像素、核数据/代码或复现；Ohm§66逐字PRE及root实际完整稿/邻接/末注核通过，root已授指定单段/marker/本人注窄位；作者按许可保存；Ohm§69一次非writer实际完整新增/两侧/本人注POST通过，root已实际完整消费接纳本项整合并释放指定窄位，不授DAY。
+
+- `SF-2025-ARXIV-2505-00610` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00610v1)§1–4/Table1/图注必要，2+1+2=5。Ohm71日证、95有限会议角色/必要Source通过；只取posthoc query→typed树证据→解释consumer差额，保26类型/有限树、GPT4/4o冲突、@1/@3未闭及全费。不采全形式验证/真实plan/用户信任保证，未核底层树/620原答/实现或复现；root已实际读Ohm111稿/当前完整邻接与本人注并授指定单段/本人注；作者已实际保存并完整self-read，Ohm114实际完整新增/两侧/本人注非writerPOST通过，root已实际消费接纳并释放该指定窄位；非日级DAY。

@@ -64,6 +64,8 @@ message passing:
 
 Shared memory 避免把所有协作都表达成网络消息，但需要同步、ownership 与一致性协议；message passing 显式暴露边界，更容易延伸到不同 address spaces 和不同 hosts。Socket 可以跨主机，却只提供 byte-stream 或 datagram 语义，不理解 tensor、rank group 或 collective。
 
+同一地址空间内，host语言的调用边界也不等于内部执行模型。简单dense计算交给成熟BLAS并同步等结果最易维护；若上层tile之间存在不均衡依赖，只增加BLAS线程仍可能留下等待。可先初始化任务runtime及worker人口，把Python入口显式注册成该runtime的任务，让内部tile经future/dataflow按依赖推进，再在入口等结果、任务排空后停止runtime；主线程不因启动了runtime就自动成为其worker。这样内部可以异步并行，Python调用仍然阻塞，不是新nonblocking API或GIL释放的证明。[单CPU双精度的受限绑定证据](https://arxiv.org/html/2505.00136v1)只支持所测host/runtime交接，无显著绑定开销不等所有输入零拷贝或所有算法更快：GPyTorch优化仍更快，小问题或低核数也有原路径更优的反侧，求解复用/梯度算法差异不能全归调度。启动收尾、布局/绑定、tile调度和完整计算均计费；依赖过细、状态生命周期或净性能不合适时，保留同步BLAS、较粗任务和原成熟库，GPU/多机扩展另证。<!-- source-family:SF-2025-ARXIV-2505-00136 -->
+
 MPI 把问题提升为并行程序的执行模型。它定义 process/rank、communicator、point-to-point、collective、topology、one-sided communication 等语义，使程序描述“哪些 participants 对哪些数据共同完成什么操作”。MPI implementation 可以选择 shared memory、network transport 或 accelerator-aware path；能否直接处理 device buffer 取决于具体 implementation 和构建能力，不能从 MPI 标准名称本身推出。
 
 因此，从 IPC 到 MPI 不是“一个更快的通信 API”这么简单，而是协作范围、participant identity 和 group semantics 的扩展。
@@ -85,6 +87,8 @@ MPI 把问题提升为并行程序的执行模型。它定义 process/rank、com
 这减少同步与传输，却叠加 local drift、压缩误差和拓扑混合误差；有偏但 contractive 的压缩器也只有在相应假设下可用。作者的有界、独立无偏随机梯度、固定连通 mixing、特定 adaptive 参数及步长条件不覆盖任意 Adam、动态故障网络或重尾梯度。小型 GPT 的四 A100 与 CPU 视觉实验支持受限可执行性，通信轮数或字节节省不等于生产 wall-clock 加速。收敛偏离、估计不同步或恢复无法保持身份时，应缩短 local interval、减弱压缩或回退同步完整状态；下一章的 tensor partition 不能替本协议证明 optimizer 等价。
 
 <!-- source-family:SF-2026-ARXIV-2604-09970 -->
+
+若目标不是找到一个参数最小点，而是从分片数据对应的posterior采样，共识状态和噪声还须按采样律共同定义。一条受限分支在local potential梯度之外加入共同凸域的Moreau–Yosida距离惩罚、邻居mixing与独立Gaussian噪声；网络混合、离散步长和软化域分别引入误差，不是给普通SGD加噪声就得到正确全局posterior。有限软化保留域外概率，每步并非硬投影可行。[必要机制与条件](https://arxiv.org/html/2605.00723v1)仅在强凸smooth局部potential、固定连通对称mixing及受控gradientnoise等前提下讨论分布距离，不能外推非凸LLM或动态丢包。投影oracle、通信、噪声流/seed、局部链状态、步长与软化参数均计费并共同恢复；采样质量或假设不合适时保留集中式/其他已验证采样器，需要点估计时仍用原同步或local优化，不由节点均值接近批准后验正确或数据隐私。<!-- source-family:SF-2026-ARXIV-2605-00723 -->
 
 重尾梯度还要求改变被混合的下降方向，而不只是压缩 payload。有向 row-stochastic mixing 通常收敛到由左特征向量 `π` 加权的平均，直接套用普通平均会偏离等权目标；一个同步分支用 Pull-Diag 校正梯度 tracker，再在每次优化更新之间执行 `K` 轮 gossip，并归一化 tracker 的方向。理论以固定强连通拓扑、L-smooth 且下有界目标、无偏局部梯度和 `p∈(1,2]` 的有界 p 阶中心矩替代必须有限方差的条件，minibatch 与混合步数还须随精度、节点数和 spectral gap 设置；它不证明动态丢包、异步 stale update 或任意重尾噪声下都有效。<!-- source-family:SF-2026-ARXIV-2601-11435 -->
 
@@ -880,6 +884,8 @@ support identity 与 optimizer state 必须共同成为 correctness contract，�
 
 [联邦更新相关性的有限对照](https://arxiv.org/html/2604.14751v1)显示，不同层的 reshape 没有统一最优选择，更多 local steps 也会削弱某些模型的时间相关；更短的单轮表示可能因收敛更慢而增加总传输量。LeNet/ResNet 与小线性模型的元素数统计，不是带真实链路、拓扑和端到端训练的速度保证，某些 PCA 构造本身也不实用。应共同结算达到目标质量的轮次、所有上下行、basis 计算与临界路径；子空间漂移、维度或净费用失配时，保留 dense updates、已验证的固定压缩/残差方案或更频繁但明确付费的刷新，不由空间相关自签下一轮无损。
 
+联邦训练若还用control variate校正client drift，低维通信不应同时删掉完整校正状态。[一条受限随机子空间分支](https://arxiv.org/html/2604.25467v1)让各client共享同轮正交投影，只交换短坐标，却在CPU保留model与control的正交残差；换基时先从完整状态重新投影，再只更新当前子空间，未覆盖分量继续保留。这与反复旋转仅剩的低维control不同，也不意味着local gradient只需在低维计算：该方法仍重建ambient model并计算完整梯度。它支付CPU状态、投影/回填、跨设备访问与质量回归，理论步长和误差又依赖r/d；CIFAR-100对照仍弱于full SCAFFOLD，且非严格同compute，不能叫无损或把所有差额归于残差。应共同保存projector seed/revision、完整control与model残差及round身份，比较达到目标质量的总通信和时间；状态无法对齐、投影太窄或净收益不足时，保留full correction、dense updates或已有验证的压缩方案。<!-- source-family:SF-2026-ARXIV-2604-25467 -->
+
 ### 矩阵耦合 Optimizer 必须把更新本身变成 Distributed Operation
 
 以 element-wise optimizer state 做 ZeRO/FSDP 式分片，在更新可按参数局部计算时是合理的。矩阵级 Newton–Schulz optimizer update 却耦合整块矩阵，局部 post-processing 会让相同 checkpoint 在不同 layout 下产生不同语义。训练状态因此必须增加 matrix layout、collective algorithm、worker group 与 optimizer-step identity，把更新本身作为分布式矩阵操作并与 checkpoint 原子提交。论文在 embodied foundation model 与 LLM 训练中报告加速且性能接近 AdamW，但没有证明任意拓扑、矩阵形状或长程收敛与集中式实现等价。collective 中断、layout 漂移或数值分歧时应恢复最近一致 checkpoint，并退回已验证的 AdamW/旧 optimizer 路径；局部优化器与矩阵耦合优化器按更新结构共存。
@@ -1320,6 +1326,8 @@ Embodied RL 的 simulator、rollout、reward 与 trainer 速度差异大；同�
 若完成时间与任务难度相关，按完成顺序贪婪消费 trajectory 还会改变一段训练时间内的样本 mix；全 FIFO 保留生成次序，却可能被单个长任务拖住。一个有界折中让 scheduler 维护全局生成序列、未消费队头 `i` 与窗口宽度 `W`，只允许消费 `[i, i+W-1]` 内已完成项，并在队头被消费后前移窗口。窗内可以乱序，窗外即使完成仍不可消费；它以保留一部分 straggler 等待换取较小的消费序号偏离，不是用到场频率重加权修正同一种误差。<!-- source-family:SF-2026-MINIMAX-FORGE-CN-20260212 -->
 
 窗口限制的是生成序号，而非 behavior-policy 年龄或 wall-clock 等候时间：最慢队头未被消费时，窗口仍不能前进，既不能称彻底消灭队头阻塞，也不保证无偏采样。Queue identity、完成/消费状态、`i/W` 与 policy freshness admission 要分别保留；超时、取消、丢弃和恢复如何移动队头还需单独协议。[公开 windowed FIFO 说明](https://www.minimax.cn/blog/forge-scalable-agent-rl)只披露这条调度规则，没有同预算 FIFO/FFFO/window 的质量与吞吐消融，不能把另一项 prefix merging 的加速声明移作调度收益。新增窗口状态、等待与分布/freshness回归均有代价；完成时长近似、确定顺序或同步边界优先时，全 FIFO 仍合理，窗口/恢复协议不可核时应回退全 FIFO 或已有可验证的有界异步路径。
+
+批内补采样的停止条件还应与消费窗口分开：生成完成后即可并发计算reward，并按已确认有效的样本数和当前通过率决定是否补发，但“样本已够”不代表所有剩余请求都可取消。一个[受限rollout分支](https://github.com/XiaomiMiMo/MiMo/blob/0f485cc820d855f38a7878fad338f02f4a2f38da/MiMo-7B-Technical-Report.pdf)按启动次序选样，只有有效样本达到训练batch要求、且排在所选样本之前启动的任务都已完成，才停止更晚的在途生成，避免直接用完成速度筛掉长响应。它仍可能等待较早长任务，批内reward并发也不等跨policy更新无陈旧；工程上须分别记录启动顺序、生成与reward完成、有效性、消费及取消确认，未确认回收的资源不能立即复用。额外reward服务器、补采与已取消计算都计费，短trace的利用率/速度不证明无偏或长期质量；顺序、有效性或取消状态不可核时，保留全批完成后再选择、明确policy边界和原有同步路径，不让快到的样本自行改变训练人口。<!-- source-family:SF-2025-XIAOMI-MIMO-7B-ROLLOUT -->
 
 <!-- semantic-body-binding:SF-RESCALED-ASYNCHRONOUS-SGD-OPTIMAL-DISTRIBUTED-OPTIMIZATION-UNDER-DATA-AN:start -->
 异步 SGD 若按更新到达顺序直接应用，会让快 worker 在 heterogeneous data 下获得更大 objective 权重。Runtime 因此要记录 worker sampling probability、arrival frequency 和 intended global weighting，并对 update 做 rescale；否则系统优化已静默改写学习目标。Rescaling 可修正特定假设下的 bias，却增加方差并依赖频率估计；数据近同分布或同步成本可接受时，普通同步聚合仍更稳定。
@@ -1913,6 +1921,8 @@ Harness 与长程重跑成本高，training-quality parity 也不等于数值等
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-00723` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00723v1)，2+1+2=5，具体owner差额深入。reader R32实际必要Source/date/直接反侧；root C13实际owner完整局部邻接/逐字PRE通过，授本单段及本人注。采用限制和全部费用近正文，不授普遍理论/性能/安全；作者已保存，root C15非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY，未核实现/复现。
+
 - `SF-2026-ARXIV-2604-22072` — Daily2026-04-28补Apr27；2+1+2=5，v1§III～VII，逐坐标M分片的单function工作集与对象请求权衡具体差额深入；float32/randomupdates、暖态聚合非完整训练，TableIV/VI漏write与S3跨表费用隔离，不采bitidentity/无上限模型或全链加速。reader必要Source/date/实际owner与逐字PRE通过，root授指定两段+本人注窄lease；作者已写并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST通过，root接纳并释放窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-22126` — Daily2026-04-28补Apr27；2+2+2=6，exact-v1§4.3～6.5必要机制与反侧；2R有界/epoch/host manual-progress、single-active与fail-stop/reliable-RDMA、MapleAM/Cannon反侧均保留。fresh reader必要Source/date/具体owner/逐字PRE及非writer实际POST通过，root接纳并释放两段+本人注窄lease；作者仅行政同步本注并读回，不授DAY。未核实现或复现。
@@ -2276,3 +2286,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-17550` — Daily2026-04-22补Apr21；[Flint exact-v1](https://arxiv.org/html/2604.17550v1) §3–7必要层，2+2+2=6。采用执行前capture位置/三路fidelity分拆，不授数值正确、免单GPUprofile或模拟DSE为真实训练收益；metaSDPA/customop/动态控制与全费限制近正文。root实际必要Source/actual owner及A47逐字PRE通过并授窄lease，作者按批准位置写入并顺读邻接；root实际非writer正文/完整两侧邻接/本人注POST已通过，窄lease释放，作者仅行政同步并实际读回，不授复现或DAY。
 
 - `SF-2026-ARXIV-2604-22562` — Daily2026-04-28补Apr27；2+1+2=5，R28.37 actual§4～7/AppA/C/D/E/date；spectral normalization/rank-selfconsistency与counterfactualutility分门、零/负/tieguard、uniformFedAvg对照与局部server-time不代全费保留。作者actual owner/拟文校准；未核实现复现，不授DAY。 reader actual owner/逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接；reader R28.46实际非writer POST通过，root接纳并释放指定窄lease，仅行政同步本人注。
+
+- `SF-2026-ARXIV-2604-25467` — Daily2026-04-30补Apr29自然日；[exact-v1](https://arxiv.org/html/2604.25467v1)必要Source、actual owner和逐字PRE见本日唯一SUP A11–14/R30-7–8。作者实际完整局部及相邻章节交接已读，非作者reader必要源/PRE通过，root授此单段+本人注窄lease；作者已保存；非writer supp_apr30_review_fresh实际新正文/完整两侧/本人注POST通过，root已接纳，空行修复有限读回通过，指定窄lease已释放。费用、反侧及旧路线近正文，不授强保证、实现验证或复现，不授DAY。
+
+- 2026-10-16：SF-2025-XIAOMI-MIMO-7B-ROLLOUT，来源为[MiMo-7B固定revision报告](https://github.com/XiaomiMiMo/MiMo/blob/0f485cc820d855f38a7878fad338f02f4a2f38da/MiMo-7B-Technical-Report.pdf) §3.4/3.4.1、Figure6文字及Tables2–3；6分，分布/训练消费受影响域深入，Newton§19/24真实日期权限/Source/评分/本段PRE通过。发布日按署名参与者陈述归因，不冒官方公告或首创；仅采用批内FIFO取消条件，不采5-step加速普效、无偏、无staleness或完整回收协议；未核代码/复现。作者已按root指定窄位保存，Newton§25实际完整新段/两侧/本人注非writer POST通过，root实际读回接纳并释放窄位；本注仅同步既成事实，不授日级完成。
+
+- `SF-2025-ARXIV-2505-00136` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00136v1)，2+1+2=5。Ohm§29 arxiv日证、§32/33先artifact/正式采用与受限Source、§34唯一Ch36具体缺口通过；因host/runtime入场/收尾缺口深入受影响§3/4.2/4.3/§5/6，未量图、未核代码或复现。Apr2官方RELEASED数据/同摘要README已公开，May2仅已核arxiv完整正文事件，不称机制/代码首次披露。仅采同步host边界与内部task依赖、全费/反退，非零拷贝/GIL普律或GPU/多机实现。root实际核逐字稿/完整邻接并授Shared memory后/MPI前指定单段/本人注窄位，作者已实际保存；Ohm§35非writer真实完整新增/两侧/本人注POST通过，root已实际读回接纳本项整合并释放指定窄位，不授DAY。

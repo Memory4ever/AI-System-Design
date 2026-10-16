@@ -95,7 +95,8 @@ def _frozen_dates(fields, title, start, end, root, path, errors):
                 if not primary or not re.match(r"https?://[^/\s]+", primary[2]):
                     raise ValueError("原V3候选缺少精确材料链接")
                 key = f"material:{material}"
-                if key in frozen:
+                url_key = f"url:{primary[2]}"
+                if key in frozen or url_key in frozen:
                     raise ValueError("原候选精确身份重复")
                 if re.fullmatch(r"\d{4}-\d{2}-\d{2}", published):
                     lower = datetime.combine(date.fromisoformat(published), time(), BEIJING)
@@ -110,6 +111,7 @@ def _frozen_dates(fields, title, start, end, root, path, errors):
                 if parse_errors or not valid_date:
                     raise ValueError("原候选公开日期与原窗口不一致")
                 frozen[key] = published
+                frozen[url_key] = published
             return frozen
         window = re.search(r"^\*\*Strict Window:\*\* (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ～ (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})（北京时间，左闭右开）$", original, re.MULTILINE)
         if not window or tuple(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=BEIJING) for value in window.groups()) != (start, end):
@@ -299,6 +301,8 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
             seen_materials.add(link[2])
         identity = re.fullmatch(r"https://arxiv\.org/(?:html|abs|pdf)/(\d{4}\.\d{4,5}v\d+)(?:\.pdf)?", link[2]) if link else None
         frozen_date = frozen_dates.get(f"material:{material}")
+        if frozen_date is None and link:
+            frozen_date = frozen_dates.get(f"url:{link[2]}")
         if frozen_date is None and identity:
             frozen_date = frozen_dates.get(f"arXiv:{identity[1]}")
         if frozen_date is not None:

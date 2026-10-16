@@ -100,6 +100,9 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 
 但不能把距离近当作语义的完整定义。几何由训练数据、目标、模型架构和参数化共同塑造；不同 checkpoint 的坐标系不能直接逐维比较，token embedding 的近邻也不必等同于人类定义的同义词。
 
+表示对象也不必始终是可任意移动的向量。一个[受限矩阵表示分支](https://arxiv.org/html/2504.20839v1)采用实值Cholesky式参数化约束density matrix的半正定性，并另要求单位trace，在CBOW式训练中以fidelity替代cosine；Cholesky因子本身不自动完成归一化，本次所核正文也未闭合完整数值维护流程。它同时改变了可行参数空间和比较规则，不是给原向量换一个量子名称，也不证明表示承载物理语义。采用时须将合法性条件与目标一同保存，独立矩阵的tensor组合仍不能自动表达上下文交互；弱小样本的词对相关性与按存储参数配平，也不认证优于向量或适用于完整语言模型。矩阵存储、合法性维护、相似度计算与重新训练/下游回归均付费，原文不完备的数值接口不能当已核实现；目标不适配、退化或收益不抵成本时，保留普通embedding与任务验证，不由几何合法自签语义正确或量子硬件优势。
+<!-- source-family:SF-2025-ARXIV-2504-20839 -->
+
 跨 checkpoint 扩展词表时，一种合理初始化是先用共享 token 的 donor rows 表示新增行，再把相同线性系数用于 base rows。这保留了词表身份之间的锚点关系，却没有保留两个模型的全部几何与读出：donor 中对某个内部特征或输出方向的低响应，不推出迁移后的 base 行仍低响应。新增行、共享锚点、迁移算子及 base 的 embedding/output head 因而共同定义组合产物；只验 donor 的近邻或整体任务质量，不能把其行为信任自动传给组合后的模型。
 
 这条边界要求迁移后再验新增 token 的发出行为、原任务回归，以及不同上下文和采样条件，而不是取消旧的 lookup 或所有线性初始化。一个受限攻击实验通过修改 donor artifact 并利用已知 base 几何构造了这种差异；它不证明任意模型对都会受害，也不提供完备防御。后续 fine-tuning 可能抑制异常，额外调整行范数则又改变了被验收的产物。分词和 token-ID 的联合版本交接仍由 [Ch11 Tokenizer](./11-tokenizer.md#vocabulary-adaptation-是-tokenizer-与-checkpoint-的联合迁移) 承担，本章只拥有行几何及其与后续读出的耦合。
@@ -144,6 +147,9 @@ Pool 会丢失局部顺序和细节，扰动又改变 server 的输入分布，�
 初始表示的单位还可以从静态实体编号改为一次历史交互的快照。只用item ID最简单，适合身份本身已包含足够预测信息的序列；若同一对象在不同时间面对不同用户、场景和交互条件，单一lookup却不能在入口保留当时状态。一条受限分支把历史事件的user、item、context及cross字段按组拆为多个slots，经分组残差量化存成离散indices；当前请求不必走同一个离线量化过程，而以训练过的投影进入相同slot空间。后续网络再分别混合一次事件内的字段和跨事件的历史，把“历史记录的单位”与“怎样读取时间关系”分开，而不是只增加item序列长度。<!-- source-family:SF-2026-ARXIV-2604-15650 -->
 
 [SIF的受限对照](https://arxiv.org/html/2604.15650v1#S4)支持这条输入表示分支，不证明量化无损或所有收益都来自snapshot：item-only消融同时取消字段混合，分组数量与跨表GAUC口径也有不一致，不能照抄完整精确配方。只存indices的算术比例不含码本、离线特征制作、存取、当前投影、两轴attention和训练全费；业务A/B亦不是通用语言模型质量或服务SLO。字段/schema、事件时间、slot/codebook与当前投影应作为同一输入产物验收，检查真实可用历史、信息损失与最终任务；兼容或预算不合适时，保留item ID加少量可信特征、连续事件表示及原序列模型，不为“sample token”名称扩张输入复杂度。<!-- source-family:SF-2026-ARXIV-2604-15650 -->
+
+输入单位也可以是带关系的观测，而不只是一个实体编号或一组独立字段。[一条受限分支](https://arxiv.org/html/2506.22706v1)先用图encoder组织节点、边和当前状态，再把latent映到简单噪声坐标，以transport相关目标与解码训练组织表示支持，后续策略读取这份表示来选择对象与动作。表示可与策略共同适配，也可先预训再冻结；重构、transport与policy reward因而各有更新身份，不能把latent中的间隙填平当作新观测已合法或策略能应对任意拓扑。训练已见拓扑间切换仍可能退化，节点置换下稳定也可能只是所有图encoder共享的性质，而非transport独有；更多预训、不同奖励归一与测试环境适配不能藏进同一泛化分数。应联合保存观测schema、编码/映射、冻结时点与策略版本，并分别验表示支持、实际动作结果与未见条件。图构造、预训、采样/解码、策略与切换全付费，支持或预算不合适时保留稳定编号/可信字段、已验图表示与对应专用策略，不由漂亮几何或合成网络reward签发真实安全。
+<!-- source-family:SF-2025-ARXIV-2506-22706 -->
 
 ## 参数量与 Tokenizer 的联动
 
@@ -308,6 +314,10 @@ token ids
 → contextual computation
 ```
 
+为每种组合训练新向量，并不是扩大词法容量的唯一方法。另一分支先在host保存语料n-gram的后继token IDs与count/backoff scores，再以这些分数加权当前模型自身的unembedding行，形成额外输入表示。表存的是只读统计与离散候选，不是另一套需要梯度更新的learned embedding行；分数也不必是归一概率。当前unembedding仍属于模型，backbone必须已经为这条early-fusion接口训练，不能把换表免训练写成任意原始LM都可直接接入。
+
+静态表把容量压力移到host，而不消除建表、查找、搬运、融合和版本管理；大表不计入模型参数或训练FLOPs公式，也仍占实际内存与带宽。[COUNT的受限对照](https://arxiv.org/html/2610.20456v1)是在已训练COUNT、相同vocab与读取接口下换domain counts，所测吞吐是接近普通基线而非普遍加速，混合任务与训练/部署读取配置失配仍可退步。表的语料、tokenizer、候选规则与模型revision应共同绑定；领域统计不可靠、host预算不足或质量回归时，保留原表、learned lexical memory或普通输入embedding，不把频数命中当知识正确性。<!-- source-family:SF-2026-ARXIV-2610-20456 -->
+
 层内注入需要分开“读哪个地址”与“采用多少内容”。[Engram 的受限架构](https://arxiv.org/html/2601.07372v1#S2)保留普通输入表和输出头，将多路 n-gram 读出拼接为 `e_t`，再以当前层的 `h_t` 门控。以下使用列向量，`d_mem` 是读出宽度，`d_model` 是 residual 宽度，`W_K/W_V` 将前者投影到后者；论文的单分支形式为：
 
 ```text
@@ -452,3 +462,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-12377` — Daily2026-04-16补Apr15；[exact-v1](https://arxiv.org/html/2604.12377v1) §3/Eqs1–4/§4/T1–4/Limitations与C/E.2/T7/J.1–2，2+1+2=5。结构部件旁路→原subword读出/embedding融合，非tokenizer替换；norm/粒度/任务反側、等长非免费与适配费用近文。R101Source/R86date与resume_apr16_review实际A48逐字PRE通过，root授本窄位置；resume_apr16_review实际真实正文/完整邻接/本人注POST通过；作者仅同步此注并实际读回，不授全语言/无遗忘/复现或DAY。
 
 - `SF-2026-ARXIV-2604-15650` — Daily2026-04-21补Apr20；[SIF exact-v1](https://arxiv.org/html/2604.15650v1) §4.1–4.4/Eqs1–19、§5.1–5.5/Tables2–6，2+1+2=5，event-snapshot/历史量化与当前投影同slot输入接口差额深入。保item-only双变化、T/字段/GAUC口径矛盾与索引非无损/非全费，不授通用模型提升或SLO。fresh必要Source/A13实际owner及修订PRE通过，root授本窄lease；fresh非writer实际真实正文/完整邻接/本人注actualPOST通过，root接纳窄lease释放；作者仅行政同步，不授日级完成，未核artifact/复现。
+
+- `SF-2026-ARXIV-2610-20456` — Daily2026-10-16窗10-15；[exact-v1](https://arxiv.org/html/2610.20456v1)必要Source及采用/反侧见本日LIVE A7–8与R10/root具名层，2+2+3=7，具体owner差额深入。仅本轮两段的受限接口与理论边界，全部费用及旧路径近正文，不授通用加速/质量、代码核验或复现。reader A8/R15逐字PRE通过，root授指定两段/heading与本人注窄lease；作者已保存并实际读回，独立reader R17实际正文、完整邻接与本人注POST通过，root已释放指定窄lease；作者仅行政同步并实际读回，不授DAY。
+
+- `SF-2025-ARXIV-2504-20839` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20839v1)§4.1/5.1/Table1必要Source，2+1+2=5，受约束表示/consumer差额受影响深入，Newton§33实际Source/当前owner及收紧PRE通过，root§9授指定一段/marker/本人注。仅PSD因子与另行单位trace、CBOW/fidelity接口；不采退化PSD唯一Cholesky、trace完整数值recipe、弱相关优越/同预算、context组合/量子语义或硬件保证，存储/维护/重训/回归全费及普通向量退路近正文。Godel按Newton收紧稿已保存并顺读完整两侧与本人注；Newton§35非writer实际完整新增/两侧/本人注POST通过，root读回接纳并释放指定单段，本注仅同步既成事实，不授DAY，未核代码/复现。
+
+- `SF-2025-ARXIV-2506-22706` — Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.22706v1)§4–6/Tables1–7必要Source，2+1+2=5，结构化输入/regular支持与policy训练接口差额深入。保manifold/PSG与图方向口径、见过拓扑切换/节点置换非OT独有、M3预训/测试微调与预算不配、Table7未隔离OT、reward/truncation及3–10倍训练费，不授可逆/有效图/任意OOD或真实网络防御。未核完整OTproof/补表/图像/代码/复现；版本化/验收与退路为本项目推断，不冒原文实现。Newton§22实际Source/分数/具体owner及§25逐字PRE通过，root实际完整拟稿/当前两侧与末注后授本单段/marker/本人注精确位；Godel按稿保存，Newton§29实际非writer完整新增/两侧/本人注POST通过，root已实际完整读回接纳并释放该精确位。本注仅同步既成事实，不授DAY。

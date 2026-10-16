@@ -496,6 +496,9 @@ control/serving contract，不构成跨 embodiment 的性能保证。
 
 固定放置在同构 GPU 上最容易预测；设备异构或显存紧张后，offload 可扩大可服务集合，但 scheduler 必须拥有算子/权重 residency、迁移时间与 preemption checkpoint，不能只按空闲容量路由。收益是提高利用率，代价是迁移抖动、恢复状态和尾延迟；SLO 紧或迁移成本不可测时回退静态 placement。<!-- source-family:SF-2026-ARXIV-2605-19593 --> exact-v1 §3–5 只验证其异构设置，§6 不支持通用 offload 阈值。
 
+抢占后的去向还取决于单机内的异构执行条件。[一条受限共享内存SoC分支](https://arxiv.org/html/2506.24045v1)将可静态编译的token算子融合、分块交给NPU，动态attention与部分Decode留给iGPU，再让runtime依据kernel profile、reactive优先级及共享DDR压力选择下一次dispatch与proactive搭载。这里优先级、已ready依赖、带宽余量和恢复状态必须同时满足，而不只找一个空闲加速器；当前kernel仍要跑完，layer进度、KV与前驱activation的指针有效也不证明全切换零成本。单reactive、不过RAM、工具不争NPU与graphics预留是受限前提，standalone profile、chunk尺寸和估计slack不是任意突发的硬deadline。应共同保存HEG/编译与kernel版本、真实带宽/驻留、优先及aging状态，分别验reactive首响应、后续输出与proactive完成/丢弃人口；均值TTFT改善不能盖住后台吞吐代价。编译profiling、协调、缓存及异构执行全计费，估计漂移、资源超订阅或状态不可恢复时，停止机会搭载，保留保守队列、固定映射与独立容量，不由共享地址或局部CPU对照签发普遍SLO与总费用优势。
+<!-- source-family:SF-2025-ARXIV-2506-24045 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20723:start -->
 边缘设备上的 partitioned inference 还要求 scheduler 显式管理依赖与 residency。CROWDio 类路径让设备一次
 JIT-load 一个 DistilBERT partition，按 1:1 依赖流式传递并压缩 payload，再以分层策略给异构 Android 节点派工；
@@ -1239,6 +1242,9 @@ deadline - predicted remaining service = slack budget
 ```
 
 它以预测器、跨层 telemetry 和公平策略换更高 SLO goodput；服务时间漂移、深层存储拥塞或租户长期被挤压时，预算会失真。保守 reservation 和简单公平队列在预测不可校准或监管优先级固定时仍成立。
+
+剩余预算也可以决定请求进入哪一类完整服务实例，而不一定拆开Prefill与Decode。[一条受限双池分支](https://arxiv.org/html/2504.20828v1)让吞吐池先推进已有Decode、按紧迫度重排等待Prefill；预测将要违约而尚未开始Prefill的请求，仅带prompt转往优先Prefill的低等待池，所以不需要搬移该请求的驻留KV。这里换走的是排队位置而非已执行状态，备用池仍会积压，抢先Prefill也可能延迟自己的Decode，不能把预测deadline或平均TBT达标签成硬保证。预测校准、备用容量、控制器、重排与拒绝回退均付费；阈值过早会挤满备用池，过晚又无法补回等待，模型/长度与负载漂移还会使估计失准。两池没有足够余量、Decode受损或收益不抵容量成本时，保留普通公平队列、保守admission和明确过载拒绝；完整统计转移、丢弃与未完成请求，不只展示优先池的成功子集。
+<!-- source-family:SF-2025-ARXIV-2504-20828 -->
 
 多阶段 RAG/Agent workflow 还要求把 embedding、retrieval、reasoning、memory 和 upsert 表为有资源类型的 operator DAG，再用 bounded queue、persistent worker 与 CPU/GPU overlap 调度。这样可减少框架间复制和冷启动，却把 backpressure、state commit 和跨 operator failure 带入同一 runtime；远程 index、高并发 tail 或不同模型会改变实验收益。
 
@@ -2061,3 +2067,7 @@ Primary-source 校验入口：
 - SF-2026-ARXIV-2604-15186 — Daily2026-04-18补Apr17；[Scepsy exact-v1](https://arxiv.org/html/2604.15186v1) §3–6/Eq1–2、§7.1–7.5/§9。仅trace-derived n/p统计需求→fraction/TP/replica共同分配与拓扑放置，不改实际DAG/不授tail保证；跨LLM并行、bimodal/tool限制、16RTXA6000/100GbIB、baselineengine/prefix差异与低load/search反侧保留。root必要Source R2、日期/实际owner/逐字PRE R4及实际小标题/两段/完整局部邻接/本注非writer POST R5通过；作者只同步本注并实际读回，窄lease已由root R6实际释放。未核代码或复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-20503` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20503v1)A5必要机制/评价与直接反侧，2+2+2=6，A7具体owner差额深入。有限命题/失败退路与全费近文，不授全部主张/安全或生产SLO；root必要Source、实际插点/逐字PRE通过并授两段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-20828` — Daily2025-05-01补Apr30；[Ascendra exact-v1](https://arxiv.org/html/2504.20828v1)§3.3–8/Alg1/Table2/§10必要Source，2+2+2=6，双池状态边界差额深入。仅未开始Prefill请求换池/无已生KV移动，保两池仍Decode、HP积压/抢占、meanTBT非tail、有限配置/丢弃人口及完整容量/profile费用；不授通用无费迁移或生产SLO。Newton§44/46实际Source/具体owner/逐字PRE通过，root授预算失准段后指定单段/marker/本人注；Godel按稿保存，Newton§51一次非writer实际完整新增/两侧/本人注POST通过，root实际消费接纳并释放指定单段；本注仅同步既成事实，未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2506-24045` — Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.24045v1)§2.4/3–9及current必要域，2+2+2=6，HEG/恢复边界/双负载带宽dispatch具体差额深入。仅受限SoC接口，保单reactive/不过RAM、kernel不可中断、258V profile与125H实验差、CPU-only baseline/均值TTFT人口与后台吞吐反侧，全部费用近文；v2更强AB不回填，未核代码/图像点值/复现，不授硬实时/零开销/通用效果。Newton§7必要Source/6分与具体gap通过，root已核逐字PRE与当前完整邻接并授本单段及本人注窄位；Godel按许可保存并顺读新增/完整两侧/本人注，Newton§11一次非writer实际完整新增/前后/本人注及限定diff POST通过，root已实际完整消费接纳并释放指定窄位；本注仅同步既成事实，不授DAY。

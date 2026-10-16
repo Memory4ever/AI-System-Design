@@ -1,0 +1,866 @@
+Grounding-Aware Token Pruning: Recovering from Drastic Performance Drops in Visual Grounding Caused by Pruning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background and Related Work
+2.1 Multimodal Large Language Models (MLLMs)
+2.2 Referring Expression Comprehension
+2.3 Token Reduction
+3 Preliminaries
+4 Approach
+4.1 Our Observation
+4.2 Hypothesis
+4.2.1 Misalignment between Visual Tokens and Position IDs in LLMs
+4.2.2 Position IDs in the Vision Encoder (ViT)
+4.3 GAP: Aligning Position IDs
+5 Experiments
+5.1 Evaluation Setup
+5.2 Main Results
+5.3 Inference Efficiency
+5.4 Generalization Capabilities
+5.5 Checking Visual Question Answering Results
+6 Conclusions
+References
+License: CC BY 4.0
+arXiv:2506.21873v1 [cs.CV] 27 Jun 2025
+Grounding-Aware Token Pruning: Recovering from Drastic Performance Drops in Visual Grounding Caused by Pruning
+Tzu-Chun ChienChieh-Kai Lin
+Affiliation: National Tsing Hua University (NTHU)
+Shiang-Feng Tsai
+††thanks: Equal contribution
+Affiliation: National Tsing Hua University (NTHU)
+Ruei-Chi Lai11footnotemark:
+1
+Affiliation: National Tsing Hua University (NTHU)
+Hung-Jen Chen
+Affiliation: National Tsing Hua University (NTHU)
+Min Sun
+Affiliation: National Tsing Hua University (NTHU)
+Abstract
+Recent Multimodal Large Language Models (MLLMs) have demonstrated strong performance in visual grounding, establishing themselves as a general interface for various vision-language applications. This progress has driven the development of token pruning methods to mitigate the high computational costs associated with processing numerous visual tokens. However, we observe that pruning significantly weakens the model’s grounding ability, leading to incorrect predictions and drastic performance degradation. In Referring Expression Comprehension (REC), for instance, pruning causes the accuracy of LLaVA on the RefCOCO val set to drop from 56.14% to 15.34%. Our analysis identifies misaligned position IDs after pruning as the primary cause of this degradation, as both the order and value of these IDs are crucial for maintaining performance in grounding tasks. To address this issue, we propose Grounding-Aware Token Pruning (GAP), a simple yet effective adjustment to position IDs that recovers REC accuracy back to 51.42%, which is 90% of the original performance in the without pruning setting, all while requiring no additional training, memory, or computational overhead. Applied to models such as Shikra, MiniGPTv2, and the LLaVA series, our method consistently improves performance across various token pruning strategies.
+1 Introduction
+Figure 1: Catastrophic performance drop. Comparison of the performance of LLaVA on the visual grounding dataset RefCOCO. Performance drops drastically after pruning, but is restored after applying our approach, GAP, which preserves the grounding ability of MLLMs.
+Multimodal Large Language Models (MLLMs) have demonstrated impressive performance across a range of tasks, such as VQA [13, 11, 21] and image captioning. Notably, for Referring Expression Comprehension (REC) [16], models like MiniGPTv2 and Shikra [14, 5] achieve results comparable to specialized models, underscoring their capacity for dense visual understanding, such as object localization and spatial reasoning.
+As the number of visual tokens generated from high-resolution images continues to grow (e.g., 2k-8k tokens) [20, 17], computational costs and inefficiencies increase. High memory usage, latency, and higher FLOPs hinder scalability. To address these issues, various token pruning methods [22, 24, 4, 33, 29, 7] have been developed, which selectively reduce visual tokens while optimizing computational efficiency.
+However, we observe that token pruning can degrade grounding ability, impairing the model’s understanding of spatial relationships. This results in significantly poorer bounding box predictions and a dramatic performance drop in grounding tasks that require fine-grained spatial information, such as REC, as shown in Figure 1.
+Through investigation, we found that misaligned position IDs are the primary cause of performance drops after pruning. These IDs are crucial for maintaining the spatial coherence of visual tokens, and both the order and values of these IDs must remain intact to ensure optimal model performance. Based on this, we propose Grounding-Aware Token Pruning (GAP), a simple modification that corrects these misalignments and significantly improves REC performance.
+We applied GAP to six pruning methods, including, PruMerge [22], TRIM [24], and four baseline methods on LLaVA, demonstrating its ability to improve existing pruning strategies without additional overhead. To further validate our findings, we applied GAP to five models, including Shikra, MiniGPTv2, and the LLaVA series, confirming that this is a global issue affecting various training recipes and model architectures. These findings confirm that GAP consistently improves performance while preserving efficiency, making it a viable enhancement for grounding MLLMs.
+Our contributions are summarized as follows:
+•
+We identify misaligned position IDs as the key factor behind grounding performance degradation in token-pruned MLLMs and propose GAP to effectively recover lost performance.
+•
+GAP aligns position IDs without additional training, memory, or computational overhead, making it an efficient and practical solution.
+•
+We validate GAP across five models and six pruning methods, demonstrating its broad applicability and effectiveness in addressing this global issue.
+2 Background and Related Work
+2.1 Multimodal Large Language Models (MLLMs)
+The expansion of large language models into multimodal versions has gained considerable attention in recent years. Multimodal Large Language Models (MLLMs) [19, 18, 20, 14, 5] represent a significant advancement in artificial intelligence, extending the capabilities of traditional Large Language Models (LLMs) [3, 8] and traditional Vision Language Models (VLMs) to process content across multiple modalities, inclusive of text, images, audio and video.
+Mainstream approaches in MLLMs use sequential visual representation, where images are encoded into vision tokens by a visual encoder [1, 31, 27] and sent into the LLM as the prefix content. With modal alignment pretraining and instruction fine-tuning [19, 9], modern MLLMs can tackle various tasks in computer vision field, from challenges like Optical Character Recognition (OCR), Visual Question Answering (VQA), and Referring Expression Comprehension (REC), to more complex, multistep reasoning tasks [10, 30].
+2.2 Referring Expression Comprehension
+Referring Expression Comprehension (REC), also known as visual grounding [16, 28], aims to localize a specific object in an image described by a referring expression phrased in natural language expressions. As a cross-modal recognition task, REC has seen recent advancements driven by MLLMs [5, 12, 26, 14]. Some of these models have even achieved results comparable to specialized models [15, 23]. These advancements highlight the ability of MLLMs to perform fine-grained object localization and spatial reasoning..
+2.3 Token Reduction
+MLLMs typically take in a large amount of visual tokens as the prefix content. For example, LLaVA-1.5 [18] encodes images at a resolution of 336 × 336 into 576 tokens and processes images with a greater resolution of 672 × 672 into 2304 tokens. Similarly, MiniGPTv2 [14] encodes images at 448 × 448 resolution into 256 tokens by concatenating four adjacent visual tokens. However, the quadratic complexity of Transformers presents a significant challenge when dealing with long input sequences. To address this, several works have attempted to reduce visual tokens by merging them before passing them into LLMs or pruning less important tokens from Transformer layers, thereby lowering computational costs.
+PruMerge [22] leverages the sparse distribution of attention scores between the [CLS] token and visual tokens in ViT [1] to measure the importance of each token. It prunes visual tokens with low attention scores and merges them with the selected tokens. On average, LLaVA-1.5 with PruMerge reduces visual tokens to just 6.9% and cuts 88% of FLOPs, while maintaining comparable performance in various tasks. SparseVLM [33] selects visual-relevant text tokens to measure the significance of visual tokens within the self-attention matrix and prunes the visual tokens accordingly. When reducing tokens from 576 to 64, LLaVA-1.5 with SparseVLM reduces 84% FLOPs with only a 13.1% drop in average accuracy across several benchmarks. These works demonstrate that token reduction serves as an effective technique to reduce computational costs while maintaining performance. TRIM [24] improves token selection by leveraging the CLIP metric and an Interquartile Range (IQR) scoring function, adaptively selecting important tokens while aggregating information from pruned ones. These works collectively demonstrate that token reduction is an effective technique for reducing computational costs while preserving model performance.
+In our study, we focus on how token reduction disrupts the positional relationships between tokens and its impact on the model. We found that directly pruning tokens significantly affects the model’s understanding of spatial relationships between objects, leading to noticeable performance drops in visual grounding tasks like REC.
+3 Preliminaries
+(a) Illustraction of two experiments.
+(b) Performance degradation due to position ID misalignment.
+Figure 2: Visual Token and Position ID Misalignment. We analyze two types of misalignment caused by pruning and conduct experiments on LLaVA as described in Sec. 4.2.1. The results show that while these misalignments have minimal impact on the vision question answering task (GQA), they lead to significant performance degradation in the grounding task (RefCOCO), highlighting a major limitation that must be resolved.
+During the pruning process, we are given a visual token sequence V∈ℝN×dV\in\mathbb{R}^{N\times d}, a score vector S∈ℝNS\in\mathbb{R}^{N}, and a reduction ratio r∈(0,1]r\in(0,1]. The score vector SS can be computed based on various criteria, such as the similarity between the [CLS] token and the visual tokens, referred to as CLS-visual similarity (Eq. 4), or the similarity between the text token vector TT and the visual tokens VV, referred to as text-visual similarity (Eq. 5). The reduction ratio rr determines the fraction of tokens to retain, which can be either predefined or adaptively selected.
+The number of retained tokens kk is calculated as:
+k=N×rk=N\times r
+(1)
+where NN is the total number of visual tokens.
+Next, the top-k tokens are selected by obtaining the indices II corresponding to the highest values in the score vector SS:
+I\displaystyle I
+=t​o​p​k​(S,k)\displaystyle=topk(S,k)
+(2)
+I\displaystyle I
+∈ℤk\displaystyle\in\mathbb{Z}^{k}
+Finally, the pruned visual token sequence VprunedV_{\text{pruned}} is generated by selecting the tokens corresponding to the top-k indices:
+Vpruned=V⁡[I]V_{\text{pruned}}=V[I]
+(3)
+Through this process, the length of the visual token sequence is reduced from NN to r×Nr\times N, improving computational efficiency during inference.
+4 Approach
+4.1 Our Observation
+We first observed a significant drop in REC performance during the pruning process while conducting RefCOCO experiments, as shown in Fig. 1. The effect was even more pronounced on MiniGPTv2, where we found that pruning as little as 1%1\% of the tokens could lead to a dramatic performance decline, reducing accuracy from 8787 to as low as 1818 (Tab. 1). To investigate the cause of this, we conducted an empirical study.
+Method
+Tokens
+RefCOCO
+GQA
+%
+val
+w/o pruning
+100%
+87.35*
+59.6*
+CLS-visual
+99%
+18.58
+58.77
+Table 1: Our Observations. Pruning even 1% of tokens in MiniGPTv2 leads to a catastrophic performance drop on RefCOCO, while GQA remains largely unaffected. This suggests that the issue is specific to grounding tasks. An asterisk (*) denotes our reproduced performance.
+4.2 Hypothesis
+We observe that this issue is specific to grounding tasks. For datasets outside of grounding, such as the vision question answering task GQA [13], previous methods like PruMerge and TRIM [22, 24] result in less than a 7% performance drop even when pruning 75% of tokens.
+Compared to GQA, grounding tasks suffer a larger drop in performance after token pruning (Tab. 1). We suspect this is because the grounding tasks are more sensitive to position IDs, which are affected during the pruning process. Additionally, the LLM relies on position IDs as the main source of spatial information. To better explain the phenomenon, we have two hypotheses. First, the misalignment between visual tokens and position IDs will severely hurts the performance. Second, the spatial information in ViT is insufficient for the LLM to effectively utilize. To test these hypotheses, we design and conduct experiments on LLaVA.
+Model
+Position Prediction Top-1 Acc.
+Layer 1
+Layer 12
+Layer 17
+layer 23
+LLaVA Vision Encoder
+98.37
+61.92
+7.30
+2.61
+Table 2: Spatial Information Retention in Vision Preprocessing of MLLMs. We train a linear model to predict position IDs, quantifying spatial information retention. Prediction accuracy declines in deeper layers of the LLaVA Vision Encoder, indicating that spatial information is nearly lost by Layer 23, the input vision feature layer for LLaVA’s LLM component. See Sec. 4.2.2 for more details
+4.2.1 Misalignment between Visual Tokens and Position IDs in LLMs
+Consider a scenario without pruning, where a set of visual tokens V={v1,v2,v3,v4,v5}V=\{v_{1},v_{2},v_{3},v_{4},v_{5}\} is obtained from the vision encoder and assigned corresponding position IDs based on their order. These position IDs, denoted as P={p1,p2,p3,p4,p5}P=\{p_{1},p_{2},p_{3},p_{4},p_{5}\}, are assigned before the tokens are fed into the LLM component of the MLLM. This represents the initial alignment without pruning, as illustrated in Fig. 2(a).
+However, when pruning occurs, certain visual tokens are removed before position IDs are assigned. As a result, the remaining tokens are mapped to the position IDs based on their updated sequence, rather than preserving their original positional relationships. This disruption introduces misalignment between visual tokens and their position IDs. We observe that token pruning leads to misalignment in two distinct ways, which we analyze in the following sections.
+First, token pruning is based on a score vector SS that orders tokens differently from their original sequence (Sec. 3). For example, if S=[4,2,1,5,3]S=[4,2,1,5,3], the tokens are rearranged as {v1,v4,v3,v0,v2}\{v_{1},v_{4},v_{3},v_{0},v_{2}\}. However, without GAP, their position IDs are assigned solely based on the order in which they are input to the LLM, remaining as {p1,p2,p3,p4,p5}\{p_{1},p_{2},p_{3},p_{4},p_{5}\}. This results in a permuted misalignment between tokens and their original positional structure, as shown in Fig. 2(a).
+Second, when pruning removes certain tokens, the remaining tokens are assigned consecutive position IDs starting from p1p_{1} instead of maintaining their original positions. For instance, if tokens v1v_{1} and v2v_{2} are removed, the remaining tokens {v3,v4,v5}\{v_{3},v_{4},v_{5}\} are assigned position IDs {p1,p2,p3}\{p_{1},p_{2},p_{3}\}, shifting their relative positions and causing a shifted misalignment. This effect is also visualized in Fig. 2(a).
+Since pruning modifies VV but leaves PP unchanged, a misalignment occurs, altering spatial relationships and potentially degrading grounding performance. We propose that both permuted misalignment and shifted misalignment, disrupt the spatial relationships among tokens, altering their relative distances and leading to a drop in grounding performance.
+To isolate the effects of these misalignments from the impact of pruning itself, we designed two experiments without removing any visual tokens (see Fig. 2(a)). As shown in Fig. 2(b), even without losing any visual tokens, the presence of both types of misalignment alone results in performance degradation on the grounding task RefCOCO, highlighting the importance of reducing misalignment to maintain grounding performance.
+4.2.2 Position IDs in the Vision Encoder (ViT)
+As a preliminary step, the vision encoder assigns position IDs to the image patches before preprocessing it to extract visual tokens. This means that before reaching the LLM, the visual features already contain a structured positional representation. However, since the vision encoder is pretrained on tasks that do not require detailed spatial information, we suspect that the original spatial information might be lost, making it difficult for the LLM to leverage.
+Our second hypothesis investigates the role of these vision encoder-generated position IDs and whether they contribute to the LLM’s spatial understanding. Ideally, if the LLM could effectively utilize these original position IDs, it might not need to construct its own. However, if the LLM is unable to leverage them, this suggests that its internally constructed position IDs become the dominant and primary source of spatial information. This, in turn, highlights a fundamental issue: the misalignment caused by pruning becomes even more critical because the LLM lacks access to an alternative source of accurate position encoding. As a result, addressing misalignment is crucial to maintaining grounding performance.
+To investigate whether the spatial information from vision encoder can be utilized, we trained a linear model on top of each layer of the vision encoder to predict position IDs, allowing us to quantify how much spatial information is retained at each depth. As shown in Tab. 2, the model’s ability to predict position IDs decreases in deeper layers, eventually approaching zero. This demonstrates that the original spatial information is progressively lost as the features pass through the encoder. Consequently, by the time these features reach the LLM, the model must rely heavily on its own constructed position IDs to recover spatial structure. This reliance further amplifies the impact of misalignment caused by pruning, as discussed in Sec. 4.2.1, making accurate position encoding crucial.
+Figure 3: Overview of GAP. (a) The MLLM concatenates visual and text tokens, assigning ordered position IDs. (b) Standard pruning reorders position IDs based on the pruned tokens. (c) GAP discards pruned tokens without incurring additional overhead, while preserving the original position IDs.
+4.3 GAP: Aligning Position IDs
+Based on our observations, resolving the misalignment between visual token positions and position IDs is crucial for addressing the performance drop observed during pruning. To tackle this issue and enhance performance, we explored several modified approaches for managing position IDs. Ultimately, we propose our solution GAP as shown in Fig. 3(c).
+GAP is an add-on to pruning methods. While pruned tokens are fully discarded, just like in standard token pruning (Fig. 3(b)), the position IDs are retained in their original form, as before pruning (Fig. 3(a)). Specifically, we reconstruct the position IDs as they were prior to pruning, adjust the application of the rotary embedding function to use the modified position IDs, and ensure these updates are applied appropriately during the generation process.
+GAP prevents the misalignment that leads to performance degradation, as evidenced by the performance improvements in Tab. 5. Additionally, it maintains the same computational efficiency as standard token pruning (Tab. 6).
+5 Experiments
+5.1 Evaluation Setup
+As outlined in Section 3, pruning methods for MLLMs can be broadly categorized based on how the score matrix S∈ℝNS\in\mathbb{R}^{N} is computed, where NN is the total number of visual tokens. We focus on two key approaches: CLS-visual similarity pruning and text-visual similarity pruning.
+The CLS-visual similarity pruning approach leverages the [CLS] token, commonly used for classification, and calculate the similarity between the [CLS] token and visual tokens. This method is referred to as CLS-visual similarity pruning. In our experiments (see Tables 5 and 7), we follow the PruMerge [22] setting. The score vector SS is obtained by projecting the [CLS] token into a query qclsq_{\text{cls}} and the visual tokens into keys KK, where dkd_{k} represents the hidden size.
+S=softmax​(qcls⋅KTdk)S=\text{softmax}\left(\frac{q_{\text{cls}}\cdot K^{T}}{\sqrt{d_{k}}}\right)
+(4)
+The text-visual similarity pruning approach addresses the limitations of CLS-visual pruning by incorporating text information. Instead of relying solely on the [CLS] token, this method computes the similarity between all text tokens and visual tokens, summing over the text dimension. The score vector SS is computed using text queries QtextQ_{\text{text}} and visual keys KvisualK_{\text{visual}}, where dkd_{k} represents the hidden size.
+S=∑textsoftmax​(Qtext⋅KvisualTdk)S=\sum_{\text{text}}\text{softmax}\left(\frac{Q_{\text{text}}\cdot K_{\text{visual}}^{T}}{\sqrt{d_{k}}}\right)
+(5)
+This method shares a similar principle with SparseVLM [33], and has demonstrated strong performance in certain cases.
+Additionally, we present two common baseline approaches for comparison in token pruning: random pruning and spatial pruning.
+In random pruning, a random score vector SS is generated as:
+S=𝐫,𝐫∼𝒰​(0,1)NS=\mathbf{r},\quad\mathbf{r}\sim\mathcal{U}(0,1)^{N}
+(6)
+where 𝐫\mathbf{r} is a random vector of size NN, sampled from a uniform distribution 𝒰⁡(0,1)\mathcal{U}(0,1).
+In spatial pruning, tokens are sampled at regular intervals, determined by the reduction ratio rr:
+Vpruned={vi∣i=⌊n⋅Nr⌋,n=0,1,2,…}\begin{split}V_{\text{pruned}}=\left\{v_{i}\mid i=\left\lfloor n\cdot\frac{N}{r}\right\rfloor,\right.\\
+\left.n=0,1,2,\ldots\right\}\end{split}
+(7)
+where VprunedV_{\text{pruned}} is the set of pruned tokens, and viv_{i} are the visual tokens at positions ii, determined by the reduction ratio rr.
+We selected models with different configurations of visual encoders, projectors, and LLMs to validate the generalizability of our proposed method, as summarized in Table 4. The models span various sizes, architectures, and pre-training and instruction-tuning datasets, providing a comprehensive evaluation of the effectiveness of GAP across diverse settings.
+Then, we conducted extensive evaluations of GAP, demonstrating its method-agnostic and model-agnostic properties (Tab. 4). Our results highlight GAP’s effectiveness across different MLLMs, with no additional computational overhead, as confirmed by the inference efficiency comparison (Sec. 5.3). Furthermore, we evaluate GAP across different pruning methods and token reduction ratios (Sec. 5.4) to assess its generalization. Finally, we verify that GAP does not negatively impact VQA performance (Sec. 5.5).
+5.2 Main Results
+Models
+Method
+Tokens
+RefCOCO
+(%\%)
+val
+testA
+testB
+LLaVA-v1.5-7B
+w/o pruning
+100%
+56.14
+64.41
+47.52
+TRIM
+21%
+3.15
+3.69
+3.53
++ GAP
+21%
+17.90
+26.30
+21.05
+PruMerge+
+25%
+3.56
+3.89
+5.63
++ GAP
+25%
+28.70
+30.21
+28.38
+Table 3: Results on SOTA methods. Integrating GAP into both TRIM and PruMerge+ leads to improved performance.
+Model
+Visual Encoder
+Projector
+LLM
+PT
+IT
+LLaVA-v1.5-7B
+CLIP-L-336px
+MLP
+Vicuna-7B
+558K
+665K
+Llama-LLaVA-NeXT-8B
+CLIP-L-336px, anyres
+MLP
+Llama3-8B
+558K
+760K
+LLaVA-v1.6-13B
+CLIP-L-336px, anyres
+MLP
+Vicuna-13B
+558K
+760K
+MiniGPTv2
+EVA
+Linear*
+Llama2-chat 7B
+Three-stage training†
+Shikra
+CLIP-L
+Linear
+Vicuna-7B
+600K
+5.5M
+Table 4:  Model Comparison. Summary of visual encoders, projectors, large language models (LLM), size of pre-training datasets (PT), and size of instruction tuning datasets (IT) across different models. * indicates a concatenate process before projection. †indicates a special three-stage training process; details can be found in the original paper [14].
+We first apply GAP to the state-of-the-art (SOTA) pruning methods, PruMerge and TRIM [22, 24], to demonstrate GAP’s effectiveness and reveal potential oversights in current pruning strategies. These methods employ advanced ranking and selection mechanisms, adaptive ratio adjustments, and additional merging or pooling techniques. However, regardless of their specific algorithms, they exhibit limitations in grounding tasks. In contrast, GAP improves their performance as shown in Table 3.
+Models
+Method
+Tokens
+RefCOCO
+RefCOCO+
+RefCOCOg
+Avg.
+(%\%)
+val
+testA
+testB
+val
+testA
+testB
+val
+testA
+LLaVA-v1.5
+7B
+w/o pruning*
+100%100\%
+56.14
+64.41
+47.52
+50.04
+59.4
+39.03
+48.61
+48.41
+100%100\%
+CLS-visual
+50%50\%
+15.34
+17.08
+12.88
+13.28
+15.26
+10.96
+12.89
+12.90
+26.8%
++ GAP
+50%50\%
+51.42
+59.01
+44.44
+44.96
+54.05
+37.08
+45.85
+45.26
+92.5%
+Δ\Delta
++36.08
++41.93
++31.56
++31.68
++38.79
++26.12
++32.96
++32.36
++ 65.7%
+LLaVA-v1.6
+13B
+w/o pruning*
+100%100\%
+87.58
+91.24
+80.33
+80.82
+87.91
+70.61
+84.72
+83.33
+100%100\%
+CLS-visual
+50%50\%
+56.35
+65.28
+49.07
+52.79
+61.42
+41.93
+48.56
+47.91
+63.3%
++ GAP
+50%50\%
+75.50
+79.88
+70.15
+69.65
+76.86
+61.08
+72.78
+70.32
+86.4%
+Δ\Delta
++19.15
++14.60
++21.08
++16.86
++15.44
++19.15
++24.22
++22.41
++ 23.1%
+Llama3
+LLaVA-NeXT
+8B
+w/o pruning*
+100%100\%
+85.96
+91.18
+76.27
+79.51
+87.91
+68.35
+82.19
+80.62
+100%100\%
+CLS-visual
+50%50\%
+49.16
+59.09
+40.41
+44.49
+56.3
+34.73
+42.02
+41.29
+56.0%
++ GAP
+50%50\%
+73.48
+78.95
+63.12
+67.48
+76.32
+57.35
+70.72
+68.63
+85.2%
+Δ\Delta
++24.32
++19.86
++22.71
++22.99
++20.02
++22.62
++28.70
++27.34
++ 29.2%
+MiniGPTv2
+w/o pruning
+100%100\%
+88.69
+91.65
+85.33
+79.97
+85.12
+74.45
+84.44
+84.66
+100%\%
+CLS-visual
+50%50\%
+2.73
+2.07
+3.80
+2.61
+2.07
+3.80
+3.61
+3.68
+3.7%
++ GAP
+50%50\%
+68.91
+74.01
+67.94
+61.47
+67.04
+58.19
+68.03
+67.53
+79.0%
+Δ\Delta
++66.18
++71.94
++64.14
++58.86
++64.97
++54.39
++64.42
++63.85
++ 75.3%
+Shikra
+w/o pruning
+100%100\%
+87.65
+91.35
+81.62
+82.42
+87.65
+73.38
+81.92
+82.58
+100%100\%
+CLS-visual
+50%50\%
+9.40
+10.35
+8.56
+7.50
+7.73
+7.60
+7.72
+8.48
+10.1%
++ GAP
+50%50\%
+49.33
+51.63
+47.61
+43.85
+41.03
+46.40
+42.06
+40.74
+54.4%
+Δ\Delta
++39.93
++41.28
++39.05
++36.35
++33.30
++38.80
++34.34
++32.26
++ 44.3%
+Table 5: Main Results. The table reports accuracy for different models. The ”w/o pruning” row denotes the full-token baseline, while the ”CLS-visual” row represents results using the CLS-visual similarity pruning method (50% token reduction). The ”+ GAP” row corresponds to CLS-visual with GAP applied, and the Δ\Delta row indicates the accuracy improvement from applying GAP to CLS-visual pruning, as calculated in Eq. 8. The rightmost column (Avg.) normalizes accuracy relative to the w/o pruning baseline (set as 100%), allowing a direct comparison of retained performance after pruning. Applying GAP results in a performance increase ranging from 23% to 75%. An asterisk (*) indicates were reproduced due to the lack of official report. See Tab. 4 for more details.
+These methods are only implemented on LLaVA-v1.5, providing a limited scope for exploration and analysis. Additionally, they utilize adaptive pruning ratios, making it challenging to isolate the direct impact of pruning on grounding ability. To address this, we shift our focus to a more controlled and standardized evaluation setting.
+Specifically, we adopt a widely used pruning strategy by employing CLS-visual similarity as the score vector SS (Eq. 4), a ranking approach commonly used in prior work [22, 29, 7]. Furthermore, to ensure consistency across models, we fix the pruning reduction ratio at 0.5. This setup allows us to systematically evaluate the general impact of pruning on grounding ability across different architectures.
+To demonstrate that this issue is a general and global problem, we extend our analysis beyond LLaVA-v1.5 to five different models [14, 19, 20, 2, 5]. These models were selected to cover a diverse range of projector types, visual backbones, LLMs, model sizes, training strategies, and training data (detailed in Table 4).
+We then applied GAP to these models. As shown in Table 5, grounding task performance consistently dropped by more than 40% across all models under pruning, regardless of their architecture. However, GAP effectively mitigated this degradation, significantly improving performance on REC datasets. The performance gains achieved by GAP range from 23% to 75%, as shown in the rightmost column (Avg.), demonstrating its robustness across different architectures. The symbol Δ\Delta in  Table 5 represents the accuracy difference with and without GAP, as defined in Eq. 8:
+Δ=A​c​c(CLS-visual + GAP)−A​c​c(CLS-visual){\Delta=Acc_{\text{(CLS-visual + GAP)}}-Acc_{\text{(CLS-visual)}}}
+(8)
+5.3 Inference Efficiency
+We measured Time-To-First-Token (TTFT) and memory allocation up to the first token during inference on a single 4090 GPU. The evaluation used a batch size of 1 with synchronized timing, averaged over the RefCOCO dataset. An adaptive reduction ratio from PruMerge+ was applied, retaining approximately 25% of the tokens on average. As shown in Table 6, GAP introduces no additional overhead, ensuring seamless integration without added complexity.
+Method
+TTFT (ms)
+Memory (GB)
+LLaVA-v1.5
+101.29
+14.70
+Prumerge+
+52.22
+13.96
++ GAP
+52.46
+13.96
+Table 6: Inference Efficiency. We measured TTFT and the change in peak memory on the RefCOCO dataset. Demonstrate that applying GAP does not introduce additional overhead. See Sec. 5.3.
+5.4 Generalization Capabilities
+Method
+RefCOCO
+Avg.
+val
+testA
+testB
+LLaVA-v1.5-7b
+56.14
+64.41
+47.52
+100%\%
+CLS-visual
+15.34
+17.08
+12.88
+27.0%
++ GAP
+51.42
+59.01
+44.44
+92.2%
+text-visual
+9.23
+9.83
+10.42
+17.9%
++ GAP
+37.61
+42.00
+35.37
+68.9%
+random
+9.25
+10.57
+9.42
+17.6%
++ GAP
+44.99
+52.34
+37.76
+80.3%
+spatial
+7.83
+9.47
+8.07
+15.2%
++ GAP
+47.08
+55.10
+40.82
+85.1%
+MiniGPTv2
+88.69
+91.65
+85.33
+100%\%
+CLS-visual
+2.73
+2.07
+3.80
+3.3%
++ GAP
+68.91
+74.01
+67.94
+79.4%
+text-visual
+5.41
+3.94
+6.49
+6.0%
++ GAP
+77.79
+83.80
+73.26
+88.3%
+random
+3.98
+2.45
+5.16
+4.4%
++ GAP
+79.72
+85.46
+75.17
+90.4%
+spatial
+3.03
+2.12
+3.61
+3.3%
++ GAP
+59.10
+59.74
+59.48
+67.2%
+Shikra
+87.65
+91.35
+81.62
+100%\%
+CLS-visual
+9.40
+10.35
+8.56
+10.8%
++ GAP
+49.33
+51.63
+47.61
+57.0%
+text-visual
+7.62
+7.74
+6.20
+8.3%
++ GAP
+80.51
+84.67
+76.48
+92.7%
+random
+9.48
+8.89
+9.96
+10.9%
++ GAP
+79.01
+83.75
+71.32
+89.7%
+spatial
+7.83
+8.98
+6.94
+9.1%
++ GAP
+80.13
+83.08
+75.09
+91.5%
+Table 7: Cross-method generalization capabilities. GAP generalizes well across various pruning methods and consistently enhances performance across all tested methods. Results are reported for a fixed pruning ratio of 0.5, both with and without GAP. The rightmost column normalizes accuracy relative to the w/o pruning baseline. Refer to Sec. 5.4 for further details.
+To further evaluate the generalization capabilities of GAP, we conducted experiments across both different pruning methods (cross-method) and different token reduction ratios (cross-ratio).
+Cross-Method Evaluation.
+We applied GAP to multiple pruning methods to assess its effectiveness beyond the primary methods used in the main results. The evaluated methods include:
+•
+CLS-visual pruning [22, 29, 7] (pruning method in Tab. 5)
+•
+Text-visual pruning (Eq. 5) [24, 29, 7]
+•
+Random pruning (Eq. 6)
+•
+Spatial pruning (Eq. 7)
+Cross-Ratio Evaluation.
+Beyond different pruning methods, we also examined the effectiveness of GAP across varying pruning reduction ratios. While the primary results were reported with a fixed ratio of 0.5, we extended the evaluation to ratios ranging from 0.2 to 0.8 to determine whether the impact of GAP remains consistent across different levels of token pruning. These results further validate the robustness of GAP across a broad range of pruning settings.
+As shown in Tab. 7 and Fig. 4, the performance drop is consistent across different pruning methods and reduction ratios. More importantly, GAP consistently recovers performance across all settings, demonstrating its effectiveness in mitigating pruning-induced degradation regardless of the pruning strategy or token reduction severity.
+One key observation from Fig. 4 is that when the pruning ratio is around 75% to 90%, the accuracy surpasses the baseline. This aligns with findings in [32, 25, 6], suggesting that a slight reduction in tokens can sometimes enhance performance.
+Figure 4: Cross-ratio generalization capabilities.
+The gray line represents the w/o pruning result with 100% tokens. This figure shows the accuracy trend across different pruning ratios using the CLS-visual pruning method Eq. 4, with and without GAP. See Sec. 5.4 for more details.
+5.5 Checking Visual Question Answering Results
+Model
+GQA
+Vizwiz
+OKVQA
+LLaVA-v1.5-7B
+61.93
+54.39
+53.44
+CLS-visual
+60.43
+54.00
+53.41
++ GAP
+61.44
+53.86
+54.49
+MiniGPTv2
+59.56
+56.04
+57.99
+CLS-visual
+57.38
+55.91
+57.07
++ GAP
+57.60
+56.15
+57.65
+Table 8: GAP results on multiple VQA tasks. GAP demonstrates improvements across various VQA tasks, ensuring it does not negatively impact tasks that do not require grounding. See Sec. 5.5 for more details.
+Additionally, we expanded our evaluation to include a broader set of datasets for a more comprehensive analysis. We tested GAP on GQA, VizWiz, and OKVQA, maintaining a reduction ratio of 0.5. At the beginning, we do not expect GAP to make much difference as the tasks in these datasets are not grounding. Surprisingly, in most cases, our method resulted in slight improvements across these datasets, as illustrated in Table 8.
+Thus, we believe that GAP’s improvement depends on the level of spatial relationship understanding required in the datasets.
+6 Conclusions
+As Multimodal Large Language Models (MLLMs) continue to expand, the increasing number of tokens presents a growing challenge for maintaining computational efficiency. Token pruning methods are often employed to address this issue. However, in this work, we identified a significant limitation in existing pruning methods concerning grounding abilities, hypothesizing that the issue stems from the misalignment between visual token positions and positional IDs
+To address this, we introduced a simple yet effective method, GAP, designed to preserve MLLMs’ grounding ability during token pruning. GAP rectifies the misalignment, enabling the model to retain its relational understanding of visual information, which is essential for visual grounding tasks. This effectiveness is demonstrated across five models, including Shikra, MiniGPTv2, and the LLaVA series. Furthermore, GAP, as an add-on to existing pruning methods, maintains the same computational efficiency and can be seamlessly integrated, offering a versatile solution that enhances performance without adding complexity.
+References
+[1]
+Chris Hallacy Aditya Ramesh Gabriel Goh Sandhini Agarwal Girish Sastry Amanda Askell Pamela Mishkin Jack Clark Gretchen Krueger Ilya Sutskever Alec Radford, Jong Wook Kim.
+Learning transferable visual models from natural language supervision.
+arXiv:2103.00020, 2021.
+[2]
+Kaichen Zhang* Fanyi Pu* Xinrun Du Yuhao Dong Haotian Liu Yuanhan Zhang Ge Zhang Chunyuan Li Bo Li*, Peiyuan Zhang* and Ziwei Liu.
+Lmms-eval: Accelerating the development of large multimoal models, 2024.
+[3]
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+Language models are few-shot learners, 2020.
+[4]
+Qingqing Cao, Bhargavi Paranjape, and Hannaneh Hajishirzi.
+PuMer: Pruning and merging tokens for efficient vision language models.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 12890–12903, Toronto, Canada, 2023. Association for Computational Linguistics.
+[5]
+Keqin Chen, Zhao Zhang, Weili Zeng, Richong Zhang, Feng Zhu, and Rui Zhao.
+Shikra: Unleashing multimodal llm’s referential dialogue magic.
+arXiv preprint arXiv:2306.15195, 2023.
+[6]
+Tianlong Chen, Yu Cheng, Zhe Gan, Lu Yuan, Lei Zhang, and Zhangyang Wang.
+Chasing sparsity in vision transformers: An end-to-end exploration.
+Advances in Neural Information Processing Systems, 34:19974–19988, 2021.
+[7]
+Yi Chen, Jian Xu, Xu-Yao Zhang, Wen-Zhuo Liu, Yangyang Liu, and Cheng-Lin Liu.
+Recoverable compression: A multimodal vision token recovery mechanism guided by text information.
+ArXiv, abs/2409.01179, 2024.
+[8]
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+Bert: Pre-training of deep bidirectional transformers for language understanding, 2019.
+[9]
+Xiaoqian Shen Xiang Li Mohamed Elhoseiny Deyao Zhu, Jun Chen.
+Minigpt-4: Enhancing vision-language understanding with advanced large language models.
+arXiv:2304.10592, 2023.
+[10]
+Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Jinrui Yang, Xiawu Zheng, Ke Li, Xing Sun, Yunsheng Wu, and Rongrong Ji.
+Mme: A comprehensive evaluation benchmark for multimodal large language models, 2024.
+[11]
+Danna Gurari, Qing Li, Abigale J. Stangl, Anhong Guo, Chi Lin, Kristen Grauman, Jiebo Luo, and Jeffrey P. Bigham.
+Vizwiz grand challenge: Answering visual questions from blind people.
+In 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 3608–3617, 2018.
+[12]
+Zhe Gan Xianzhi Du Bowen Zhang Zirui Wang Liangliang Cao Shih-Fu Chang Yinfei Yang Haoxuan You, Haotian Zhang.
+Ferret: Refer and ground anything anywhere at any granularity.
+arXiv:2310.07704, 2023.
+[13]
+Drew A. Hudson and Christopher D. Manning.
+Gqa: A new dataset for real-world visual reasoning and compositional question answering.
+In 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 6693–6702, 2019.
+[14]
+Xiaoqian Shen Xiang Li Zechun Liu Pengchuan Zhang Raghuraman Krishnamoorthi Vikas Chandra Yunyang Xiong Jun Chen, Deyao Zhu and Mohamed Elhoseiny.
+Minigpt-v2: Large language model as a unified interface for vision-language multi-task learning.
+arXiv:2310.09478, 2023.
+[15]
+Aishwarya Kamath, Mannat Singh, Yann LeCun, Ishan Misra, Gabriel Synnaeve, and Nicolas Carion.
+Mdetr–modulated detection for end-to-end multi-modal understanding.
+arXiv preprint arXiv:2104.12763, 2021.
+[16]
+Sahar Kazemzadeh, Vicente Ordonez, Mark Matten, and Tamara Berg.
+ReferItGame: Referring to objects in photographs of natural scenes.
+In Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 787–798, Doha, Qatar, 2014. Association for Computational Linguistics.
+[17]
+Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Yanwei Li, Ziwei Liu, and Chunyuan Li.
+Llava-onevision: Easy visual task transfer.
+arXiv preprint arXiv:2408.03326, 2024.
+[18]
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+Improved baselines with visual instruction tuning, 2023a.
+[19]
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+In NeurIPS, 2023b.
+[20]
+Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan Zhang, Sheng Shen, and Yong Jae Lee.
+Llava-next: Improved reasoning, ocr, and world knowledge, 2024.
+[21]
+Kenneth Marino, Mohammad Rastegari, Ali Farhadi, and Roozbeh Mottaghi.
+Ok-vqa: A visual question answering benchmark requiring external knowledge.
+In 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 3190–3199, 2019.
+[22]
+Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan.
+Llava-prumerge: Adaptive token reduction for efficient large multimodal models.
+arXiv preprint arXiv:2403.15388, 2024.
+[23]
+Tianhe Ren Feng Li Hao Zhang Jie Yang Qing Jiang Chunyuan Li Jianwei Yang Hang Su Jun Zhu Lei Zhang Shilong Liu, Zhaoyang Zeng.
+Grounding dino: Marrying dino with grounded pre-training for open-set object detection.
+arXiv:2303.05499, 2023.
+[24]
+Dingjie Song, Wenjun Wang, Shunian Chen, Xidong Wang, Michael Guan, and Benyou Wang.
+Less is more: A simple yet effective token reduction method for efficient multi-modal llms.
+arXiv preprint arXiv:2409.10994, 2024.
+[25]
+Zekun Wang, Jingchang Chen, Wangchunshu Zhou, Haichao Zhu, Jiafeng Liang, Liping Shan, Ming Liu, Dongliang Xu, Qing Yang, and Bing Qin.
+Smarttrim: Adaptive tokens and attention pruning for efficient vision-language models.
+arXiv preprint arXiv:2305.15033, 2023.
+[26]
+Wenmeng Yu Wenyi Hong Ji Qi Yan Wang Junhui Ji Zhuoyi Yang Lei Zhao Xixuan Song Jiazheng Xu Bin Xu Juanzi Li Yuxiao Dong Ming Ding Jie Tang Weihan Wang, Qingsong Lv.
+Cogvlm: Visual expert for pretrained language models.
+arXiv:2311.03079, 2023.
+[27]
+Alexander Kolesnikov Lucas Beyer Xiaohua Zhai, Basil Mustafa.
+Sigmoid loss for language image pre-training.
+arXiv:2303.15343, 2023.
+[28]
+Qi Wu Yanyuan Qiao, Chaorui Deng.
+Referring expression comprehension: A survey of methods and datasets.
+IEEE TMM, 2020.
+arXiv:2007.09554.
+[29]
+Gaotong Yu, Yi Chen, and Jian Xu.
+Balancing performance and efficiency: A multimodal large language model pruning method based image text interaction.
+ArXiv, abs/2409.01162, 2024.
+[30]
+Weihao Yu, Zhengyuan Yang, Linjie Li, Jianfeng Wang, Kevin Lin, Zicheng Liu, Xinchao Wang, and Lijuan Wang.
+Mm-vet: Evaluating large multimodal models for integrated capabilities, 2023.
+[31]
+Binhui Xie Quan Sun Ledell Wu Xinggang Wang Tiejun Huang Xinlong Wang Yue Cao Yuxin Fang, Wen Wang.
+Eva: Exploring the limits of masked visual representation learning at scale.
+arXiv:2211.07636, 2022.
+[32]
+Qizhe Zhang, Aosong Cheng, Ming Lu, Zhiyong Zhuo, Minqi Wang, Jiajun Cao, Shaobo Guo, Qi She, and Shanghang Zhang.
+[cls] attention is all you need for training-free visual token pruning: Make vlm inference faster.
+arXiv preprint arXiv:2412.01818, 2024a.
+[33]
+Yuan Zhang, Chun-Kai Fan, Junpeng Ma, Wenzhao Zheng, Tao Huang, Kuan Cheng, Denis A Gudovskiy, Tomoyuki Okuno, Yohei Nakata, Kurt Keutzer, and Shanghang Zhang.
+Sparsevlm: Visual token sparsification for efficient vision-language model inference.
+2024b.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

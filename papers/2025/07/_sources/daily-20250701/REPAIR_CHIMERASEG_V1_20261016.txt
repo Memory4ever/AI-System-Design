@@ -1,0 +1,874 @@
+Partial CLIP is Enough: Chimera-Seg for Zero-shot Semantic Segmentation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Work
+II-A Semantic Segmentation
+II-B Zero-shot and Open-vocabulary Semantic Segmenatation
+II-C Knowledge Distillation
+III Methods
+III-A Preliminary and Method Overview
+III-B Chimera-Seg
+III-C Selective Global Distillation (SGD)
+III-D Training Objectives and Inference
+IV Experiments
+IV-A Dataset
+IV-B Implementation Details
+IV-C Comparison with State-of-the-Art
+IV-D Ablation Study
+IV-E Qualitative Results
+V Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2506.22032v1 [cs.CV] 27 Jun 2025
+Partial CLIP is Enough:
+Chimera-Seg for Zero-shot Semantic Segmentation
+Jialei Chen*
+Xu Zheng†
+Danda Pani Paudel
+Luc Van Gool
+Hiroshi Murase
+Daisuke Deguchi
+††thanks: Jialei Chen, Daisuke Deguchi, Hiroshi Murase are with the Graduate School
+of Informatics, Nagoya University, Nagoya,
+Japan. Xu Zheng is with AI Thrust, The Hong Kong University of Science and Technology, Guangzhou Campus (HKUST-GZ), Guangzhou,
+China.
+Danda Pani Paudel, Luc Van Gool are with the INSAIT, Sofia University, St. Kliment Ohridski.
+* indicates the corresponding author. $†$ indicates the project leader.
+Abstract
+Zero-shot Semantic Segmentation (ZSS) aims to segment both seen and unseen classes using supervision from only seen classes. Beyond adaptation-based methods, distillation-based approaches transfer vision-language alignment of vision-language model, e.g., CLIP, to segmentation models. However, such knowledge transfer remains challenging due to: (1) the difficulty of aligning vision-based features with the textual space, which requires combining spatial precision with vision-language alignment; and (2) the semantic gap between CLIP’s global representations and the local, fine-grained features of segmentation models. To address challenge (1), we propose Chimera-Seg, which integrates a segmentation backbone as the body and a CLIP-based semantic head as the head, like the Chimera in Greek mythology, combining spatial precision with vision-language alignment. Specifically, Chimera-Seg comprises a trainable segmentation model and a CLIP Semantic Head (CSH), which maps dense features into the CLIP-aligned space. The CSH incorporates a frozen subnetwork and fixed projection layers from the CLIP visual encoder, along with lightweight trainable components. The partial module from CLIP visual encoder, paired with the segmentation model, retains segmentation capability while easing the mapping to CLIP’s semantic space. To address challenge (2), we propose Selective Global Distillation (SGD), which distills knowledge from dense features exhibiting high similarity to the CLIP CLS token, while gradually reducing the number of features used for alignment as training progresses. Besides, we also use a Semantic Alignment Module (SAM) to further align dense visual features with semantic embeddings extracted from the frozen CLIP text encoder. Experiments on two benchmarks show improvements of 0.9% and 1.2% in hIoU.
+Index Terms: Chimera-Seg, CLIP Semantic Head, Zero-shot Learning, Semantic Segmentation.
+I Introduction
+As one of the most significant tasks in computer vision, semantic segmentation [1, 2, 3, 4, 5, 6] has achieved great advancement with the development of deep learning [7, 8]. However, achieving high performance segmentation model needs large scale datasets which are very time-consuming and expensive to achieve. Therefore, inspired by zero-shot classification, zero-shot semantic segmentation also achieves great success [9, 10, 11, 12]. In the era of rapidly advancing foundation models [13, 14], zero-shot learning has gained renewed attention.
+A growing body of work focuses on transferring the zero-shot and open-vocabulary capabilities of foundation models, most notably CLIP [13], to tasks requiring fine-grained understanding. Existing methods can be boardly categoriezd into two types: adaptation-based and knowledge distillation-based. While early approaches either fine-tuned CLIP [15, 16] or enhanced it with prompts and adapters [17, 18, 19, 20, 21], and later efforts introduced spatial priors to compensate for the limitations of self-attention in fine-grained tasks [22, 23, 24, 25, 26, 27, 28] as shown in Fig. 1(a). Recent work has increasingly adopted knowledge distillation [29, 30, 31] as a more flexible alternative to tuning-based methods as shown in Fig. 1(b). These approaches transfer CLIP’s vision-language alignment into task-specific segmentation models, which can then operate independently during inference. By decoupling from CLIP’s architecture, distillation enables lightweight and flexible model designs while preserving both global semantics and spatial precision through feature-level alignment.
+(a) Adaptation-based methods.
+(b) Knowledge distillation based methods.
+(c) Our method.
+Fig. 1: Existing methods can be broadly categorized into (a) adaptation-based methods and (b) knowledge-distillation-based methods. However, both methods face their own challenges: (a) is fixed with the CLIP visual encoder. (b) has to solve the segmentation and vision-to-text projection at the same time. Our methods combines the merits from both mehtods.
+Though promising, existing knowledge distillation methods still face two fundamental limitations. (1) They struggle to effectively map visual features into the semantic space. Specifically, current approaches often require joint optimization of fine-grained semantic segmentation and vision-language alignment. However, these two tasks rely on inherently different inductive biases: the former prioritizes spatial precision at the pixel level, while the latter emphasizes abstraction of high-level semantics. This conflict complicates optimization and often leads to suboptimal performance in one or both tasks. This challenge calls for a method that retains the spatial precision of segmentation models while effectively leveraging the semantic knowledge of vision-language models, without being hindered by their conflicting objectives. Inspired by the Chimera in Greek mythology, combining the body of a goat for agility and the head of a lion for strength, we propose Chimera-Seg, a hybrid framework that integrates a powerful segmentation model as Chimera’s body and a CLIP Semantic Head (CSH) as the head to infuse vision-language alignment from CLIP. Specifically, the CSH takes dense visual features from the segmentation model as input, first linearly projects them, then passes them through a frozen transformer block from the CLIP visual encoder to inherit vision-language alignment. The output is subsequently refined via a trainable batch normalization layer and mapped into the CLIP-aligned space using the original, fixed CLIP MLP projection head.
+By combining the segmentation model with only a partial CLIP visual encoder, the approach preserves the strengths of the backbone while seamlessly incorporating CLIP’s semantic knowledge, enabling efficient cross-modal alignment and improving zero-shot segmentation performance.
+Besides the challenge above, existing methods still face (2) a semantic mismatch between CLIP’s global representations and the local, fine-grained features produced by the segmentation model. Specifically, CLIP is pre-trained for image-level classification and thus excels at extracting global semantic representations of prominent objects. In contrast, semantic segmentation necessitates a more granular understanding across the entire image, including small-scale and background regions. Consequently, aligning dense visual features with CLIP’s global CLS token introduces a semantic misalignment, limiting the effectiveness of the knowledge transfer. To this challenge, we propose Selective Global Distillation (SGD), which extracts semantically meaningful regions by measuring similarity between dense features from the segmentation model and the CLIP CLS token. We employ gumbel-softmax-based top-KK sampling to select high-similarity regions and aggregate them into a global representation. As training progresses, the number of selected features decays, reducing reliance on noisy background regions. This distilled global target encourages the backbone to focus on discriminative semantics while preserving alignment with CLIP. Lastly, to further enhance the performance of Chimera-Seg, we use a Semantic Alignment Module (SAM) that strengthens textual supervision by aligning both seen semantic embeddings and learned visual prototypes with the CLIP text encoder’s CLS token. By enforcing distributional consistency between semantics and CLS, as well as features and CLS, SAM enables the model to capture richer linguistic structure and reinforces vision-language alignment beyond static category-level representations.
+Unlike adaptation-based methods that adopt the full CLIP visual encoder as the backbone, our framework leverages only a small, frozen subset of CLIP’s visual encoder. Rather than replicating the entire architecture, we focus solely on transferring CLIP’s vision-language matching capability, enabling more flexible and effective design of zero-shot segmentation models. In contrast to existing knowledge distillation methods that align all dense features with the CLIP CLS token, we propose a decayed top-KK selecting strategy that selectively distills from features most semantically aligned with the CLS token. This targeted alignment mitigates semantic drift and enhances the quality of transferred knowledge. Furthermore, our method goes beyond simply treating CLIP’s semantic embeddings as static classifiers by actively leveraging the latent knowledge encoded within the text encoder. Through our Semantic Alignment Module (SAM), we align both semantic embeddings and visual prototypes with CLS tokens from the text encoder, enabling richer and more consistent vision-language alignment. Our contributions are listed as follows:
+- We propose Chimera-Seg, a simple yet effective framework that projects dense visual features into the text-aligned visual space to improve zero-shot segmentation.
+- We introduce two key components: Selective Global Distillation (SGD) and Semantic Alignment Module (SAM), which leverage the alignemnt between CLIP’s visual and textual encoders.
+- Extensive experiments on two zero-shot segmentation benchmarks demonstrate that our approach significantly improves performance, especially in hIoU, and advances the state of open-vocabulary segmentation.
+II Related Work
+II-A Semantic Segmentation
+Semantic segmentation [32, 33, 34, 35, 1, 3, 36, 37, 28, 27, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 5, 50, 51] aims to assign a semantic label to every pixel in an image. Early approaches were based on convolutional neural networks (CNNs) [1], which effectively capture local patterns but struggle to model long-range dependencies due to limited receptive fields. To mitigate this, various modules such as atrous convolutions [36], non-local blocks [52], and pyramid-based fusions have been proposed to enhance global context. The introduction of Vision Transformers (ViTs) [53] has marked a paradigm shift by leveraging global self-attention for long-range interaction, leading to strong performance in segmentation tasks [38, 54, 39]. However, transformers often incur high computational costs and lack inductive biases such as spatial locality, which can hinder convergence under limited supervision. To combine the best of both worlds, hybrid models have emerged [55], integrating convolutional priors with transformer-based reasoning.
+Despite architectural advances, most methods rely on full supervision, requiring dense annotations for all classes, an impractical assumption in open-world scenarios. We instead consider zero-shot semantic segmentation (ZSS), where only seen classes are labeled during training, and the goal is to segment both seen and unseen classes during inference. To tackle this, we propose a framework that leverages pretrained vision-language models (VLMs), selectively distilling their cross-modal knowledge to enhance segmentation under partial supervision. Our approach offers a scalable and annotation-efficient solution toward open-vocabulary segmentation.
+II-B Zero-shot and Open-vocabulary Semantic Segmenatation
+Though impressive, conventional segmentation models require large-scale datasets with high-quality pixel-wise annotations, which are costly and labor-intensive to obtain. To alleviate this burden, the task of Zero-shot Semantic Segmentation (ZSS) has attracted increasing attention, drawing inspiration from zero-shot classification [56, 57]. In ZSS [12, 11, 58, 9, 59, 17, 24, 29, 30, 10], the label set is partitioned into seen and unseen classes. Only annotations of seen classes are available during training, while inference requires the model to recognize and segment both seen and unseen classes, posing a more realistic yet challenging setting in semantic segmentation.
+In parallel, the emergence of large-scale vision-language models (VLMs), such as CLIP, has enabled a new paradigm known as Open-Vocabulary Semantic Segmentation (OVSS) [60, 19, 61, 21, 62, 18]. Unlike ZSS, which focuses on generalization within a single dataset, OVSS aims to generalize across datasets: for example, training on COCO-Stuff [63] and evaluating on ADE20K [64] without requiring additional annotations. VLMs bridge the semantic gap between vision and language, making it possible to transfer knowledge across domains using text embeddings as supervision signals. Our proposed method is developed primarily for the ZSS setting, where the label supervision is limited.
+II-C Knowledge Distillation
+Knowledge Distillation (KD) aims to transfer knowledge from a pre-trained teacher model to a student model [65, 66, 67, 68, 69, 70, 71, 72, 73]. Existing KD strategies can be broadly divided into two classes: feature distillation [68, 72, 69, 74, 71, 19], which encourages the student to mimic the teacher’s feature representations directly, and relation distillation [73, 19], which preserves higher-order structural relationships, such as pairwise distances or similarity patterns among embeddings. For example, PADing [73] introduces pseudo visual embeddings and enforces that their relational distances reflect those in the text embedding space, ensuring semantic consistency. While most prior works focus on extracting knowledge solely from the CLIP visual encoder [29, 30, 72, 71, 68], they often overlook the valuable konwledge in the CLIP text encoder. In contrast, our method introduces a unified distillation framework that leverages both the CLIP visual and text encoders as complementary supervision signals. By aligning visual features to the vision-language embedding space via the CLIP text projection head, and jointly distilling structural knowledge from the textual modality, our approach facilitates more semantically coherent predictions, especially for unseen classes.
+Fig. 2: Overall framework of our proposed method.
+Given an input image, we utilize the CLIP visual encoder to generate pseudo masks Y~\tilde{\textbf{Y}} and CLS tokens Cg\textbf{C}_{g}. The segmentation model extracts dense features, which are aligned with Cg\textbf{C}_{g} via Selective Global Distillation. The aligned features are then used to generate visual prototypes Fl\textbf{F}_{l}, including seen Fls\textbf{F}_{l}^{s} and latent ones Flu\textbf{F}_{l}^{u}. The semantic alignment module projects both seen and latent prototypes into the semantic space guided by seen-class textual embeddings. The final segmentation prediction is supervised by the pseudo masks, enabling the model to learn transferable representations for both seen and unseen concepts.
+III Methods
+III-A Preliminary and Method Overview
+Preliminary. Given a dataset 𝒟={(Xi,Yi)}i=1M\mathcal{D}=\left\{\left(\textbf{X}_{i},\textbf{Y}_{i}\right)\right\}_{i=1}^{M}, where Xi∈ℝH×W×3\textbf{X}_{i}\in\mathbb{R}^{H\times W\times 3} denotes an input image and Yi∈[0,N]H×W\textbf{Y}_{i}\in[0,N]^{H\times W} its corresponding pixel-level annotations, and a semantic embedding matrix A∈ℝN×D\textbf{A}\in\mathbb{R}^{N\times D} for NN classes where DD indicates the channel number of semantic embeddings, we first consider the standard closed-set semantic segmentation setting, where both A and Yi\textbf{Y}_{i} are fully accessible during training. In the zero-shot semantic segmentation (ZSS) setting, the embedding set A is partitioned into seen and unseen subsets, denoted as As∈ℝNs×D\textbf{A}_{s}\in\mathbb{R}^{N_{s}\times D} and Au∈ℝNu×D\textbf{A}_{u}\in\mathbb{R}^{N_{u}\times D}, where Ns+Nu=NN_{s}+N_{u}=N and As∩Au=∅\textbf{A}_{s}\cap\textbf{A}_{u}=\varnothing. During training, annotations for unseen classes are unavailable, and corresponding pixels are marked as “ignored.” However, since seen and unseen classes often co-occur within the same image, discarding all images containing unseen classes would lead to significant data loss [12, 58, 17]. Therefore, all images Xi\textbf{X}_{i} are retained during training. At inference time, ZSS jointly evaluates both seen and unseen classes, in contrast to traditional zero-shot settings that evaluate them separately [75, 12]. In this work, we adopt the both inductive and transductive ZSS setting.
+Method overview.
+As shown in Fig. 2, given an input image, we first extract dense features using a trainable backbone (e.g., SegFormer [38]). These features are projected into the CLIP-aligned space via CSH, which incorporates a partially frozen CLIP visual encoder. In parallel, the frozen CLIP encoder provides CLS and patch tokens, which are used to generate pseudo masks Y~\widetilde{\textbf{Y}} following [29], revealing latent class regions. The Selective Global Distillation (SGD) module then refines feature alignment by enhancing similarity between dense features and CLS tokens. Class-wise prototypes Fl\textbf{F}_{l} are obtained by averaging features within each class region and are split into seen (Fls\textbf{F}_{l}^{s}) and latent (Flu\textbf{F}_{l}^{u}) groups. Following CLIP2Seg [29], latent prototypes are derived from unannotated regions with unknown class categories and counts, and differ from unseen classes, whose names and presence are explicitly defined in the dataset. The Semantic Alignment Module (SAM) further aligns Fls\textbf{F}_{l}^{s} with semantic embeddings As\textbf{A}_{s} from the CLIP text encoder. Final predictions are made by matching prototypes with text embeddings and supervised via pseudo masks.
+Fig. 3: The overview of CLIP Semantic Head (CSH).
+III-B Chimera-Seg
+Current knowledge distillation methods for ZSS [29, 30, 31] aim to transfer vision-language alignment capabilities from CLIP [13] to segmentation models such as SegFormer [38], enabling them to perform semantic segmentation while obtaining the vision-language matching capabilities. However, these methods require the model to jointly learn object-level segmentation and vision-to-language projection, two inherently distinct tasks, which often leads to suboptimal performance. To address this challenge, we propose Chimera-Seg, which leverages fixed components from the CLIP visual encoders to facilitate the projection of visual features into the semantic space. By partially reusing CLIP structures, our approach avoids the computational overhead and spatial interference associated with full CLIP forward passes, while preserving the critical semantic transfer pathway required for effective vision-language alignment. The structure of CLIP Semantic Head (CSH) is illustrated in Fig. 3. It comprises three main components: (1) a trainable MLP that projects backbone features into the CLIP visual space, (2) a VEncoder that projects input features into the CLIP visual space to facilitate alignment with semantic embeddings, and (3) a frozen MLP taken directly from the final projection layer of the CLIP visual encoder, used to map visual features into semantic-aligned space of CLIP.
+Given a feature map F∈ℝH×W×C\textbf{F}\in\mathbb{R}^{H\times W\times C} extracted from a trainable backbone (e.g., SegFormer [38]) where CC indicates the channel number of the backbone features, we first apply a trainable MLP to project the features into CLIP’s embedding dimension DD, resulting in Fp=MLP​(F)\textbf{F}_{p}=\text{MLP}(\textbf{F}). While this projection matches the dimensionality of CLIP, it does not guarantee semantic or structural compatibility due to the inherent domain gap between ImageNet-pretrained vision encoders and CLIP. To bridge this gap, we further process Fp\textbf{F}_{p} using a partially frozen Transformer sub-block, referred to as VEncoder. This module is constructed by extracting components from the final block of the CLIP visual encoder and includes a first layer normalization (LN1), a value projection layer (Value), a second layer normalization (LN2), and a feed-forward network (FFN). All components are frozen during training to preserve the semantic priors learned by CLIP. Notably, each module in VEncoder is directly sourced from the final layer of the CLIP visual encoder. Formally, the forward process proceeds as follows: given the projected feature Fp\textbf{F}_{p}, we first apply LN1 followed by a value projection to obtain the contextualized representation: Fv′=V⁡(LN1​(Fp))+Fp\textbf{F}_{v}^{\prime}=V(\text{LN1}(\textbf{F}_{p}))+\textbf{F}_{p}.
+The result is further normalized and passed through the FFN with another residual connection: Fv=FFN​(LN2​(Fv′))+Fv′\textbf{F}_{v}=\text{FFN}(\text{LN2}(\textbf{F}_{v}^{\prime}))+\textbf{F}_{v}^{\prime}.
+This process retains only the value projection and FFN branches from the original CLIP transformer block. Notably, we discard the query-key attention mechanism and preserve only the value projection, following findings from recent studies [22, 23] that CLIP’s global self-attention lacks spatial precision and is suboptimal for dense prediction. In contrast, the value branch retains rich semantic content, making it more suitable for vision-language alignment. Spatial structure is maintained by the segmentation backbone, while VEncoder serves as a lightweight, semantics-preserving projection module.
+Fig. 4: Overview of Selective Global Distillation (SGD).
+The output of the VEncoder Fv\textbf{F}_{v} is subsequently passed through a trainable Batch Normalization layer, yielding Fb​n=BN​(Fv)\textbf{F}_{bn}=\text{BN}(\textbf{F}_{v}). This normalization step is introduced to align the feature statistics more closely with those observed in the deeper layers of the CLIP visual encoder, as further demonstrated in Sec. IV-D. To improve gradient propagation and stabilize the training process, we incorporate a residual connection by summing the original projection Fp\textbf{F}_{p} with the normalized output, resulting in Fr​e​s=Fp+Fb​n\textbf{F}_{res}=\textbf{F}_{p}+\textbf{F}_{bn}. To better align visual features with semantic embeddings that represent class concepts in the dataset, Fr​e​s\textbf{F}_{res} is then passed through a frozen MLP head taken from the CLIP visual encoder, which was originally designed for projecting text embeddings into the CLIP semantic space. This step produces the CLIP-bridged feature: Fc=MLPv​i​s​(Fr​e​s)\textbf{F}_{c}=\text{MLP}_{vis}(\textbf{F}_{res}). By retaining this text-side projection module, we ensure that the visual features are embedded within the same semantic space as CLIP’s semantic embeddings, thereby maintaining intrinsic alignment and enabling seamless interaction with language-driven prototypes.
+During training, only the initial MLP and the BN layer are updated, while both the CLIP VEncoder and the visual MLP remain frozen. This design allows the model to benefit from CLIP’s pretrained vision-language alignment while introducing minimal trainable parameters to project the backbone features to the CLIP visual and semantic space, thereby enhancing flexibility and domain adaptability.
+Fig. 5: The overview of Semantic Alignment Module (SAM).
+III-C Selective Global Distillation (SGD)
+Though the proposed CSH enables the segmentation backbone to better align with CLIP’s semantic space, relying solely on architectural design is insufficient to fully exploit the vision-language knowledge embedded in CLIP. To further facilitate the transfer of alignment capabilities, we introduce a Selective Global Distillation (SGD) module, as illustrated in Fig. 4. SGD aims to selectively align dense visual features with the CLS token from the CLIP visual encoder by focusing on regions that exhibit strong semantic similarity. This targeted distillation encourages the segmentation model to inherit CLIP’s global semantic priors while avoiding noise from irrelevant or ambiguous regions.
+Specifically, given the CLIP-bridged features Fc∈ℝH×W×D\textbf{F}_{c}\in\mathbb{R}^{H\times W\times D} from the CSH and a global CLS token Cg∈ℝD\textbf{C}_{g}\in\mathbb{R}^{D} extracted from the CLIP visual encoder, we compute similarity scores S∈ℝH×W\textbf{S}\in\mathbb{R}^{H\times W} between Cg\textbf{C}_{g} and each spatial location in Fc\textbf{F}_{c} using scaled dot-product similarity: S=Fc⊤​CgD\textbf{S}=\frac{\textbf{F}_{c}^{\top}\textbf{C}_{g}}{\sqrt{D}}. To prevent the model from repeatedly attending to the same highly activated regions, thus potentially overlooking semantically relevant areas with lower similarity scores, we adopt Gumbel-Softmax sampling to encourage diverse yet meaningful feature selection. Specifically, we perturb each similarity score S with Gumbel noise and apply temperature-scaled softmax to obtain the sampling weights W:
+gi=−log⁡(−log⁡(ϵi)),ϵi∼𝒰⁡(0,1),g_{i}=-\log(-\log(\epsilon_{i})),\quad\epsilon_{i}\sim\mathcal{U}(0,1),
+(1)
+𝐰i=exp⁡((si+gi)/τ)∑j=1H​Wexp⁡((sj+gj)/τ)si∈S,wi∈W,\mathbf{w}_{i}=\frac{\exp\left((s_{i}+g_{i})/\tau\right)}{\sum_{j=1}^{HW}\exp\left((s_{j}+g_{j})/\tau\right)}\quad s_{i}\in\textbf{S},\,w_{i}\in\textbf{W},
+(2)
+where 𝒰⁡(0,1)\mathcal{U}(0,1) denotes a uniform distribution. Based on the sampling weights W, we select the top-KK features to form a subset Fk∈ℝK×D\textbf{F}_{k}\in\mathbb{R}^{K\times D}, and recompute similarity scores W′\textbf{W}^{\prime} between Cg\textbf{C}_{g} and Fk\textbf{F}_{k} using: W′=softmax​(Fk⊤​CgD)\textbf{W}^{\prime}=\text{softmax}\left(\frac{\textbf{F}_{k}^{\top}\textbf{C}_{g}}{\sqrt{D}}\right). We then compute a global aggregated feature Fg\textbf{F}_{g} by weighting Fk\textbf{F}_{k} with Wk\textbf{W}_{k}: Fg=Wk⊤​Fk\textbf{F}_{g}=\textbf{W}_{k}^{\top}\textbf{F}_{k}. InfoNCE is applied to align Fg\textbf{F}_{g} with Cg\textbf{C}_{g}:
+ℒs​g​d=exp⁡(Fg⊤​Cg/τ)∑j=1Bexp⁡(Fg⊤​Cj/τ),\mathcal{L}_{sgd}=\frac{\exp(\textbf{F}_{g}^{\top}\textbf{C}_{g}/\tau)}{\sum_{j=1}^{B}\exp(\textbf{F}_{g}^{\top}\textbf{C}_{j}/\tau)},
+(3)
+where BB denotes the batch size. As training progresses, we observe that the semantic representations of dense features become increasingly discriminative and diverse. To leverage this property, we introduce a decayed top-KK selecting strategy. Specifically, the number of selected features KK gradually decreases over time. In practice, we reduce KK by 0.1 per iteration and round it to the nearest integer. This decay mechanism encourages the model to focus on fewer but more semantically reliable regions as training proceeds. It also balances the trade-off between exploiting highly confident regions and exploring other potentially areas, thereby improving robustness against overfitting to dominant objects.
+SGD not only mitigates the impact of noisy or ambiguous regions by directing distillation toward semantically salient features, but also enhances the model’s ability to inherit global vision-language alignment from CLIP. Through its decayed top-KK selecting strategy, SGD progressively shifts attention toward the most informative regions, effectively balancing exploration and exploitation. This refinement improves the quality of feature alignment and promotes more robust generalization, ultimately leading to superior segmentation performance in challenging zero-shot settings.
+Fig. 6: The overview of inference.
+III-D Training Objectives and Inference
+To obtain the final pixel-level logits, The final pixel-level logits is computed as P=Fc⊤​c​a​t​(As,Flu)\textbf{P}=\textbf{F}_{c}^{\top}cat(\textbf{A}_{s},\textbf{F}^{u}_{l}) where c​a​tcat indicates the concatenate along the class dimension. During training, the total loss can be represented as:
+ℒ=\displaystyle\mathcal{L}=
+ℒs​e​g​(P,Y~)+ℒs​g​d+λs​a​m⋅ℒs​a​m\displaystyle\mathcal{L}_{seg}(\textbf{P},\tilde{\textbf{Y}})+\mathcal{L}_{sgd}+\lambda_{sam}\cdot\mathcal{L}_{sam}
+(4)
+where ℒs​e​g\mathcal{L}_{seg} is the sum of focal loss [76] and cross entropy loss, respectively. ℒs​a​m\mathcal{L}_{sam} indicates the loss of Semantic Alignment Module (SAM) and the overview of ℒs​a​m\mathcal{L}_{sam} is shown in Fig. 5. Given the seen semantic embeddings As\textbf{A}_{s} and the learned visual prototypes Fl\textbf{F}_{l}, we first generate pseudo labels Y~\tilde{\textbf{Y}} via multi-scale K-Means and mask merging [29], then compute per-class visual prototypes by averaging dense features across corresponding spatial regions,
+Fl={fl=∑H,WFc​[𝟙​(yi=l)]∑H,W𝟙​(yi=l)|yi∈Y~},\textbf{F}_{l}=\left\{f_{l}=\frac{\sum_{H,W}{\textbf{F}_{c}[\mathbb{1}(y_{i}=l)]}}{\sum_{H,W}{\mathbb{1}(y_{i}=l)}}\ \Big|\ y_{i}\in\tilde{\textbf{Y}}\right\},
+(5)
+where Fl∈ℝ(Os+Ou)×D\textbf{F}_{l}\in\mathbb{R}^{(O_{s}+O_{u})\times D}, OsO_{s} and OuO_{u} are the number of seen and latent classes in the input image and 𝟙​(yi=l)\mathbb{1}(y_{i}=l) is an indicator function that selects pixels belonging to class ll.
+We split the prototypes Fl\textbf{F}_{l} into seen (Fls\textbf{F}_{l}^{s}) and latent (Flu\textbf{F}_{l}^{u}) groups. ℒs​a​m\mathcal{L}_{sam} is defined as:
+ℒsam=KL(softmax(Fls⋅Cg⊤τf)∥softmax(As⋅Cg⊤τc))),\mathcal{L}_{\text{sam}}=\text{KL}(\text{softmax}(\frac{\textbf{F}_{l}^{s}\cdot\textbf{C}_{g}^{\top}}{\tau_{f}})\|\text{softmax}(\frac{\textbf{A}^{s}\cdot\textbf{C}_{g}^{\top}}{\tau_{c}}))),
+(6)
+where τf\tau_{f} and τc\tau_{c} indicate two hyperparameters to control the sharpness of similarity distribution.
+During inference, the overview is shown in Fig. 6. The input image is first encoded by the frozen segmentation model and projected into the CLIP-aligned semantic space via the CLIP-guided projector, resulting in dense visual features Fc\textbf{F}_{c}. Simultaneously, the class names are converted into textual prompts (e.g., “A photo of [class]”) and embedded using the frozen CLIP text encoder to produce the semantic embedding matrix A. The final prediction is obtained by computing the similarity between each pixel-level feature in Fc\textbf{F}_{c} and all class embeddings in A, assigning each pixel to the most semantically similar class. Besides, under the inductive setting, we add a bias term γ\gamma to the logits of unseen classes to calibrate their prediction confidence.
+TABLE I: Comparison under inductive settings where bold and underline indicate the best and the second-best performance.
+Models
+Backbone
+COCO-Stuff
+PASCAL Context
+sIoU
+uIoU
+hIoU
+sIoU
+uIoU
+hIoU
+SPNet [12]
+ResNet101 [7]
+35.2
+8.7
+14.0
+-
+-
+-
+ZS3 [10]
+34.7
+9.5
+15.0
+20.8
+12.7
+15.8
+CaGNet [11]
+33.5
+12.2
+18.2
+24.1
+18.5
+21.2
+SIGN [9]
+32.3
+15.5
+20.9
+-
+-
+-
+Joint [77]
+-
+-
+-
+33.0
+14.9
+20.5
+ZegFormer [58]
+ViT-B [53]
+36.6
+33.2
+34.8
+-
+-
+-
+Zzseg [26]
+39.3
+36.3
+37.8
+-
+-
+-
+ZegCLIP [17]
+40.2
+41.4
+40.8
+46.0
+54.6
+49.9
+DeOP [24]
+38.0
+38.4
+38.2
+-
+-
+-
+CLIP-RC [78]
+40.9
+41.6
+41.2
+47.5
+57.3
+51.9
+OTSeg+ [79]
+41.3
+41.8
+41.5
+55.2
+60.4
+57.7
+CLIP-to-Seg [29]
+Segformer-B4 [38]
+43.2
+44.7
+43.9
+52.6
+64.5
+58.0
+Ours
+ViT-B [53]
+43.4
+44.1
+43.7
+50.1
+62.5
+55.6
+Segformer-B4 [38]
+43.1
+46.5
+44.8
+52.7
+67.5
+59.2
+TABLE II: Comparison under transductive settings where bold and underline indicate the best and the second-best performance where “ST” indicates the self-training.
+Models
+Backbone
+COCO-Stuff
+PASCAL Context
+sIoU
+uIoU
+hIoU
+sIoU
+uIoU
+hIoU
+SPNet+ST [12]
+ResNet101 [7]
+34.6
+26.9
+30.3
+-
+-
+-
+ZS5 [10]
+34.9
+10.6
+16.2
+27.0
+20.7
+23.4
+CaGNet+ST [11]
+35.6
+13.4
+19.5
+-
+-
+-
+STRICT [59]
+35.3
+30.3
+34.8
+-
+-
+-
+FreeSeg [80]
+42.2
+49.1
+45.3
+-
+-
+-
+MaskCLIP+ [22]
+38.1
+54.7
+45.0
+44.4
+66.7
+53.3
+Zzseg [26]
+ViT-B [53]
+39.6
+43.6
+41.5
+-
+-
+-
+ZegCLIP+ST [17]
+40.7
+59.9
+48.5
+47.2
+63.2
+54.0
+OTSeg+ST [79]
+41.4
+62.6
+49.8
+54.0
+67.0
+59.8
+CLIP-RC+ST [78]
+42.0
+60.8
+49.7
+48.1
+63.2
+55.1
+Ours
+ViT-B [53]
+44.4
+59.7
+50.9
+50.7
+62.4
+55.9
+Segformer-B4 [38]
+43.7
+60.9
+50.9
+53.1
+72.5
+61.3
+IV Experiments
+IV-A Dataset
+We validate the performance of Chimera-Seg on two datasets: COCO-Stuff [63], and PASCAL Context [81]. Note that the split of seen and unseen classes follows the settings of the previous works [17, 78]. Note that the ‘background’ is converted to ‘ignored’ in both training and inference. This dataset is split into 15 seen and 5 unseen classes. COCO-Stuff contains 118,287 training and 5,000 validation images. For ZSS, all 171 classes are grouped into 156 seen and 15 unseen classes. PASCAL Context maintains 4,996 training images and 5,104 testing images. In our experiment, the classes consist of 49 seen classes and 10 unseen classes.
+IV-B Implementation Details
+Our method is based on MMSegmentation [82] and trained on 8 V100 GPUs with 32GB memories per card. Unless specified, we use Segformer-B0 [38] for most of the ablation studies. The visual encoder we use in CLIP is ViT-B/16 and the text encoder is the corresponding text encoder. For the hyperparameters, τ\tau is set as 0.07, the KK in SGD is from 9000 and decreased 0.1 as each iteration, τc\tau_{c} is set as 0.01, and τf\tau_{f} is set as 0.07. The batch size we use is 16 and the model is trained in 40K and 80K iterations for PASCAL Context, and COCO-Stuff, respectively. λs​a​m\lambda_{sam} are set as 0.1. Input images are resized to 512 ×\times 512. Other hyperparameters follow the settings of CLIP2Seg [29] and the corresponding backbones. During inference in the COCO-Stuff dataset, we add a constant number γ\gamma to the logits of unseen classes, and γ\gamma is 0.5.
+For ZSS, not only the seen classes but also the unseen classes should be considered. Therefore, following other researches [29, 30, 58, 17], we apply hIoU as the metric:
+h​I​o​U=2⋅s​I​o​U⋅u​I​o​Us​I​o​U+u​I​o​U,hIoU=\frac{2\cdot sIoU\cdot uIoU}{sIoU+uIoU},
+(7)
+where s​I​o​UsIoU indicates the mIoU (mean Intersetcion-over-Union) for the seen classes and u​I​o​UuIoU indicates the mIoU for the unseen classes. We follow the zero-shot semantic segmentation (ZSS) setting, where annotations of unseen classes are removed from the training set while retaining all input images. We consider both inductive and transductive settings based on the availability of unseen class embeddings (𝐀u\mathbf{A}_{u}) during training. In the inductive setting, 𝐀u\mathbf{A}_{u} is not accessible, and unseen regions are treated as ‘ignored’. The transductive setting uses 𝐀u\mathbf{A}_{u} for training. Evaluation covers both seen and unseen classes.
+TABLE III: Ablations on the proposed modules
+Module
+sIoU
+uIoU
+hIoU
+Baseline
+32.7
+30.4
+31.5
+Baseline + CSH
+32.3
+33.3
+32.8
+Baseline + CSH + SGD
+32.4
+34.4
+33.4
+Baseline + CSH + SGD + SAM
+32.5
+35.2
+33.8
+TABLE IV: Ablations on the design of vision-text projector
+Residual
+BN
+VEncoder
+pAcc
+sIoU
+uIoU
+hIoU
+-
+-
+-
+57.3
+43.1
+43.8
+43.5
+-
+-
+✓
+31.9
+15.1
+17.9
+16.4
+-
+✓
+-
+62.1
+43.0
+44.4
+42.7
+✓
+✓
+-
+61.7
+43.5
+44.4
+44.0
+✓
+-
+✓
+61.7
+42.9
+44.6
+43.7
+-
+✓
+✓
+62.2
+42.5
+46.0
+44.2
+✓
+✓
+✓
+61.9
+43.1
+46.5
+44.8
+TABLE V: Ablations on the projection layer
+Initialization
+Learnable
+pAcc
+sIoU
+uIoU
+hIoU
+CLIP
+-
+56.1
+32.5
+35.2
+33.8
+CLIP
+✓
+46.4
+32.7
+26.4
+29.2
+He [83]
+✓
+46.9
+33.1
+27.1
+29.8
+IV-C Comparison with State-of-the-Art
+Table I presents a comprehensive comparison of our method against state-of-the-art approaches on COCO-Stuff and PASCAL-Context under the Zero-Shot Semantic Segmentation (ZSS) setting. We report standard evaluation metrics: mIoU on seen classes (sIoU), unseen classes (uIoU), and their harmonic mean (hIoU). Our method consistently achieves the best performance across all metrics and benchmarks. On COCO-Stuff, our method achieves 43.4 sIoU / 44.1 uIoU / 43.7 hIoU with ViT-B and 43.1 sIoU / 46.5 uIoU / 44.8 hIoU with Segformer-B4, surpassing the previous state-of-the-art CLIP-to-Seg by a notable margin. On PASCAL-Context, our method further improves the state-of-the-art, achieving 52.7 sIoU / 67.5 uIoU / 59.2 hIoU with the Segformer-B4 backbone, outperforming CLIP-to-Seg (52.6 / 64.5 / 58.0). To ensure a fair comparison and isolate the contribution of our framework from that of the backbone architecture, we additionally conduct experiments using the ViT-B backbone, which is commonly adopted in prior CLIP-based segmentation works. Even under this setting, our model consistently outperforms existing methods such as ZegCLIP and OTSeg+, confirming that the observed improvements are attributed to our design rather than stronger vision backbones. These results highlight the effectiveness and generalizability of our proposed method, which enables efficient and robust cross-modal knowledge transfer by partially reusing CLIP’s visual and textual components in a flexible manner.
+Table II eports the performance of our method under the transductive setting on COCO-Stuff and PASCAL Context. Our approach achieves the best harmonic mean (hIoU) across both datasets, demonstrating strong generalization to unseen classes. Specifically, with Segformer-B4 as the backbone, our method attains 53.1 sIoU, 72.5 uIoU, and 61.3 hIoU on PASCAL Context, outperforming previous methods by a large margin. On COCO-Stuff, our model also achieves the best hIoU (50.9), validating its effectiveness in balancing seen and unseen class.
+IV-D Ablation Study
+We conduct the following ablations to validate our effectiveness. Unless specific, we use Segformer-B0 as the backbone for 80K iterations on COCO-Stuff.
+Ablations on the proposed modules. We conduct a series of ablation studies to evaluate the effectiveness of each proposed component in our framework. As shown in Table III, starting from a strong baseline, i.e., CLIP2Seg, we incrementally add the CLIP-Bridged Module (CSH), Selective Global Distillation (SGD), and Semantic Alignment Module (SAM). Introducing the CSH improves the model’s ability to generalize to unseen classes, as reflected by a notable increase in uIoU from 30.4 to 33.3. This demonstrates that leveraging partial CLIP layers can effectively bridge the semantic gap between vision and language. Adding the SGD module further boosts uIoU to 34.4 and hIoU to 33.4 by selectively distilling global knowledge from CLIP’s CLS token, thus refining the model’s semantic alignment. Finally, incorporating SAM yields the best overall performance, achieving 35.2 uIoU and 33.8 hIoU. This highlights the benefit of explicitly aligning visual prototypes with semantic embeddings under CLIP’s textual encoder.
+Design of vision-text projector and CLIP Projection. We use Segformer-B4 as the backbone to validate each design of the vision-text projector. Table IV reports the ablation study on the components of the proposed CSH, including the residual connection, Batch Normalization (BN), and the VEncoder. Using only the frozen VEncoder severely degrades performance due to feature misalignment. Introducing BN improves stability, and the residual connection brings further gains. Combining both BN and residual yields a significant improvement (43.5 sIoU / 44.0 hIoU), confirming their complementary roles. The best performance (43.1 sIoU / 46.5 uIoU / 44.8 hIoU) is achieved when all components are used, validating the effectiveness of our CSH design for vision-language alignment.
+Ablations on the design of the CLIP projection. In sec. III-B, we assert that the frozen final CLIP projection is crucial for aligning vision and text. To evaluate the importance of the CLIP projection head, we conduct ablation studies under different initialization and training settings, as shown in Table V. Freezing the CLIP projection yields the highest performance (33.8 hIoU), highlighting its critical role in maintaining vision-language alignment. In contrast, making it learnable, whether initialized from CLIP or with Kaiming [83], leads to a notable drop in uIoU and hIoU, suggesting that the learned parameters disrupt the semantic structure encoded in the original CLIP. These results support our claim that preserving the frozen projection is essential for effective zero-shot transfer.
+Fig. 7: Representation structure of ViT-CLIP vs. Chimera-Seg. We visualize four normalization types: no normalization, CLIP LN, learnable LN, and BN (ours). BN enables better integration of deeper semantic knowledge, while LN tends to preserve shallow, texture-level features.
+TABLE VI: Ablations on the design of VEncoder
+V
+FFN
+pAcc
+sIoU
+uIoU
+hIoU
+✓
+✓
+56.1
+32.5
+35.2
+33.8
+-
+✓
+55.3
+32.5
+32.8
+32.6
+✓
+-
+55.7
+32.5
+34.0
+33.2
+-
+-
+56.0
+33.0
+32.8
+32.9
+TABLE VII: Ablations on learning of VEncoder, A-150 is ADE20K dataset
+V
+FFN
+pAcc
+sIoU
+uIoU
+hIoU
+mIoU(A-150)
+-
+-
+56.0
+32.5
+35.2
+33.8
+15.0
+-
+✓
+55.8
+33.3
+35.0
+34.1
+14.8
+✓
+-
+55.5
+32.8
+32.8
+32.8
+14.7
+TABLE VIII: Ablations on the number of VEncoder
+VEncoder num
+pAcc
+sIoU
+uIoU
+hIoU
+0
+56.0
+33.0
+32.8
+32.9
+1
+56.1
+32.5
+35.2
+33.8
+2
+55.3
+32.3
+33.0
+32.7
+3
+55.6
+32.2
+33.1
+32.6
+TABLE IX: Ablations on the choice of normalization
+Norm
+pAcc
+sIoU
+uIoU
+hIoU
+BN
+56.1
+32.5
+35.2
+33.8
+GN
+56.0
+32.3
+34.6
+33.4
+LN(CLIP)
+53.6
+31.4
+29.3
+30.3
+LN(learn)
+55.6
+32.3
+33.8
+33.0
+None
+55.7
+32.5
+31.8
+32.1
+TABLE X: Ablations on the way of decay in SGD
+decay way
+pAcc
+sIoU
+uIoU
+hIoU
+no decay
+55.7
+32.4
+34.2
+33.3
+increase
+55.9
+32.3
+34.3
+33.3
+decrease
+56.1
+32.5
+35.2
+33.8
+TABLE XI: Ablations on the number of decay number
+num decay
+pAcc
+sIoU
+uIoU
+hIoU
+mIoU(ADE)
+3000
+56.1
+32.4
+35.1
+33.7
+14.9
+5000
+56.0
+32.4
+34.7
+33.5
+14.9
+9000
+56.1
+32.5
+35.2
+33.8
+15.0
+TABLE XII: Ablations on λs​a​m\lambda_{sam}
+λs​a​m\lambda_{sam}
+pAcc
+sIoU
+uIoU
+hIoU
+0.0
+55.9
+32.4
+34.8
+33.6
+0.1
+56.0
+32.4
+34.9
+33.6
+0.5
+56.1
+32.5
+35.2
+33.8
+1.0
+55.8
+32.7
+33.9
+33.3
+Ablations on the design of the VEncoder. We investigate the contributions of different components in the proposed VEncoder. As shown in Table VI, removing the value projection (V) leads to a notable drop in hIoU (33.8% → 32.6%), confirming its essential role in vision-language alignment. Ablating the FFN results in a smaller drop, while completely removing VEncoder shows slightly better hIoU than using FFN alone, suggesting that the value path is the primary contributor, and FFN plays a complementary role.
+We further examine the effect of freezing versus learning the VEncoder, as presented in Table VII. Freezing both V and FFN achieves the best hIoU (33.8%) and generalization on ADE20K (15.0% mIoU). ADE20K [64] of 20K training images and 2K testing images with 150 classes as the benchmark. Note that all the scores related to this dataset are trained first on COCO-Stuff and tested on ADE20K without any finetuning. Making FFN learnable yields a marginal hIoU gain on COCO-Stuff but slightly degrades cross-dataset performance. When the value projection is also made learnable, performance drops on both benchmarks. These results highlight that freezing VEncoder provides strong semantic priors and better generalization across datasets.
+Ablations on the number of the VEncoder. We further investigate how many VEncoder blocks should be used from the CLIP visual encoder. As shown in Table VIII, using no VEncoder yields a strong baseline of 32.9% hIoU. Adding one VEncoder block significantly improves uIoU (+2.4%) and achieves the best overall performance (33.8% hIoU). However, increasing the number of VEncoder blocks to two or three leads to performance degradation, suggesting that deeper layers introduce redundancy or harm alignment. These results confirm that the final block alone provides the most effective semantic bridge, consistent with findings in prior work [22, 23].
+Ablations on the choice of normalization. In Sec. III-B, we argue that batch normalization is essential for the CSH. We ablate the normalization strategy used after the VEncoder in Table IX. Batch Normalization (BN) yields the best overall performance with 35.2% uIoU and 33.8% hIoU, demonstrating strong stability and alignment with CLIP representations. Group Normalization (GN) performs slightly worse, while directly reusing CLIP’s LayerNorm results in a significant drop in uIoU and hIoU, indicating a distribution mismatch. Learnable LayerNorm achieves moderate results, and removing normalization entirely leads to degraded performance. These results highlight the effectiveness of BN in bridging backbone and CLIP feature distributions for zero-shot segmentation.
+Furthermore, inspired by research analyzing representation [84, 85], we sought to understand why batch normalization (BN) performs better than layer normalization (LN). To investigate this, Fig. 7 shows the CKA similarity [85, 84] between each layer of the SegFormer backbone and the CLIP ViT under four normalization settings: no normalization, fixed CLIP LayerNorm, learnable LayerNorm, and our proposed BatchNorm. A clear trend emerges: when LayerNorm (fixed or learnable) is used, the similarity between the final SegFormer layers (17–20, corresponding to the Vision-Text Projector) and the deeper CLIP layers (12–15) is significantly suppressed. This suggests that LayerNorm, originally designed for transformer training, may inhibit the alignment of deep semantic representations during cross-modal transfer. Interestingly, in the no normalization setting, we observe high similarity in deeper layers, but shallow layers become poorly aligned, indicating unstable or biased representation learning. In contrast, our BatchNorm design achieves a more balanced alignment across all stages, particularly enhancing similarity with the final CLIP layers (12–15), which are crucial for semantic alignment. These results confirm that BatchNorm not only stabilizes training but also facilitates the learning of CLIP’s high-level semantic structure, something LayerNorm tends to hinder in this cross-modal setup.
+Fig. 8: Similarity visualization between CLS token and dense features. Each row corresponds to the input image, results without SGD, and with SGD, respectively. The labels beneath each image denote the semantic class of the corresponding CLS token.
+Fig. 9: The visualization of our method. We compare our method with the CLIP2Seg [29].
+Ablations on the design of SGD. In Sec. III-C, we declaim that the decayed KK is significant for solving the shortcut problem. We investigate the impact of different decay strategies in the Selective Global Distillation (SGD) module, as shown in Table X. Without decay, the model achieves moderate performance, while increasing the number of selected features over training (increase) yields no improvement. In contrast, gradually decreasing the number of sampled features over time leads to the best results, achieving 35.2% uIoU and 33.8% hIoU. This suggests that selecting fewer but more reliable features as training progresses helps the model focus on semantically salient regions, improving alignment and generalization.
+Besides, we visualize the effect of SGD through CLS-to-feature similarity maps. As shown in Fig. 8, each map illustrates the similarity between a class-specific CLS token and dense features. Compared to the baseline without SGD, our method produces sharper and more semantically focused attention, highlighting target objects while suppressing irrelevant background regions. These results indicate that SGD encourages the CLS token to capture globally consistent, class-relevant cues, thereby improving vision-language alignment and segmentation quality.
+Moreover, we aim to ablate the number of KK in the SGD as shown in Table XI. This table presents the effect of varying the total number of iterations over which top-KK sampling decays in the SGD module. We find that decaying from a higher value (e.g., 9000 pixels) consistently improves both uIoU and hIoU, achieving the best performance with 35.2% uIoU and 33.8% hIoU, along with the highest mIoU (15.0%) on ADE20K. These results suggest that a gradual reduction in sampled regions allows the model to initially explore broader semantic cues and progressively focus on the most reliable regions, enhancing both alignment and generalization.
+Fig. 10: Comparison on hIoU and uIoU between our method with CLIP2Seg.
+Ablations on λs​a​m\lambda_{sam}. Table XII reports the impact of varying the loss weight λd\lambda_{d} for the Selective Global Distillation (SGD) module. Setting λd=0.5\lambda_{d}=0.5 yields the best overall performance with 35.2% uIoU and 33.8% hIoU. Lower weights (e.g., 0.0 or 0.1) reduce the influence of the SGD objective, resulting in less effective feature alignment. On the other hand, overly large weights (e.g.., 1.0) slightly degrade performance, likely due to the model overfitting to the global CLS token signal. These results suggest that a moderate distillation strength best balances segmentation and alignment objectives.
+Ablations on γ\gamma. Fig. 10 compares the impact of varying the hyperparameter γ\gamma on unseen IoU (uIoU) and harmonic IoU (hIoU) between our method and CLIP2Seg. As γ\gamma increases, our method initially shows consistent gains, peaking around γ=0.5\gamma=0.5 with the highest uIoU and hIoU scores. However, performance drops sharply beyond this point, indicating sensitivity to excessive pseudo-label inclusion. In contrast, CLIP2Seg demonstrates greater robustness to γ\gamma changes but achieves lower overall performance. These results highlight that while our approach benefits more from moderate pseudo-labels, it also requires careful calibration of γ\gamma for stability.
+IV-E Qualitative Results
+To show the merits of our method, we visualize the prediction and compare them with the CLIP2Seg as shown in Fig. 9. Compared with the baseline methods, i.e., CLIP2Seg, our method can better recognize the unseen classes, e.g., concrete in the first image and carrot in the third image, while maintaining the performance on the seen classes.
+V Conclusion
+We propose Chimera-Seg, a plug-and-play framework that enables any segmentation model to acquire zero-shot capability by partially leveraging CLIP’s pretrained components. Unlike prior works that require full adaptation of vision-language models or rely solely on visual encoders, Chimera-Seg bridges the gap between pure vision features and the CLIP-aligned space through the proposed CLIP Semantic Head (CSH) composed of partial modules from CLIP visual encoder and trainable components. The partial module from CLIP visual encoder, paired with the segmentation model, retains segmentation capability while easing the mapping to CLIP’s semantic space. Furthermore, we introduce Selective Global Distillation (SGD) and the Semantic Alignment Module (SAM) to enhance vision-language alignment by selectively distilling discriminative features and explicitly incorporating textual semantics. Our method consistently improves zero-shot segmentation performance across multiple datasets, demonstrating both strong generalization and scalability. We believe Chimera-Seg offers a practical and effective solution toward making segmentation models more annotation-efficient and semantically aware, and opens up new directions for integrating vision-language knowledge into pixel-level tasks.
+Limitation and Future Works: While effective, our method still has some limitations. Although CSH enhances the model’s ability to capture semantics from deeper layers of the CLIP visual encoder, the underlying mechanism behind this improvement remains underexplored. Furthermore, although SGD leads to more semantically aligned similarity maps between dense features and the CLIP CLS token, it occasionally activates irrelevant regions.
+Acknowledgment
+Support for this work was given by the Toyota Motor Corporation (TMC) and JSPS KAKENHI Grant Number 23K28164 and JST CREST Grant Number JPMJCR22D1. However, note that this article solely reflects the opinions and conclusions of its authors and not TMC or any other Toyota entity. Computations are done on supercomputer “Flow” at the Information Technology Center, Nagoya University.
+References
+[1]
+J. Long, E. Shelhamer, and T. Darrell, “Fully convolutional networks for semantic segmentation,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2015, pp. 3431–3440.
+[2]
+Y. Liu, P. Wu, M. Wang, and J. Liu, “Cpal: Cross-prompting adapter with loras for rgb+ x semantic segmentation,” IEEE Transactions on Circuits and Systems for Video Technology, 2025.
+[3]
+J. Chen, D. Deguchi, C. Zhang, X. Zheng, and H. Murase, “Frozen is better than learning: A new design of prototype-based classifier for semantic segmentation,” Pattern Recognition, vol. 152, p. 110431, 2024.
+[4]
+X. Zheng, J. Zhu, Y. Liu, Z. Cao, C. Fu, and L. Wang, “Both style and distortion matter: Dual-path unsupervised domain adaptation for panoramic semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 1285–1295.
+[5]
+X. Zheng, H. Xue, J. Chen, Y. Yan, L. Jiang, Y. Lyu, K. Yang, L. Zhang, and X. Hu, “Learning robust anymodal segmentor with unimodal and cross-modal distillation,” arXiv preprint arXiv:2411.17141, 2024.
+[6]
+X. Zheng, Y. Luo, P. Zhou, and L. Wang, “Distilling efficient vision transformers from cnns for semantic segmentation,” Pattern Recognition, vol. 158, p. 111029, 2025.
+[7]
+K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for image recognition,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2016, pp. 770–778.
+[8]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” Advances in neural information processing systems, vol. 30, 2017.
+[9]
+J. Cheng, S. Nandi, P. Natarajan, and W. Abd-Almageed, “Sign: Spatial-information incorporated generative network for generalized zero-shot semantic segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 9556–9566.
+[10]
+M. Bucher, T.-H. Vu, M. Cord, and P. Pérez, “Zero-shot semantic segmentation,” Advances in Neural Information Processing Systems, vol. 32, 2019.
+[11]
+Z. Gu, S. Zhou, L. Niu, Z. Zhao, and L. Zhang, “Context-aware feature generation for zero-shot semantic segmentation,” in Proceedings of the 28th ACM International Conference on Multimedia, 2020, pp. 1921–1929.
+[12]
+Y. Xian, S. Choudhury, Y. He, B. Schiele, and Z. Akata, “Semantic projection network for zero-and few-label semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2019, pp. 8256–8265.
+[13]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark et al., “Learning transferable visual models from natural language supervision,” in International Conference on Machine Learning. PMLR, 2021, pp. 8748–8763.
+[14]
+A. Kirillov, E. Mintun, N. Ravi, H. Mao, C. Rolland, L. Gustafson, T. Xiao, S. Whitehead, A. C. Berg, W.-Y. Lo et al., “Segment anything,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 4015–4026.
+[15]
+B. Li, K. Q. Weinberger, S. Belongie, V. Koltun, and R. Ranftl, “Language-driven semantic segmentation,” in International Conference on Learning Representations, 2022.
+[16]
+G. Ghiasi, X. Gu, Y. Cui, and T.-Y. Lin, “Scaling open-vocabulary image segmentation with image-level labels,” in European Conference on Computer Vision. Springer, 2022, pp. 540–557.
+[17]
+Z. Zhou, Y. Lei, B. Zhang, L. Liu, and Y. Liu, “Zegclip: Towards adapting clip for zero-shot semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 11 175–11 185.
+[18]
+Q. Yu, J. He, X. Deng, X. Shen, and L.-C. Chen, “Convolutions die hard: Open-vocabulary segmentation with single frozen convolutional clip,” in NeurIPS, 2023.
+[19]
+K. Han, Y. Liu, J. H. Liew, H. Ding, J. Liu, Y. Wang, Y. Tang, Y. Yang, J. Feng, Y. Zhao et al., “Global knowledge calibration for fast open-vocabulary segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 797–807.
+[20]
+J. Xu, S. Liu, A. Vahdat, W. Byeon, X. Wang, and S. De Mello, “Open-vocabulary panoptic segmentation with text-to-image diffusion models,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 2955–2966.
+[21]
+S. Cho, H. Shin, S. Hong, S. An, S. Lee, A. Arnab, P. H. Seo, and S. Kim, “Cat-seg: Cost aggregation for open-vocabulary semantic segmentation,” arXiv preprint arXiv:2303.11797, 2023.
+[22]
+C. Zhou, C. C. Loy, and B. Dai, “Extract free dense labels from clip,” in European Conference on Computer Vision. Springer, 2022, pp. 696–712.
+[23]
+F. Wang, J. Mei, and A. Yuille, “Sclip: Rethinking self-attention for dense vision-language inference,” in ECCV, 2024.
+[24]
+C. Han, Y. Zhong, D. Li, K. Han, and L. Ma, “Open-vocabulary semantic segmentation with decoupled one-pass network,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 1086–1096.
+[25]
+S. Jiao, Y. Wei, Y. Wang, Y. Zhao, and H. Shi, “Learning mask-aware clip representations for zero-shot segmentation,” arXiv preprint arXiv:2310.00240, 2023.
+[26]
+M. Xu, Z. Zhang, F. Wei, Y. Lin, Y. Cao, H. Hu, and X. Bai, “A simple baseline for open-vocabulary semantic segmentation with pre-trained vision-language model,” in European Conference on Computer Vision. Springer, 2022, pp. 736–753.
+[27]
+B. Cheng, I. Misra, A. G. Schwing, A. Kirillov, and R. Girdhar, “Masked-attention mask transformer for universal image segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 1290–1299.
+[28]
+B. Cheng, A. Schwing, and A. Kirillov, “Per-pixel classification is not all you need for semantic segmentation,” Advances in Neural Information Processing Systems, vol. 34, pp. 17 864–17 875, 2021.
+[29]
+Anonymous, “CLIP-to-seg distillation for inductive zero-shot semantic segmentation,” 2025. [Online]. Available: https://openreview.net/forum?id=IFaZZmPz5K
+[30]
+J. Chen, D. Deguchi, C. Zhang, and H. Murase, “Generalizable semantic vision query generation for zero-shot panoptic and semantic segmentation,” arXiv preprint arXiv:2402.13697, 2024.
+[31]
+J. Chen, X. Zheng, D. Li, C. Yi, S. Ito, D. P. Paudel, L. Van Gool, H. Murase, and D. Deguchi, “Split matching for inductive zero-shot semantic segmentation,” arXiv preprint arXiv:2505.05023, 2025.
+[32]
+X. Zheng, Y. Lyu, L. Jiang, D. P. Paudel, L. Van Gool, and X. Hu, “Reducing unimodal bias in multi-modal semantic segmentation with multi-scale functional entropy regularization,” arXiv preprint arXiv:2505.06635, 2025.
+[33]
+X. Zheng, P. Y. Zhou, A. V. Vasilakos, and L. Wang, “360sfuda++: Towards source-free uda for panoramic segmentation by learning reliable category prototypes,” IEEE Transactions on Pattern Analysis and Machine Intelligence, 2024.
+[34]
+H. Xie, C. Fu, X. Zheng, Y. Zheng, C.-W. Sham, and X. Wang, “Adversarial co-training for semantic segmentation over medical images,” Computers in biology and medicine, vol. 157, p. 106736, 2023.
+[35]
+X. Zheng, T. Pan, Y. Luo, and L. Wang, “Look at the neighbor: Distortion-aware unsupervised domain adaptation for panoramic semantic segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 18 687–18 698.
+[36]
+L.-C. Chen, Y. Zhu, G. Papandreou, F. Schroff, and H. Adam, “Encoder-decoder with atrous separable convolution for semantic image segmentation,” in Proceedings of the European Conference on Computer Vision, 2018, pp. 801–818.
+[37]
+Z. Quan, J. Chen, D. Deguchi, J. Sun, C. Zhang, Y. Li, and H. Murase, “Semantic matters: A constrained approach for zero-shot video action recognition,” Pattern Recognition, p. 111402, 2025.
+[38]
+E. Xie, W. Wang, Z. Yu, A. Anandkumar, J. M. Alvarez, and P. Luo, “Segformer: Simple and efficient design for semantic segmentation with transformers,” Advances in Neural Information Processing Systems, vol. 34, 2021.
+[39]
+S. Zheng, J. Lu, H. Zhao, X. Zhu, Z. Luo, Y. Wang, Y. Fu, J. Feng, T. Xiang, P. H. Torr et al., “Rethinking semantic segmentation from a sequence-to-sequence perspective with transformers,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2021, pp. 6881–6890.
+[40]
+T. Xiao, Y. Liu, B. Zhou, Y. Jiang, and J. Sun, “Unified perceptual parsing for scene understanding,” in Proceedings of the European Conference on Computer Vision, 2018, pp. 418–434.
+[41]
+J. Chen, C. Fu, H. Xie, X. Zheng, R. Geng, and C.-W. Sham, “Uncertainty teacher with dense focal loss for semi-supervised medical image segmentation,” Computers in Biology and Medicine, vol. 149, p. 106034, 2022.
+[42]
+J. Zhu, Y. Luo, X. Zheng, H. Wang, and L. Wang, “A good student is cooperative and reliable: Cnn-transformer collaborative learning for semantic segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 11 720–11 730.
+[43]
+X. Zheng, P. Zhou, A. V. Vasilakos, and L. Wang, “Semantics distortion and style matter: Towards source-free uda for panoramic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 27 885–27 895.
+[44]
+X. Zheng, Y. Luo, C. Fu, K. Liu, and L. Wang, “Transformer-cnn cohort: Semi-supervised semantic segmentation by the best of both students,” in 2024 IEEE International Conference on Robotics and Automation (ICRA). IEEE, 2024, pp. 11 147–11 154.
+[45]
+X. Zheng, Y. Lyu, J. Zhou, and L. Wang, “Centering the value of every modality: Towards efficient and resilient modality-agnostic semantic segmentation,” in European Conference on Computer Vision. Springer, 2024, pp. 192–212.
+[46]
+W. Zhang, Y. Liu, X. Zheng, and L. Wang, “Goodsam: Bridging domain and capacity gaps via segment anything model for distortion-aware panoramic semantic segmentation,” arXiv preprint arXiv:2403.16370, 2024.
+[47]
+C. Zhu, B. Xiao, L. Shi, S. Xu, and X. Zheng, “Customize segment anything model for multi-modal semantic segmentation with mixture of lora experts,” arXiv preprint arXiv:2412.04220, 2024.
+[48]
+D. Zhong, X. Zheng, C. Liao, Y. Lyu, J. Chen, S. Wu, L. Zhang, and X. Hu, “Omnisam: Omnidirectional segment anything model for uda in panoramic semantic segmentation,” arXiv preprint arXiv:2503.07098, 2025.
+[49]
+X. Zheng, Y. Lyu, L. Jiang, J. Zhou, L. Wang, and X. Hu, “Magic++: Efficient and resilient modality-agnostic semantic segmentation via hierarchical modality selection,” arXiv preprint arXiv:2412.16876, 2024.
+[50]
+C. Liao, K. Lei, X. Zheng, J. Moon, Z. Wang, Y. Wang, D. P. Paudel, L. Van Gool, and X. Hu, “Benchmarking multi-modal semantic segmentation under sensor failures: Missing and noisy modality robustness,” arXiv preprint arXiv:2503.18445, 2025.
+[51]
+J. Zhao, F. Teng, K. Luo, G. Zhao, Z. Li, X. Zheng, and K. Yang, “Unveiling the potential of segment anything model 2 for rgb-thermal semantic segmentation with language guidance,” arXiv preprint arXiv:2503.02581, 2025.
+[52]
+X. Wang, R. Girshick, A. Gupta, and K. He, “Non-local neural networks,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2018, pp. 7794–7803.
+[53]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly et al., “An image is worth 16x16 words: Transformers for image recognition at scale,” arXiv preprint arXiv:2010.11929, 2020.
+[54]
+Z. Liu, Y. Lin, Y. Cao, H. Hu, Y. Wei, Z. Zhang, S. Lin, and B. Guo, “Swin transformer: Hierarchical vision transformer using shifted windows,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 10 012–10 022.
+[55]
+J. Zhu, Y. Luo, X. Zheng, H. Wang, and L. Wang, “A good student is cooperative and reliable: Cnn-transformer collaborative learning for semantic segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), October 2023, pp. 11 720–11 730.
+[56]
+Z. Zhang, W. Ke, Y. Zhu, X. Liang, J. Liu, Q. Ye, and T. Zhang, “Language-driven visual consensus for zero-shot semantic segmentation,” IEEE Transactions on Circuits and Systems for Video Technology, 2024.
+[57]
+M. Palatucci, D. Pomerleau, G. E. Hinton, and T. M. Mitchell, “Zero-shot learning with semantic output codes,” Advances in neural information processing systems, vol. 22, 2009.
+[58]
+J. Ding, N. Xue, G.-S. Xia, and D. Dai, “Decoupling zero-shot semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 11 583–11 592.
+[59]
+G. Pastore, F. Cermelli, Y. Xian, M. Mancini, Z. Akata, and B. Caputo, “A closer look at self-training for zero-label semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2021, pp. 2693–2702.
+[60]
+J. Wu, X. Li, S. Xu, H. Yuan, H. Ding, Y. Yang, X. Li, J. Zhang, Y. Tong, X. Jiang et al., “Towards open vocabulary learning: A survey,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 46, no. 7, pp. 5092–5113, 2024.
+[61]
+F. Li, H. Zhang, P. Sun, X. Zou, S. Liu, C. Li, J. Yang, L. Zhang, and J. Gao, “Segment and recognize anything at any granularity,” in European Conference on Computer Vision. Springer, 2024, pp. 467–484.
+[62]
+S. Xu, X. Li, S. Wu, W. Zhang, Y. Tong, and C. C. Loy, “Dst-det: Simple dynamic self-training for open-vocabulary object detection,” IEEE Transactions on Circuits and Systems for Video Technology, 2024.
+[63]
+H. Caesar, J. Uijlings, and V. Ferrari, “Coco-stuff: Thing and stuff classes in context,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2018, pp. 1209–1218.
+[64]
+B. Zhou, H. Zhao, X. Puig, S. Fidler, A. Barriuso, and A. Torralba, “Scene parsing through ade20k dataset,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2017, pp. 633–641.
+[65]
+L. Wang and K.-J. Yoon, “Knowledge distillation and student-teacher learning for visual intelligence: A review and new outlooks,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 44, no. 6, pp. 3048–3068, 2021.
+[66]
+G. Hinton, O. Vinyals, and J. Dean, “Distilling the knowledge in a neural network,” arXiv preprint arXiv:1503.02531, 2015.
+[67]
+Z. Quan, Q. Chen, M. Zhang, W. Hu, Q. Zhao, J. Hou, Y. Li, and Z. Liu, “Mawkdn: A multimodal fusion wavelet knowledge distillation approach based on cross-view attention for action recognition,” IEEE Transactions on Circuits and Systems for Video Technology, 2023.
+[68]
+J. Chen, D. Zhu, G. Qian, B. Ghanem, Z. Yan, C. Zhu, F. Xiao, S. C. Culatana, and M. Elhoseiny, “Exploring open-vocabulary semantic segmentation from clip vision encoder distillation only,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 699–710.
+[69]
+L. Li, J. Miao, D. Shi, W. Tan, Y. Ren, Y. Yang, and S. Pu, “Distilling detr with visual-linguistic knowledge for open-vocabulary object detection,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023, pp. 6501–6510.
+[70]
+X. Lu, L. Jiao, L. Li, F. Liu, X. Liu, and S. Yang, “Self pseudo entropy knowledge distillation for semi-supervised semantic segmentation,” IEEE Transactions on Circuits and Systems for Video Technology, vol. 34, no. 8, pp. 7359–7372, 2024.
+[71]
+S. Wu, W. Zhang, L. Xu, S. Jin, X. Li, W. Liu, and C. C. Loy, “CLIPSelf: Vision transformer distills itself for open-vocabulary dense prediction,” in The Twelfth International Conference on Learning Representations, 2024.
+[72]
+X. Gu, T.-Y. Lin, W. Kuo, and Y. Cui, “Open-vocabulary object detection via vision and language knowledge distillation,” in International Conference on Learning Representations, 2022.
+[73]
+S. He, H. Ding, and W. Jiang, “Primitive generation and semantic-related alignment for universal zero-shot segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 11 238–11 247.
+[74]
+Z. Ma, G. Luo, J. Gao, L. Li, Y. Chen, S. Wang, C. Zhang, and W. Hu, “Open-vocabulary one-stage detection with hierarchical visual-language knowledge distillation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 14 074–14 083.
+[75]
+X. Huang, H. Zhou, K. Yao, and K. Han, “FROSTER: Frozen CLIP is a strong teacher for open-vocabulary action recognition,” in The Twelfth International Conference on Learning Representations, 2024.
+[76]
+T.-Y. Lin, P. Goyal, R. Girshick, K. He, and P. Dollár, “Focal loss for dense object detection,” in Proceedings of the IEEE International Conference on Computer Vision, 2017, pp. 2980–2988.
+[77]
+D. Baek, Y. Oh, and B. Ham, “Exploiting a joint embedding space for generalized zero-shot semantic segmentation,” in Proceedings of the IEEE/CVF International Conference on Computer Vision, 2021, pp. 9536–9545.
+[78]
+Y. Zhang, M.-H. Guo, M. Wang, and S.-M. Hu, “Exploring regional clues in clip for zero-shot semantic segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2024, pp. 3270–3280.
+[79]
+K. Kim, Y. Oh, and J. C. Ye, “Otseg: Multi-prompt sinkhorn attention for zero-shot semantic segmentation,” in Proceedings of the European Conference on Computer Vision, 2024.
+[80]
+J. Qin, J. Wu, P. Yan, M. Li, R. Yuxi, X. Xiao, Y. Wang, R. Wang, S. Wen, X. Pan et al., “Freeseg: Unified, universal and open-vocabulary image segmentation,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 19 446–19 455.
+[81]
+R. Mottaghi, X. Chen, X. Liu, N.-G. Cho, S.-W. Lee, S. Fidler, R. Urtasun, and A. Yuille, “The role of context for object detection and semantic segmentation in the wild,” in Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2014, pp. 891–898.
+[82]
+M. Contributors, “Mmsegmentation: Openmmlab semantic segmentation toolbox and benchmark,” 2020.
+[83]
+K. He, X. Zhang, S. Ren, and J. Sun, “Delving deep into rectifiers: Surpassing human-level performance on imagenet classification,” in Proceedings of the IEEE international conference on computer vision, 2015, pp. 1026–1034.
+[84]
+M. Raghu, T. Unterthiner, S. Kornblith, C. Zhang, and A. Dosovitskiy, “Do vision transformers see like convolutional neural networks?” Advances in neural information processing systems, vol. 34, pp. 12 116–12 128, 2021.
+[85]
+S. Kornblith, M. Norouzi, H. Lee, and G. Hinton, “Similarity of neural network representations revisited,” in International conference on machine learning. PMLR, 2019, pp. 3519–3529.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

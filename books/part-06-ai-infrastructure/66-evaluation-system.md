@@ -65,6 +65,10 @@ E[score | answer] = q - (1-q) * t/(1-t)
 
 回答筛选应将 score 学习、概率校准和 release threshold 分别比较：固定同一 generator 的同一候选，标量 logit 的再校准只改变其映射，不会凭空学习新的 question–answer 特征；另训 selector 则改变判别信息，还须在独立 calibration set 上校准分数，再按事先声明的业务阈值评价。评价同时保留 coverage、released-answer risk 与成本敏感 utility，并列 always-abstain 的零 utility 基线，不只报 AUC 或 Brier。[受限短英语 QA 对照](https://arxiv.org/html/2610.13821v1#S4)中，学习 selector 改善本域筛选，却在未重校的另一数据集上仍低于拒答；更好 ranking 因而不保证可发布收益。三个 seed 的 RL 对照区间跨零不等证明无效，局部人工修正也不是完整语义验收。候选生成、scoring、训练和校准全部计价；域移或净 utility 未通过时，应重新校准、回退原 filter 或拒答，不把一次训练收益转成跨域可靠性保证。<!-- source-family:SF-2026-ARXIV-2610-13821 -->
 
+拒答还要沿同一问题的澄清轨迹验收，而不是只比第一轮拒绝率：固定初始模糊请求与经核的benign intent，分别给出首轮、意图直接给出、后续补充实质信息的澄清及不增加信息的施压条件；按原子信息清单记录每轮新增、跨轮并集和重复输出，同时另报安全结果。多轮并集有更多回答机会，不能仅因超过单轮结果就声称能力或成本更优；用户自称benign也不提供安全授权。[CarryOnBench的受限模拟对照](https://arxiv.org/html/2604.27093v1#S3)提示utility恢复、重复与有害响应可有不同轨迹，但合成checklist、共享judge和安全聚合口径冲突不授自然用户风险或通用澄清因果。模拟、人审、逐item判分与额外轮次均计费；意图、标签或聚合不可核时保留原始逐轮记录、独立行为审核与Unknown，单轮低风险任务继续采用原评价。<!-- source-family:SF-2026-ARXIV-2604-27093 -->
+
+交互式构建任务还须把评估者知道的完整需求与Agent每轮实际获知的信息分开保存。可从同一gold specification删去、模糊或冲突改写部分条件，让模拟用户仅回答本轮明确询问的slots，再分别记录需求恢复、实现和最终可执行结果；隐藏条件的completion因此包含主动获取信息，不能全归为对初始请求的代码能力。[InteractWeb的受限设计](https://arxiv.org/html/2604.27419v1)提供这条接口，不使模拟persona成为真实用户分布，也不让额外UI自动等同事实幻觉。完整gold直接给出、相同交互预算与独立功能/人类评价仍是必要参照；需求权重、gold到改写的对应和用户泄露规则都须可核。生成改写、模拟交互、浏览器执行、判分与人工审校均计费；恢复不了的隐藏条件保留Unknown或明确的默认许可，不让测试者私有偏好代替用户授权，低风险完整需求仍可沿原静态验收。<!-- source-family:SF-2026-ARXIV-2604-27419 -->
+
 ## HTTP 成功只是质量判断的第一道门
 
 传统服务的 `error rate` 通常把 timeout、连接失败、`5xx`、进程异常或显式 schema failure 记为错误。这些信号回答执行路径是否完成，却看不见一个语法正常、HTTP `200` 的答案是否事实错误、遗漏关键条件、违反策略或没有完成业务任务。
@@ -156,6 +160,8 @@ EvalSpec =
 
 距离度量还依赖参考 embedding 的几何，而不只是被评价模型的输出。高维空间中，少数参考点可能频繁成为别人的近邻，使距离分数把 hubness 当成生成质量；一条受限校正分支先只用真实样本冻结局部尺度，再把每个生成点放到同一真实参考邻域中测量，避免加入其他生成点就改写已有点的评分。局部尺度校正本身又可能把离开参考流形的异常点拉得过近，因此需要过滤和不同尺度的反侧检查，而不是宣称任意高维 metric 已可靠。参考 encoder、真实人口、邻域尺度与过滤规则应共同进入 scorer identity，校准与近邻计算都支付成本。[必要方法与反侧](https://arxiv.org/html/2602.16449v1)只支持作者所测距离指标与数据：单维异常被平均、离散/连续失配仍会失败，部分指标或人类相关性不改善。真实参考不足、outlier 判断不稳或结果失配时，保留原度量、任务指标和独立人工锚点，不把几何校正当作生成正确性的证明。<!-- source-family:SF-2026-ARXIV-2602-16449 -->
 
+几何偏差还应接受不随输入变化的负对照：对全部图像提交同一段不相关文本，若相似度依然很高，就不能用该分数独自认证逐图语义匹配。检索还须另测把一条这样的文本加入gallery后，相关结果是否被挤走；单条污染与大量重复污染是不同威胁模型，分别报告排名、命中与分母。[跨模态hub文本的受限反侧](https://arxiv.org/html/2604.27674v1)表明通常的人类相关性并不排除这种失败，不证明任意encoder都受同一字符串攻击，也不使纯cosine下的均值方向成为截断score的通用全局最优。Encoder、gallery、调优与测试人口以及搜索预算应共同冻结；文本反演、搜索、污染检查和人工语义锚点都计费。异常检测未独立验收时，保留可信gallery、原任务指标与人工检查，不由高相似度或一个过滤器签发真实相关性与安全保证。<!-- source-family:SF-2026-ARXIV-2604-27674 -->
+
 几何也可以只调节已有 score，而不是直接替换它。保留 Euclidean cosine 作 base，一条受限分支用 human MOS 监督学习 hyperbolic 表示与动态 cone aperture，再把距离、外部角度及 aperture 经 MLP 变成逐样本 scale、bias 和 gate，调制原 cosine。[必要机制与消融](https://arxiv.org/html/2601.04614v1)支持这个接口，不证明几何反映真实 entailment 或语义层级，名为 confidence 的 gate 也不取得事实概率权限。modulation-only 已有明显收益，不能把容量与监督收益全归于新几何；不同投影的可视化不构成层级因果证据，跨域对照也有低于既有 scorer 的切片。MOS 标注、encoder 训练和额外几何/MLP 调用都计费；监督人口、验证选择与 scorer revision 应共同冻结。域漂移或资格不足时，保留原 cosine、任务指标与独立人工锚，不由较高平均相关性批准单 prompt 正确性或上线。<!-- source-family:SF-2026-ARXIV-2601-04614 -->
 
 除了几何偏差，还要主动构造语义与熟悉度相冲突的评价人口。对同一个 prompt，把“符合要求但不典型”的图像与“看起来典型但违背数量、颜色或关系要求”的图像配对，才能检查 scorer 是否用训练分布的 prototype 替代条件正确性；随机平均相关性可能掩盖这种定向误排。EvalSpec 应冻结配对规则、生成/过滤模型、具体违反的条件和独立标注人口，而不是只记录一个总分。[ProtoBias 的受限对照](https://arxiv.org/html/2601.04946v1)提供了这样的反向配对探针，但过滤 judge 也有自身偏好，部分 image/pair 分母不清，300份人工检查不能认证全部主评价标签；再训练一个 scorer 也不使它成为真值。配对生成、人工锚点及校准都付费。原始任务 oracle 或标注不足时，保留分项指标和人工复核，不由 prototype 偏好推断全部指标无效或新 scorer 普遍可靠。<!-- source-family:SF-2026-ARXIV-2601-04946 -->
@@ -176,9 +182,17 @@ Metric 的条件化对象也属于 EvalSpec，而不是名字相近就可互换�
 
 语言控制的代理也要绑定具体行为：hidden-state 干预使输出被语言识别器判为目标语言，不等于保留原问题的意思或给出相关回答。[CLaS 的受限评价](https://arxiv.org/html/2601.08331v1)把 language-forcing success 与另一个 judge 评的 output relevance 分账；二者总体均值的 harmonic mean 不是每条回答同时合格的比例，relevance 也不认证事实正确性。两种8B模型、32种语言与70道平行问题中，干预层和强度可让语言成功与回答质量反向变化；不能把 late-layer 有效性解释为唯一语言 circuit。EvalSpec 应保存翻译/审校人口、识别器与 judge、干预配置和独立 held-out 选择规则，避免在同一 benchmark 选最佳配置后把结果当迁移保证。额外跨语言审校和双轴评测有成本；语义或事实退步时保留普通提示与未干预模型，而不只验收输出语言。<!-- source-family:SF-2026-ARXIV-2601-08331 -->
 
+当任务还给出一份要模仿的风格示例时，必须再区分参照的责任：源文本规定应保留的意思，目标示例提供风格条件，但它的事实内容并非改写答案的来源。在确实需要改变风格且保留原意的任务上，可将原输入直接输出与目标示例直接输出作为两种平凡对照，分别暴露“不做迁移”和“搬运目标内容”的捷径；再将源文本与输出的 meaning 检查、目标风格检查，以及以目标示例为 reference 的内容 overlap 分账。[受限风格迁移研究](https://arxiv.org/html/2505.00679v1)明确单列 target-overlap 来检查复制压力，但 overlap 高低本身不裁定抄袭或正确性，共用词句也可能合法。其 Towards 显示公式与文字目标不一致，因此不能用相关排名认证更接近目标；这里采用的是参照分责与平凡对照，不是任意风格迁移均有效的保证。目标示例制备、多路 scorer 与人工语义核验都增加成本；参照不合格、meaning 退步或指标冲突时，应保留原输入、分项结果和人工复核，必要时标 Unknown，而不由一个 style 总分批准改写。<!-- source-family:SF-2025-ARXIV-2505-00679 -->
+
+把英文测试翻译为另一语言后，还应先检查测量对象是否保持。若只比较平均stereotype score，均值靠近中性可能来自各item偏好重新排列，而不是每项都更接近中性。保留逐item配对、方向与离中性的距离，再以同语言重述估计仅改写造成的波动，并用已知注入变化检查检测能力；重述基线是读数参照，不自动成为显著性阈值，配对检验的对称/可交换性与多重比较条件仍须成立。英语原标签也不裁定目标语言本地的公平真值。
+
+这一审计还依赖scorer真正读到了被比较的内容：从数据metadata重建候选角色，不由选项顺序猜标签；按完整输入的字符offset核对continuation边界，并decode实际计分tokens，防止首个差异token被漏掉。逐token平均似然的归一化分数不是回答选择概率，也不能混用成另一benchmark的官方分数。[受限跨语审计](https://arxiv.org/html/2610.20479v1)只覆盖所述量化小模型与翻译人口，翻译judge、重述和配对统计都增加成本；缺少native审校，不能把模型关联变化与翻译构念变化完全分离，亦未测量化效应或生成行为公平性。对比单位、翻译对立或评分边界不稳时保留原始item、分项结果与人审，不由更低总分批准消偏。<!-- source-family:SF-2026-ARXIV-2610-20479 -->
+
 答案语言还应与语义正确、拒答分别计分：混入异语干扰文档后，答案切换 script 可能使 exact-match 下降，却不一定产生事实幻觉；反过来，保留目标语言也不证明答对。多语评估应保存原回答并以人工语义校核抽查这些分歧，增加跨语审校预算；无可靠校核时只报告各对象的结果，不用统一字符串分数认证事实性。[受限干扰实验](https://arxiv.org/html/2610.02926v1)的人工反侧来自单模型 Hindi 子集，两个 QA 设置同时改变任务与格式，不能推出格式单因果、统一容量定律或所有语言均如此。<!-- source-family:SF-2026-ARXIV-2610-02926 -->
 
 另一个不能用语义代理替代的对象是受约束的顺序重建：固定字符集合、改变排列，再分别请求 canonical reconstruction 与意义解释，可以发现解释稳定而重建失败的切片。[OrderProbe 的限定实验](https://arxiv.org/html/2601.08626v1)支持这两类表现分账，不支持由语义解释正确反推结构重建正确，也不把跨排列的 NLI 相似度当真实 entailment。验收时应另查字符守恒、canonical oracle 与 distinct permutation 分母；重复字符的去重分母是工程核验要求，不冒称原实验已完整核实。语言间表达单位、供应商默认设置与跨时段 checkpoint 不匹配，不能合成架构因果结论；局部 CoT 还出现重建退步。增加排列、双输出与 scorer 核验有成本，普通语义任务仍可保留原评价，只在顺序约束实际重要时加入该独立切片，而不推定唯一结构 circuit。<!-- source-family:SF-2026-ARXIV-2601-08626 -->
+
+跨图文对应也可改成显式指派任务：保留文本与占位符，打乱候选图像，要求恢复一一对应；先验合法bijection，再分别报告逐位置正确、成对顺序一致与完整指派全对。三者不能互换：循环错位可没有一个位置正确，却保留大部分成对次序，所以Kendall式partial分数不能独自证明局部grounding强，全串exact也会随候选数量改变难度。[COHERENCE的受限诊断](https://arxiv.org/html/2604.27389v1#S4)支持显式对应的验收对象，不识别native架构、规模涌现或内部失败根因；自动唯一性/难度筛选和judge错误标签还限制人口与解释。原配对、shuffle、候选ID、过滤和判分规则须一起保存，构造、人审、视觉/文本读取与多侧评分全计费。配对歧义或目标支持不明时，回到原文图像、逐slot核验和人工审查；候选多于占位符时另验无关图像拒绝，不能沿用闭合bijection假设。<!-- source-family:SF-2026-ARXIV-2604-27389 -->
 
 把生产轨迹的人工结果用于训练 critic 时，还必须对齐标签与被判断的对象：整个 PR 被合并，不代表其中每一段对话成功；最后保留下来的代码比例，也只是受后续修改影响的代理，不是每个 segment 的正确性。过程 rubric 可以提供更细的辅助监督，但它仍可能由模型标注并继承代理偏差。EvalSpec 应记录标签生成链、轨迹粒度、缺失标签与人工/模型判断的分工，并单独验证 critic 从 benchmark 迁移到真实 workflow 后是否仍有效，而不是把“有人类结果”当作无噪声真值。
 
@@ -199,6 +213,8 @@ Metric 的条件化对象也属于 EvalSpec，而不是名字相近就可互换�
 任务难度切片也不能只按输入长度或实体数划分。关系推理可以分别改变输入规模、任务生成器规定的 binding arity，以及识别或比较单个 operand 的难度；它们是三个不同轴。同一 arity 下更多输入可能提供额外线索，而非必然更难；实体少却需要同时满足更多关系，也可能比长输入更困难。EvalSpec 应保存生成规则和 oracle，在输出格式、scorer、推理预算可比的切片中交叉改变这些轴，不把换任务后不同的 accuracy、substructure 或 recall 拼成同一条下降曲线。<!-- source-family:SF-2026-ARXIV-2604-12176 -->
 
 这种控制比单一长度排行榜增加生成、oracle 与样本预算，也仍只能约束已测混杂。生成器定义的 relational complexity 是任务属性标签，不是模型内部容量的计算下界；合成、多选与有限 token 预算下的失败，更不证明增加任意计算都无效。简单任务、长度已主导成本时仍可保留原长度切片，复杂关系任务再补上述交叉维度。受限关系评估支持将这些难度来源分账，而不支持通用 arity 阈值或唯一失败因果。
+
+组合泛化还可另问模型能否给出一份紧凑的映射规则，而不只看逐例答案：让模型输出可执行程序，按声明的统一映射表范式计原子依赖规模，再单列重放样本上的错误，区分枚举全表的正确与过度压缩的错误。这里的程序是新的外部回答对象，表长度也是受解析器和编码约定限制的proxy，不是精确Kolmogorov复杂度或原答题内部算法。[受限rule-generation对照](https://arxiv.org/html/2604.27340v1#S5)中规则分数与结果准确率并不显著相关；把全部有限样本交给模型还改变了任务，不能认证预训练无泄漏或替代留出泛化。程序生成、sandbox重放、AST/启发式维护与独立语义核验均计费；程序形式越界、解析或编码失配时，保留原输出测试、人工规则审查与明确Unknown，不用较短代码签发理解能力。<!-- source-family:SF-2026-ARXIV-2604-27340 -->
 
 逻辑任务还应把“判定不存在解”与“提交可核验的 witness”分开：前者需可信求解 oracle，后者需检查赋值是否满足每个 clause。[参数化逻辑问题的有限对照](https://arxiv.org/html/2602.12665v1)固定 2-CNF，并改变 core 结构、free-to-bound 比例、填充和呈现；其 UNSAT 人口测 decision、SAT 人口测 witness，不能从两者准确率差直接归因能力。系统若要比较同一可满足实例的 decision 与 witness，应另作配对设计，不冒称作者已完成这个控制。Free-variable ratio 的总体结果与局部叙述、参数难度方向并非一致，不能照录成普遍难度律。生成、求解 oracle、witness 解析及模型调用均需计费，未完成输出也不能静默从人口中删除；没有可信 witness scorer 或任务只需决策时，保留原决策评价，把结构诊断作为补充而非替代真实任务结果。 <!-- source-family:SF-2026-ARXIV-2602-12665 -->
 
@@ -257,6 +273,8 @@ EvalSpec 因而要版本化原始 stream identity、时间边界与 perturbation
 
 固定 prompt 下的最高分最容易比较，但弱 supervisor 无法可靠验证全部输出时，低分可能来自能力不足、策略性隐藏或 elicitation 失败。Evaluation 需要把模型当前自然行为、给定监督预算可诱发的最好行为，以及 supervisor/evaluator 的识别上限拆成不同证据对象。
 
+解释低分之前，还应把响应位置的集中与题目内容敏感性分开检查。多选任务可在固定选项协议下记录位置entropy/众数比例，另用honest难度与对抗条件正确性的关系作内容敏感性proxy，并与无题干、仅格式的null比较；位置集中不自动等于完全忽略题目，接近均匀也不证明真实能力。[受限sandbagging对照](https://arxiv.org/html/2604.27249v1#S3)出现低entropy却保留difficulty相关的条件，支持两类诊断分别报告，而非凭一个阈值删除整批响应。难度proxy与单一多步提示不识别内部机制，两同family量化8B/greedy结果也不认证自然部署中的策略性隐藏。Null调用、选项/措辞切片和独立判分均计费；指标冲突、阈值或模型条件改变时，保留原输出与分层结果，回退独立能力验证，不由分布形状签发“没有能力”或“没有欺骗”。<!-- source-family:SF-2026-ARXIV-2604-27249 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-22082:start -->
 对同一 model revision，可记录 zero-shot baseline、弱监督 SFT/RL 后的可观察提升、监督来源及其可验证范围；elicitation training 只能作为 probe，不能反向证明内部真实最大能力或“欺骗已被解决”。它换来更强的 capability lower bound，却增加训练成本、distribution shift 和对 model-organism 假设的依赖。作者在人工训练为 sandbagging 的模型及数学、科学、代码任务中观察到弱监督可恢复部分表现，不证明真实部署模型普遍可被同样方法揭示；监督不可靠或风险过高时仍需独立 verifier、权限收缩与保守 release Gate。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-22082:end -->
@@ -282,6 +300,8 @@ EvalSpec 因而要版本化原始 stream identity、时间边界与 perturbation
 配对测试还应显式区分 joint 与 conditional population：对同一图像的真实陈述 `Q+` 和若干分别独立询问的虚假变体 `Q-`，同时报告 `Acc(Q+)`、在固定原始分母上“真实答对且所有虚假均拒绝”的 joint accuracy，以及在真实答对子集上“至少误接纳一个虚假变体”的条件错误率。后者分母随模型或 prompt 改变，不能独自代表全部样本鲁棒性；`Q+` 答对也不证明模型真正 grounded 于图像，更不意味着先前对话记忆。[CFHR exact-v1](https://arxiv.org/pdf/2602.05437v1)的有限 VLM、三语言构造与解析协议显示 aggregate accuracy 可掩盖这种条件脆弱性，但部分 reasoning-first 切片反而改善，不授普遍排名或拒答即正确。额外变体、构造模型和人工校核均有成本；变体真实性、条件 coverage 或解析不稳定时，回退人工配对标签与独立 grounding intervention，保留原固定分母准确率。<!-- source-family:SF-2026-ARXIV-2602-05437 -->
 
 同一份回答内部也可能有两种必须同时满足的输出：选择了正确目标，不等于已经定位它。若任务还要求目标框，可在原题分母上同时报告选项准确率与“选项正确且定位重叠达阈值”的联合成功率；只在选项答对子集计算的平均 IoU 则须标为条件指标，不能把不同模型的子集当作同一人口。[受限静态图像对照](https://arxiv.org/html/2603.18892v1#S5.S2)显示两种排名可以分离，但模型原生定位接口、解析协议和标注不确定性也参与差异，不能由答对但框错直接识别内部捷径或“没有空间理解”。训练时把格式、答案和定位奖励相加，也不等发布时三个条件都已通过。增加框标注、解析与联合验证均有成本；只需文本选项时原 MCQ 仍合理，需要空间输出时保留该联合检查与固定分母，静态定位通过却不签发时序、真实坐标或物理行动安全。<!-- source-family:SF-2026-ARXIV-2603-18892 -->
+
+GUI状态设置还要区分控件的可见范围与真正改变状态的core，并保存当前、目标配置各自的框：先指出“在哪里”的点，与为目标状态选择的操作点，可以是两个独立输出。此时定位命中、core命中与exact-state联合成功须分别在明示人口上计算；不同点或不同配置的框不天然形成嵌套漏斗，不能用成功率之差直接认定唯一失败原因。[静态GUI受限对照](https://arxiv.org/html/2604.27974v1#S3)暴露了这一评价接口，但截图标注和记录的状态标签不等于真实应用已完成持久状态变更。更细框/状态标注、辅助提示与调用均付费，标注分歧也须审计；只有粗定位需求时保留原轻量grounding，需要真实状态时另验实际effect与回读，不由core命中或静态exact-match签发GUI执行可靠性。<!-- source-family:SF-2026-ARXIV-2604-27974 -->
 
 视频中的聚合答案也需拆开：计数正确，不等于列出的实例集合正确，更不等于原时间轴上的证据支持这些实例。评价可同时保存最终数值的exact/误差、列表匹配的precision/recall与原媒体的support spans，明确漏项、重复项、judge匹配和时间采样各自的人口；只有任务本来只消费一个数时，原标量检查才足够。[EC-Bench的受限协议](https://arxiv.org/html/2603.29943v1)把enumeration/counting与时间支持分验，但其多span折成单interval的tIoU不能验逐实例对应、间隙或顺序，模型judge与整体相关也不证明过程faithfulness。长视频帧采样、ASR转录、实例/时间标注、匹配和额外输出都付费；先列实例再计数的局部改善，不能在没有同预算控制时独归grounding。列表身份、时间支持或标签资格不可信时，回读原视频/转录、补独立标注或保留Unknown，不以最终数值碰巧正确批准完整证据链。<!-- source-family:SF-2026-ARXIV-2603-29943 -->
 
@@ -534,6 +554,8 @@ Route/defer 的分数还要区分‘倾向把任务交出去’与‘该专家�
 
 一种可审计的分支是在大量 judge 评分外，随机抽取同一评价总体的人工配对标签，用人工与预测的残差修正目标估计。Prediction-powered inference 复用预测降低标注成本，但人工样本的抽取方式、item 配对、目标统计量与分析设计仍是成立前提；便利抽样不能冒充随机锚点，人工标签本身的构念效度也未被这个修正证明。非参数检验还需明确其估计的是排序概率、位置差还是组内秩，而不是一律解释为平均准确率差。
 
+选用signed-rank检验前，还要区分要检验的均值差与差值分布的形状。对于配对任务，分析对象是每题两系统得分之差D，而不是分别要求两列score正态；Wilcoxon signed-rank的常用零分布依赖D在零附近对称，均值为零本身并不满足这项条件。[IR范围的模拟与TREC校准](https://arxiv.org/html/2604.25349v1)展示了zero-mean却偏态时拒绝率可随样本增加而升高，因此“非正态就换非参数”不能作为自动规则。这不使t-test普遍可靠：小样本、极端偏态、相关任务及重复比较仍须各验假设，也不从该篇推导bootstrap或permutation已获同样保证。应冻结配对单位、目标统计量、零值/tie规则与采样结构，支付诊断、重采样或独立复核成本；条件不足时报告描述性差异、宽区间或Unknown，不由检验名称发布显著改进。<!-- source-family:SF-2026-ARXIV-2604-25349 -->
+
 若预测与人工结合的权重也由少量标签估计，权重的不确定性必须一起计入。收缩可以降低不稳定性，却牺牲部分 power，不能保证有限样本中总比人工估计好。小样本下，bootstrap 置信区间同样要验证覆盖；这不否定用 resampling 诊断权重方差，也不否定结构匹配、样本充分时的 bootstrap。应按目标统计量和采样结构选择经验证的推断，条件不足时报告宽区间、补标注或不作显著改善声明。当前方法/工具的模拟和支持范围有限，不提供所有 judge、multi-run 或任意指标的通用证书。
 <!-- source-family:SF-2026-ARXIV-2609-35815 -->
 
@@ -667,6 +689,8 @@ process contract + enabled affordances
 收紧环境可以阻止不合规路径，却可能让 benchmark 退化为过度脚本化；开放环境更接近部署，却增加替代合法路径和 verifier false reject。因此 process compliance 与 outcome success 必须分开报告，文本 agreement 只作 sensor。选定任务、工具和 provider API 的实验不能外推成所有模型的通用遵从率。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-01771:end -->
 
+若要区分“约束已无法提取”与“仍能复述却未遵守”，可从同一历史fork出独立探针，询问原约束，但不把探针答案写回被测轨迹；再将可提取率与原轨迹的实际违规逐项配对。[多轮约束对照](https://arxiv.org/html/2604.28031v1#S3)支持这一诊断接口，却不把能复述认证为模型内部持续使用，也不唯一识别遗忘、优先级或压力的因果。探针、judges与额外checkpoint都耗预算，低敏感度judge仍可能漏检；所以保留真实行为trace、逐约束标签及人工抽核，不能以“它还记得”批准执行或省去runtime gate。简单短任务继续用原遵从检查，探针只在需要解释失效通道时增加。<!-- source-family:SF-2026-ARXIV-2604-28031 -->
+
 过程审计也必须审计 oracle 与模拟器自身：如果细粒度 assertion 只禁止修改某个既有对象，粗粒度 database-match 却把任何 state mutation 判失败，合法的替代动作也会被惩罚；反过来，模拟用户在同一消息中给出确认与终止标记，又可能让未执行动作的轨迹因数据库未变而获得成功。EvalSpec 应同时冻结合法状态转换、各 scorer 的接受集合以及 confirmation/stop 后是否仍给 Agent 执行机会，并保留具体冲突 trace。代理指标不达标不自动等于真实任务失败，未发生的工具效果也不能算已完成。[Procedure-Aware Evaluation 的受限反例](https://arxiv.org/html/2603.03116v1)来自特定航空任务与模拟环境，不证明所有终局评分都有同样缺陷；judge 也可能误把模拟器截断归责给 Agent，必要时回退人工逐步核对，不能由重新加权的总分自行认证部署可靠性。<!-- source-family:SF-2026-ARXIV-2603-03116 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-02038:start -->
@@ -694,6 +718,9 @@ control又必须核人口和上下文：只有一侧知道会被重试、按约�
 人口属性也不能只用一种提示线索定义。名字、方言、对话历史和显式类别标签，可能指向同一被研究的 demographic group，却同时改变语言风格、情境与模型可推断信息；同一名字列表内结果稳定，不证明这些 cue 可以互换。[人口提示构念的受限对照](https://arxiv.org/html/2601.18486v1#S4)在配对场景中观察到跨 cue 的差异大小与方向均会变化。因此 evaluation identity 应保存场景、cue 类型、具体实例与答案映射，并分别报告 cue-conditioned response contrast，不能把其中一个平均差异称为模型唯一的“内在偏差”。
 
 这项证据来自美国 Black/White 与二元 gender 的501基础场景扩增及三个模型，开放模型三seed、闭源GPT一次；没有回答真值，不能由组差证明真实伤害、正确性或内部因果。Readability 与 prompt 回归只能检查部分替代解释，模型对类别的行为probe也不读出内部表征。多cue矩阵增加生成、解析与人工构念审核成本；任务确实固定某cue时可保留该协议，但跨人口或部署公平性声明须明确范围、补独立标签与风险评价。对应关系不可靠时报告分歧与Unknown，而不是选一个较低差异的cue自签公平。<!-- source-family:SF-2026-ARXIV-2601-18486 -->
+
+尚无属性标注时，诊断也可以先提出假设，再去寻找可能暴露它的人口。[一条受限分类器审计分支](https://arxiv.org/html/2504.20902v1)由任务与类别生成属性/取值和caption，检索匹配图片，再以caption的目标/属性作为派生标签比较条件表现。它把可检验切片带入视野，却也让同一提案同时决定样本支持与标签；proposal多寡、检索是否真的同时符合目标和属性、分类行为与标签真伪须分别回核。未匹配既有标注的条目不自动成为真实新偏差，另一个VLM的agreement也不是独立真值；条件准确率差更不独自证明内部因果、总体公平或真实伤害。应保存提出者/模板、检索库/查询、去重与筛选人口、标签审核和未命中项，另核有效支持与多重比较。属性/caption生成、检索、分类、人工校准及重查全计费；假设遗漏、组合失配或标签不可靠时，保留固定标注集、真实失败挖掘与独立分层审计，不由一个闭环分数签发完整偏差召回或发布许可。
+<!-- source-family:SF-2025-ARXIV-2504-20902 -->
 
 代码生成的偏差审计也要改变实际产物形态，而不只换提示中的人口词。给定同一任务与可用属性，分别要求显式条件判断和学习型预测 pipeline，再检查哪些字段真正进入决策路径，能暴露简单 if-statement 未覆盖的 feature-selection 风险；识别某字段被使用，与模型生成时不使用它又是两个任务。属性出现在代码中不等于进入预测，进入预测也不自动证明真实群体伤害、违法或必须删除，任务的允许用途仍需独立定义。<!-- source-family:SF-2026-ARXIV-2604-21716 -->
 
@@ -870,6 +897,9 @@ Persona 对所给 profile 的忠实，也不能代替对目标人口的覆盖。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-05638:end -->
 
+不训练目标分类器，也不意味着检测器没有见过任务的语义支持。一个[受限图OOD分支](https://arxiv.org/html/2504.21186v1#S3)把节点与候选标签的相似性用于检测：真实OOD类名已知、只给ID类名、从可见全图的少量无标签节点由LLM提名伪OOD类名，是三份不同输入合同。扩展候选集合会改变相对分数和拒识边界，不能把获得真实OOD语义的对照与未知标签部署互授资格；不见节点人工标签亦不等无预训练、类名或transductive信息。类别切分、GFM/编码器、可见节点及提名/聚合规则应共同冻结，Eq5未完整写出的归一化不作为已校准概率recipe。四个TAG的LLM提名分支并非普胜，ID分类也可退步，评价设置中的labeled-OOD validation不认证自然漂移或真实安全。全图表示、LLM提名/编码、检测和独立校准均付费；类名支持、提名或目标分布失配时，保留仅ID的简单sensor、可信OOD标注与人工复核，不由更大的标签空间批准开放世界覆盖或发布。
+<!-- source-family:SF-2025-ARXIV-2504-21186 -->
+
 ## 平均值、切片与不确定性
 
 总体平均会把局部灾难隐藏在高频正常样本中。Evaluation System 应同时保存 per-example results、总体聚合和关键 slices：
@@ -892,6 +922,8 @@ overall
 \]
 
 这个式子只提供直觉。真实评估常有同一 prompt 的多次采样、同源数据、用户聚类和时间相关性，样本并非独立同分布。此时应采用与采样结构匹配的 bootstrap、clustered analysis 或重复运行，而不是机械套用置信区间。
+
+切片属性若由模型从被评分文本中推断，还须先区分识别覆盖、已识别人群内的属性正确率和各组评分误差：只在少数非Uncertain样本上较准，不表示全体人口都被可靠识别；把错误识别与未知合为对照，也改变了支持人口，而不是对同一文本随机揭示或隐藏属性。一项受限作文judge观察在独立session推属性与评分，仍可能共同受文风、内容质量和原标签协议影响，回归或IPW不能消除未测混杂；因此只把关联用于分层审计，不认定模型识别属性导致评分歧视。其正文声称Correct组QWK普遍更高还被主表多处反侧限制，不能用概括叙述覆盖逐题指标。属性标签、Unknown规则、题目/split、judge版本、评分reference和各分母应共同保存，提示重复、API评分与独立人审都计费；覆盖或真值资格不足时保Unknown、原始人口与人工切片，不把推断人口标签用于真实录取或以总体一致性自签公平。<!-- source-family:SF-2025-ARXIV-2504-21330 -->
 
 多人偏好评估的样本量至少有评审者与被评刺激两个轴；排序稳定与分数精确也不是同一个目标。固定一份完整评价作为参照，可以分别增加评审者、或固定评审者后增加分层采样的输入，记录相对参照的 rank correlation 与分数区间宽度。排行先趋于稳定而区间仍宽，说明继续收集的价值可能已从决定顺序转向估计相邻差距；高相关只表示接近该参照人口，不使参照榜单成为客观质量真值。<!-- source-family:SF-2026-ARXIV-2604-21481 -->
 
@@ -929,6 +961,8 @@ harm 与 calibration。现有 Gumbel-tail 方法和实验只支持作者设置�
 [有限7–8B问答校准对照](https://arxiv.org/html/2603.25052v1)中的改进按每题多次置信均值与另一次多样本解题频率计算，不能替某条已完成答案、开放生成或实际行动签发正确概率。目标标签、layer/prompt、采样温度、校准和呈现转移函数须共同验收；更多强度也非处处单调。标签制备、probe与多提示状态读取、强度扫描、独立pass及重复采样均计费，不由较低ECE批准单pass实时或安全。目标人口、转移或预算失配时，保留未steer表达、可靠外部verifier与保守拒答/升级，把回答事实和用户可见信心分别检查。
 
 将依赖参考答案核验的多次回答正确频率蒸馏成单次自报信心时，训练样本过滤本身也属于测量接口。只保留多数答案正确的题，可能把低置信标签一并删除，让模型仅学到几乎恒定的高置信输出；因此须保存过滤前后的目标标签分布，而不把“答案更干净”当成置信监督仍完整。若答案与信心共同训练，还应分别冻结答案内容、输出格式和标签，区分读出改善与答题策略变化。[受限的过滤/去过滤及 shuffled-target 对照](https://arxiv.org/html/2604.24070v1)只支持这种失败诊断：去过滤后的二档分数虽更能排序，原问答准确率却下降，跨基准格式和解析率也改变，不证明连续概率已校准或监控独立改善。标签制备、多次采样、训练与格式控制均付费；标签支持不足或策略无法隔离时，保留原解题策略、独立置信读出与外部核验，不以较高 AUROC 批准接受/拒答。<!-- source-family:SF-2026-ARXIV-2604-24070 -->
+
+置信接口若交付的不是“答案正确率”，而是一组供下游统计模型消费的数值先验，还须分别核关联方向、参数尺度、中心与宽度。能解释正负关系，不保证生成的分布覆盖合理效应；把均值归零或一味加宽也不自动保留有效知识。[受限先验提取对照](https://arxiv.org/html/2506.21964v1)展示了这两类失配，但用所见数据的 MLE 采样分布作参照，不会获得客观真先验；模型假设、单位、样本选择及 KL 的实际方向都必须先闭合，不能以平均距离或自报权重认证所有参数。提示中的模拟查阅不是已取得的原始证据，预测效用也应由独立目标与留出评价另核，不能由方向正确反推收益。咨询、人工核验、拟合与数值评价均付费；参照失配、尺度或来源不明时，保留专家审核、合格外部资料与事先声明的保守先验，不让流畅解释直接决定高影响分析。<!-- source-family:SF-2025-ARXIV-2506-21964 -->
 
 ### Calibration 必须寻找隐藏 Regime
 
@@ -1010,6 +1044,8 @@ Gold answer 的支持证据也必须绑定模型实际看到的帧集合。若�
 视频的感观和目标状态通过，并不等于背景在相机移动时保持几何一致；但运动物体本来就不应被要求服从静态场景的同一变换。一条评价分支先预测静态支持区域，将其中的二维轨迹结合深度与相机内参提升到三维，再比较不同区域估出的相机运动、局部与全局运动及跨帧深度重投影残差。它让“在哪些支持区域测量几何”成为EvalSpec的一部分，而不是以全片观感或全画面一致性替代几何检查；这些残差仍是分割、轨迹、深度和姿态估计器共同产生的代理，不是生成器内部物理推理或真实环境转移的证据。
 
 该分支增加分割、跟踪、重建与聚合成本，也引入支持集选择偏差：漏掉几何坏区域可能让分数变好，噪声mask又可能丢掉本来有用的背景。因此应固定支持区域、估计器、有效交集与归一化/PCA校准人口，分别检查mask扰动和未聚合的误差；同人口交叉验证不认证新生成模型的可靠性。动态前景质量、目标/过程达成和观感仍需各自评价，不能由静态背景代理取代。[受限几何对照与掩码反侧](https://arxiv.org/html/2603.19048v1)只支持所测视频及构造扰动，不支持通用排名或低成本保证；静态支持不足、估计失准或人口改变时，保留原视频、人审和其他用途指标，将本项标为不可判，而不是把遗漏当改善。<!-- source-family:SF-2026-ARXIV-2603-19048 -->
+
+动态前景还可单独建立运动参照：从点轨迹及遮挡mask学习压缩表示，用另采轨迹的重构检查它保留了什么，而不让外观相似代替运动质量。同一表示上的Fréchet分布比较、成对距离和单视频轨迹重构对应三个统计对象，不能拿模型均值的高人工相关性批准逐视频拒收。[受限motion评价](https://arxiv.org/html/2505.00209v1)中，轨迹来自tracker而非物理真值，作者所述平滑玻璃塌入桌面的反例仍能获得各自动指标好分；学到熟悉运动或重构好，不证明动力学可行。追踪器、遮挡支持、表示训练人口、采样时间轴和聚合单位均须冻结，外观、运动量、运动质量与真实物理另验；15M训练片制备、tracker/encoder、统计与人审全部付费。原训练损失/激活口径有冲突，不采用精确复现recipe；支持不足、跟踪失败或人口失配时，保留原视频、appearance指标与必要人审，将该sensor降为诊断或不可判，不以其替代物理验收。<!-- source-family:SF-2025-ARXIV-2505-00209 -->
 
 生成视频的目标达成与过程守约也需要不同量词：对给定采样帧集，目标可定义为存在一帧满足goal，过程约束则要求每个采样帧都满足constraint，联合接受才是两者合取。这只评价可见的生成轨迹，不证明连续全片无违规，更不是Agent实际tool执行的receipt。改变采样密度同时改变覆盖、judge调用成本与错误机会，目标分数不必单调；有意选择的process-needed人审切片也不能估部署hacking率。EvalSpec应固定采样集/时间轴、goal/constraint谓词与judge版本，保留密度敏感性和人工不确定性；短事件可能漏采或谓词失准时，回到更密的必要区间、人审或明确unknown，不以最后一帧正确认证生成器内部推理或真实物理过程。<!-- source-family:SF-2026-ARXIV-2512-24952 -->
 
@@ -1458,6 +1494,9 @@ Locality 的便宜基线本身也需要验收：**事实正确性与编辑前后
 
 Last-token KL 与 top-k support overlap 可补充连续漂移和可调严格度的局部 sensor，但不拥有真值或整段 continuation 的保留证明；top-k 集合相同也不保证 KL 小，因为概率幅度仍可变化。额外 forward、快照存储和参数扫描都是评价成本，正则强度只是干预参照而非保留性真值。[受限知识编辑实验](https://arxiv.org/html/2601.17343v1)在 massive edits 和有限模型/数据上发现 GT 指标对正则变化不敏感，不能外推连续编辑或全部行为。短答案、单一有效表达时 exact-match 仍可用；长生成或 sensor 失配时，回退 paired generation、语义/人工复核和用途相关回归测试，不以局部 logit 重合签发全模型保证。<!-- source-family:SF-2026-ARXIV-2601-17343 -->
 
+同一关系原本有多个有效对象时，知识编辑还要声明集合怎样变化，而不只把旧答案换成新答案。[一条受限集合编辑研究](https://arxiv.org/html/2504.20972v1)将共享subject–relation的目标对象匹配后联合更新，提示单点成功可能遮住其它成员丢失；目标来自给定编辑任务，并不因此成为真实世界的新事实。本项目的验收合同应另列新增、删除与仍应保留的成员，分别看成员级结果、整组是否同时满足以及实际生成答案，不能让逐对象平均或target胜过old的概率代替完整集合保留。改动关系中的未改对象与无关邻居是不同人口，后者locality通过也不补前者；事实来源、关系语义、同义解析、更新快照与回滚产物须共同保存。定位、匹配、权重更新、整组/邻居回归和人工核验都付费，有限KL不证明所有行为不变；目标资格或槽位解析不清、保留性/费用失配时，保留原checkpoint、可追踪的检索覆盖与独立事实核验，不由集合匹配成功批准真实知识正确或全模型无损。
+<!-- source-family:SF-2025-ARXIV-2504-20972 -->
+
 评估带有错误前提的请求时，还应把“明确指出前提有问题”与“仍提供该前提要求的信息”分开标注：一句纠正或免责声明，可能与继续承接同一错误假设同时出现。只测识别率，会把检测成功误当成回答已重定向；可增加一个给定已知前提的 oracle 分支，隔离回答行为，但它不是线上检测器的成绩，也不证明给定前提就是完整真值。[MedRedFlag 的受限文本实验](https://arxiv.org/html/2601.09853v1)在100个测试请求中观察到 GPT-5 baseline 88%明确指出问题、却73%仍承接前提；提供作者医师提取的 oracle 前提后，Claude Opus 4.5仍在33%的请求中提供承接信息。这支持双轴评价，不证明临床结局、安全干预的因果效果或所有领域的同等失效率。<!-- source-family:SF-2026-ARXIV-2601-09853 -->
 
 双轴标注增加 expert rubric、judge 校准与误拒审计成本；错误地重定向一个合法请求也会损害用户自主性和信任。原语料公开、可能被训练记忆，预处理可能缺上下文；作者医师与 judge 的小样本一致不等于独立真值。300个已标记样本中的7个误标、60个未标记样本中的1个漏标只是各自条件人口的审计，不能直接当成部署总体误报/漏报率。前提不确定时应先保留 Unknown、澄清与人工复核路径，再分别评价信息承接和拒绝成本；高检测分不能授予回答或实际行动的安全放行权，确定性政策与后续效果门仍各自负责。
@@ -1844,6 +1883,8 @@ failure taxonomy 则是诊断视图，不是因果 root cause。真实、手工�
 
 生成测试时还要区分冻结配置与冻结题目：给定行为描述、seed及各阶段模型/提示配置后，再生成不同情景与对话，同一配置的重跑并不保证相同prompt人口；多样性与变体数、模拟用户或tool回复、rollout停止规则及judge共同决定本次测到什么。[Bloom的受限评价](https://alignment.anthropic.com/2025/bloom-auto-evals/)支持把配置、实际生成场景、完整轨迹与评分分别保存，报告的是该生成过程下的行为诱发率，不是部署风险基率或全行为覆盖。模拟tool后果不认证真实effect，少量人工judge校准、模型organism对照及为已见错误调整prompt也不提供独立全人口真值；多阶段生成、变体、重复rollout/judge和人工复核都计费。需要逐题回归时保留冻结prompt测试，需要探索新行为时才增配生成分支；生成或judge失配时回退人工核过的固定样本与独立行为验证，不由seed相同或零次诱发签发安全。
 
+同一生成场景内，不同角色也可拥有不同的候选修改目标：指定攻击者同时接受风险与自身行为约束guidance，其他主体只接受普通行为guidance，再在完整候选上另查可行性。这样为背景主体保留普通行为目标，而不是让所有主体一起追逐攻击成功；角色指派、目标函数、采样预算和候选选择器共同定义测试人口。[受限latent场景对照](https://arxiv.org/html/2505.00515v1)支持这份分工，却也暴露了攻击成功上升伴随他车碰撞/离路增加的反侧。有限罚分加上只查部分加速度的selector不是全部不合规样本的硬拒绝，decoder与bicycle轨迹也不授真实动力学；应并列目标风险、非目标主体真实性、独立可行性检查和被排除分母，不由低生成代价批准场景或被测系统安全。预训prior、每步decode/梯度、多候选和完整回放均付费，固定攻击者与动态换攻击者亦不是同搜索空间；目标、支持或验证失配时保真实回放、脚本/已有生成器和独立scene verifier，不把高碰撞率当普遍风险率。<!-- source-family:SF-2025-ARXIV-2505-00515 -->
+
 候选检索也会在分类器之前改写评测人口。随机 negative 集可以保留全部已映射 positives，检索 top-k 则可能漏掉 positives 并选出更相似的难 negatives；后级只在这个 selected population 上计算的 recall，不能当作端到端 recall。应分别保存原始 positive 分母、前级检索覆盖与后级条件分类指标，并对 random/hard-negative 的 prevalence、label 语义和难度作对照；若同一 mapped label 下还有别的真实正例，也不能把标签不匹配自动当作语义错误。[Favia 的受限评价](https://arxiv.org/html/2602.12500v1)中，换候选人口后 precision/F1 下降而条件 recall 仍可上升；原文 48% 覆盖与 1081/1857 来自不同口径，不拼成一个通用常数。检索、预提交工件恢复、Agent 调用与被排除候选都要计费，CVE 映射不是所有漏洞的真值；人口或标签不能互核时，保留全候选/人工审查及分阶段结果，不由高条件 recall 签发全流程可靠性。<!-- source-family:SF-2026-ARXIV-2602-12500 -->
 
 生成器之外，benchmark发布前还要互核instruction、reference program、scoring code与environment四个工件：指令允许的路径、reference体现的路径和scorer实际判分可能不一致，环境初始化也可能让可解任务变不可解。Agent trace可提出最小反例，但修改责任仍属于benchmark owner或专家；修订应保存复现、裁定理由和重跑范围。
@@ -2188,6 +2229,8 @@ Stress test 扩大了已知攻击面覆盖，却新增 transformation generator 
 所有 PRM 共享同一失效模式，也不证明 stress-test pass 等于生产安全。
 
 <!-- source-family:SF-2026-ARXIV-2606-00437 -->
+
+Transformation 稳定之外，还要测试过程判断的知识域与错误类型迁移。数学 trace 上训练的 PRM，不必能定位常识或逻辑链的首个错误；知识缺失与计算错误应分别保留正/负例，不能只把总体分数搬到新域。连续 scalar score 要转成首错索引时，还需声明逐域阈值的 dev 人口和费用；阈值校准有效不等于模型已有通用逐步验证能力。[GRBen 的受限比较](https://arxiv.org/html/2605.01203v1)采用人工共识筛选、首错/-1任务，PRM 与 LLM verifier 的漏检/误报取舍不同，不能由某一类胜出替代另一类权限。标注、分步、阈值和长 trace 调用均计费；新域或错误类型未支持时返回 unknown，并保留独立 outcome verifier，不让 math benchmark 成绩批准通用过程奖励。<!-- source-family:SF-2026-ARXIV-2605-01203 -->
 
 规则型答案 verifier 也需要同样的双向测试：对声明支持的输入形式，使用保持数学含义的改写检查误拒，
 再用改变含义的扰动检查误收。未承诺的 extraction 格式应记为适用域差异，不能与实现缺陷混算；异常、
@@ -2805,6 +2848,8 @@ Calibrator 可以是 logistic/temperature/isotonic 等简单映射；重点不�
 subject/verifier identity 与 reliability。预测为 `0.8` 的 claim cohort 应约有 `80%` 在声明 verifier 下正确；否则
 `0.8` 只是排序分数。还应报告 Brier/ECE、AUROC/AUPRC 和 risk–coverage curve，并按 domain、language、freshness、
 risk 与 source availability 切片。Distribution 或 verifier 变化后必须重校准。
+
+少量重复回答还会漏掉语义类别：直接把已见cluster频率归一后算entropy，会把未见质量当零。一个受限分支估计support规模，以观测频率的统一缩放及未见类质量近似求self-consistent missing mass，再作coverage-adjusted entropy；它改变的是估计器，不增加真实回答或认证语义标签。[必要机制与反侧](https://arxiv.org/html/2605.00668v1)支持有限小样本取舍，不提供通用无偏/收敛保证；support启发式、NLI聚类、非iid采样和共同错误均可失准，已充分采样时简单估计器仍合理。生成、聚类、support求解和独立标签校准均付费；AUROC改善只是所测judge人口的排序改善，不等单次正确概率。聚类、采样或数值收敛不可靠时保留原频率/其他已验证估计器、外部核验与abstention，不把更高entropy当作更多真实知识。<!-- source-family:SF-2026-ARXIV-2605-00668 -->
 
 还要区分概率预测发生在生成前还是生成后。固定 query、model 与 decoding contract，令 $p$ 为未来随机 response 在声明 verifier 下成功的条件概率；input-only 的分数 $q$ 只能预测这个 $p$，不能认证某次已生成 response。单次成功标签 $Y$ 为 Bernoulli 时，条件 Brier 期望是 $(q-p)^2+p(1-p)$：后一项来自采样，不能把它全归为 capability calibration 错误，也不能给 output-conditioned 分数照搬该分解。用同 query 的多次采样估 $p$ 又有有限样本误差和生成费用；input-activation probe 必须绑定训练标签、model/decoding、独立 split 与目标域，跨域可差于简单均匀基线。$1-(1-p)^k$ 还依赖独立采样，转化为实际交付收益更需要可靠识别成功候选，而不是有一个 oracle pass@k 就能在线选中答案。标签、域或 decoding 漂移时应回退直接验证、重校准或保守 routing，不由更低操作成本签发正确性。<!-- source-family:SF-2026-ARXIV-2602-13540 -->
 
@@ -5023,6 +5068,24 @@ Evaluation System 不是 benchmark 集合，也不是某个产品的 metrics 页
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-00668` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00668v1)，2+1+2=5，具体owner差额深入。reader R31实际必要Source/date/直接反侧；root C13实际owner完整局部邻接/逐字PRE通过，授本单段及本人注。采用限制和全部费用近正文，不授普遍理论/性能/安全；作者已保存，root C15非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-01203` — Daily2026-05-06补May05；[exact-v1](https://arxiv.org/html/2605.01203v1)，2+1+2=5。必要方法/条件、直接对照与反侧见本日SUP A6；只采A7指定受限命题，不授普遍能力/稳定/性能保证，全部测量与准备费用保留。root实际必要Source/具体owner及逐字PRE通过，授本单段及本人注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码、全部附件或复现。
+
+- `SF-2026-ARXIV-2604-27419` — Daily2026-05-02补May1；v1§3/4/A/B/C必要层，2+2+2=6，hiddenoracle/信息曝光/构建能力分责差额深入。保404为101变体、gold对照与aesthetics人评真实存在、simuser/judge非真值、预算/slot口径与全费；D prompt图片未读，不授真实用户/主动澄清因果；未核artifact/复现。R75/R76非writer必要Source/actual owner/逐字PRE通过，root仅授本单段+本人注窄lease，作者已实际保存，R77非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；本注仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-28031` — May02补May1，v1§3/4/5/7必要层，6分，fork probe与实际遵从配对缺口深入；不签内部因果，保judge低sensitivity/额外调用/neutral压力。未核实现/复现；非writer D11必要Source/owner/逐字PRE通过，root窄写本段与本人note，非writer D13实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
+
+- `SF-2026-ARXIV-2604-27674` — Daily2026-05-02补May1；v1§2–5/Limitations/C.1–2，2+2+2=6，固定无关文本/单gallery污染反侧深入；保纯cos与clip最优gap、per-encoder搜索、单/千污染分母与成本，不授全部模型脆弱或过滤已有效；未核artifact/复现。R63非writer必要Source/owner/逐字PRE通过，root仅授本单段+本人注窄lease，已真实保存，R66非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；作者仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27389` — Daily2026-05-02补May1；v1§3–5/A–C/E/F必要层，2+2+2=6，assignment/逐slot/Kendall/EM分责差额深入。保循环错位反例、筛选/候选数混杂与judge非根因，不授强local/规模涌现/native因果；未核artifact/复现，reader R42必要Source/owner/逐字PRE通过，root授本单段+本人注窄lease；作者已保存并顺读，reader非writer actual正文/完整两侧/本人注POST R44通过，root接纳并释放窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27340` — Daily2026-05-02补May1；v1§2–5/Limitations/A/B必要层，2+1+2=5，rule复杂度/错误双轴差额深入。保全16可见、AST启发式、程序能力与result/rule不等内部机制，不授零泄漏/精确K。未核artifact/复现；reader R42必要Source/owner/逐字PRE通过，root授本单段+本人注窄lease；作者已保存并顺读，reader非writer actual正文/完整两侧/本人注POST R44通过，root接纳并释放窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27249` — Daily2026-05-02补May1；v1§2–5，2+1+2=5，位置entropy/内容敏感性分诊差额深入。保单two-step、two8B/Q5/greedy、difficulty proxy及S5严格阈值反侧，不授内部机制或自然欺骗检测。未核artifact/复现；reader R40必要Source/owner/逐字PRE通过、root授本段及本人注窄lease；作者已保存并顺读，reader非writer actual正文/完整两侧/本人注POST R43通过，root接纳并释放窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27093` — Daily2026-05-02补May1；[exact-v1](https://arxiv.org/html/2604.27093v1)§2–5及必要A/B/C，2+2+2=6，unique utility/重复/safety测量差额深入。保更多机会、模拟/合成与有限人验；max/average safety及flow/naturalness分母冲突不默修，不采10.3%因果或部署保证，未核artifact/复现。root C3非writer必要Source/owner/PRE通过并授本段/注窄lease，作者已保存/顺读，非writer实际POST C4通过，root接纳并释放本窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
 - `SF-2026-ARXIV-2604-24698` — Daily2026-04-29补Apr28自然日；[原始必要版本](https://arxiv.org/html/2604.24698v1)exact-v1§2.1/2.2/2.4/3.1/3.3/3.4/ethical limits；2+1+2=5，individualfidelity/referencecoverage/geometrycomplexity分责gap深入；仅BFI人参照，几何/keyword/筛选人口与全费用近文，不授人群真值或alignment唯一因果。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整前后邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-22513` — Daily2026-04-28补Apr27；2+1+2=5，R28.22 actual§3～6/8/9/AppB及date有效；冻结原坏/健康两组义务，fix/regression/strictsuccess分母与接受权具体差额深入，goldpredicate非唯一patch/judge非因果、静态环境与全费反侧近文，不授真实router或安全证明。reader actual owner/逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
@@ -6455,3 +6518,25 @@ Review note：`SF-2026-ARXIV-2606-29623`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2604-22708` — Daily2026-04-28补Apr27；2+1+2=5，R28.27 actual§2～4/7/AppA1/A5/A6/date；380traces/220failed/三scaffold、人类共识非唯一cause，max3candidate/3step/temp.3及全费保留；作者actual拟文/完整肩部校准，未核实现复现，不授DAY。 reader actual owner/逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接；reader R28.47实际非writer POST通过，root接纳并释放指定窄lease，仅行政同步本人注。
 
 - `SF-2026-ARXIV-2604-21965` — Daily2026-04-28补Apr27；2+1+2=5，R28.33 actual§3～5/AppA3/B1～4/date；blindmethodreimplementation与codevisible诊断分权，48论文/222tables/14214cells与8%缺抽取不合为全部成功，nearzero/rescale/F排除分母保留；未核代码复现，不采社科实体结果/模型排名。 reader actual owner/逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接；reader R28.47实际非writer POST通过，root接纳并释放指定窄lease，仅行政同步本人注。
+
+- `SF-2026-ARXIV-2604-25349` — Daily2026-04-30补Apr29自然日；[exact-v1](https://arxiv.org/html/2604.25349v1)必要Source及具体owner/逐字PRE见本日唯一SUP R30-2/3。作者实际完整局部邻接已读，独立reader必要源/PRE通过，root授本单段与本人注窄lease；作者已保存；非writer supp_apr30_review_fresh实际新正文、完整两侧及本人注POST通过，root已接纳并释放指定窄lease。受限命题、反侧、全部费用与旧路线近正文；未核实现或复现实验，不授DAY。
+
+- `SF-2025-ARXIV-2505-00679` — Noether，Daily2025-05-03补May2自然日；[exact-v1](https://arxiv.org/html/2505.00679v1)必要§3–6、Appendix B/C，2+1+2=5。仅合法exemplar条件下source/target/output三参照、Copy-input/Copy-target双负控及meaning/target-overlap分责；Towards显示式及§4.2沿用定义不采用，不授全任务style改善、无复制或事实正确保证。非作者Ohm§8/9必要Source与具体owner、§10逐字稿及root窄位授权已通过；获准单段与本人注已实际保存，Ohm§15非writer actualPOST已通过，root实际读完整两侧/本人注后接纳本项整合并释放指定窄位，仅同步已发生行政事实。未核代码或复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-21186` — Daily2025-05-02补May1；[exact-v1](https://arxiv.org/html/2504.21186v1)§2/3/4.1–4.2/T1/4.5，2+1+2=5，具体标签支持差额必要深入。Boyle仅采真实/伪OOD候选支持与推断/评价身份分责；保全图可见/评价设置中的validation、Eq5非概率recipe、ID退步及全费，不授开放世界或安全保证。root REPAIR_REVIEW§8受限Source/评分、§9具体owner/PRE及指定窄许可已通过；作者仅按许可限定validation措辞后实际保存本单段/marker/本人注，root §9末已实际完整正文/两侧/本人及前注非writer POST通过、接纳并释放窄锁；仅同步已发生事实，不授DAY、实现或复现。
+
+- `SF-2026-ARXIV-2610-20479` — Daily2026-10-16窗10-15；[exact-v1](https://arxiv.org/html/2610.20479v1)必要Source/实际命题与反侧见本日LIVE A9/R20及root具名独核层，2+2+3=7，具体owner差额深入。只采本两段的测量/状态接口，不授因果真值、普遍质量/加速或部署停止保证，全部费用、直接反侧与旧路径近正文。reader A9/R20逐字PRE通过，root授指定两段与本人注窄lease；作者已保存并实际读回，独立reader R21实际正文、完整邻接与本人注POST通过，root接纳并释放指定窄lease；作者仅行政同步本注并实际读回，不授DAY。未核代码/复现。
+
+- `SF-2025-ARXIV-2504-21330` — Boyle，Daily2025-05-02补May1；[Essay exact-v1](https://arxiv.org/html/2504.21330v1)§3–5/T1–4，2+1+2=5，root§17受限Source通过。只采推断人口的coverage/条件误差与观察关联权限，保T3反驳§4.2普遍QWK叙述、低识别覆盖/IPW非未测混杂消除及全费；不授因果歧视/真实录取使用或公平保证。root§18具体owner/逐字PRE与指定窄位许可通过；已实际写入并self-read；root§19非writer实际完整新增/两侧/本人注POST通过，接纳并释放指定窄位；仅同步已发生事实，未核外部数字附录/实现或复现，不授DAY。
+
+- `SF-2025-ARXIV-2505-00209` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00209v1)，2+2+2=6。Ohm§36日期/current、§37受限Source/评分通过；因动态轨迹重构及三统计对象缺口深入§3–6与必要B.1–3，保tracker伪参照、Table2个体与Fig7模型均值相关分责、玻璃反例及L1/Huber和sigmoid/softmax口径冲突，不授physics detector。未看图像视频、核代码或复现；Ohm§38逐字PRE通过，root已授指定单段/marker/本人注窄位，作者已实际保存并self-read，Ohm§39非writer完整新增/两侧/本人注POST通过，root实际消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20972` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20972v1)§2–5/Tables1–4/A.2/A.4/A.5与current必要域经Newton§65实际核，2+1+2=5，集合变更验收差额深入。只采新增/删除/保留与成员/整组/生成分责，此完整验收合同为本项目工程判断，非原研究已测全部set recall；保主要overlap范围、slot/cardinality未闭/反退与全部费用，不授counterfactual真值/全行为保持/精确更新recipe。未核代码/图像/全proof/复现。逐字PRE及完整邻接经Newton§65实际核/root指定窄位通过；Godel按稿保存，Newton§70一次非writer实际完整新增/两侧/本人注POST通过，root已实际消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20902` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20902v1)§3–5/必要A/B/E/F/G/K与current由Newton§66实际核，2+1+2=5，top-down诊断人口差额深入。仅假设/检索人口/伪标签分责；保proposal遗漏、caption匹配/属性噪声/访问权限、VLM非独立truth与全费，不授因果偏见/实际伤害/全部未知bias召回；未核代码/全部阈值/图像/复现。Newton§66/73必要Source/实际owner/逐字PRE通过，root已核当前完整两侧/本人注并授本单段窄位；Godel已保存并顺读完整新增/两侧/本人注，Newton§77一次非writer实际完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2604-27974` — Daily2026-05-02补May1；v1§3/5/T2–4/必要A/C/D/F，2+1+2=5，双点/双配置框及非嵌套人口差额深入。保static非live、joint非conditional、VDA非内部因果及标签噪声，全费/旧路径近文。未核实现/复现；root C15实际必要Source/owner/逐字PRE通过并授本单段与本人注窄lease，作者已按许可保存，作者已actual顺读完整新增/两侧/本人注；root C18非writer实际POST通过并释放指定窄lease，作者仅行政同步既成事实并读回，不授DAY。
+
+- `SF-2025-ARXIV-2505-00515` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00515v1)III–V/TableI–II必要，2+2+2=6。Ohm§71日证/current、§77实际必要Source/评分/唯一Ch66通过；角色化guidance与独立selector具体差额深入，保有限acc/罚分非硬gate、固定/动态攻击人口与碰撞/真实性反退/全费；不采精确攻击recipe或真实安全保证。未看像素/视频、核代码或复现；root实际读本§52逐字稿/当前完整邻接与本人注后直接PRE通过并授指定单段/本人注窄位；作者已实际保存，已完整self-read，Ohm§103实际非writer写后通过，root已实际完整消费接纳并释放该指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2506-21964` — Boyle，Daily2025-07-01补Jun30；[exact-v1](https://arxiv.org/html/2506.21964v1)§2–4/Eq1–3/T1–6，2+1+2=5，符号知识与数值分布consumer具体差额局部深入；保KL标记方向、MLE参照/人口及预测反退，不采医疗/材料结论、客观先验或模型排名，未核代码/图像/复现。root本日§62实际必要Source/当前完整邻接与本人§62.1逐字PRE通过并授指定单段/本人注窄位，Boyle按许可实际保存并完整self-read新增/完整两侧/本人注；非writer POST待root，不预签接纳/释放或DAY。

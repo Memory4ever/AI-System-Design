@@ -488,6 +488,8 @@ Context evaluation 应分解：
 
 只评最终答案会无法区分 retrieval miss、bad ranking、compression loss 与 model misuse。
 
+反过来，只用抽取视图与reference的词面重叠来调selector，也不能保证下游reader排序相同。可固定文档、token预算与generator，分别比较所选context自身的coverage proxy、生成答案/摘要及full-context；再以Lead与shuffled位置对照、同unitization换selector，判断收益来自文档前置结构还是减少冗余。[必要有限对照](https://arxiv.org/html/2605.00336v1)出现低预算抽取偏好Lead而生成更偏好MMR的条件差异，不能把extractive dev上调好的阈值直接当生成router。RCD等覆盖/多样性目标仍是代理，ROUGE与BERTScore都不认证事实正确，单个罕见关键约束也可能被删。编码、pairwise相似度、选择/调参、generator与回读一起计费；任务、文档顺序或指标迁移时重校准，收益或充分性不稳则保留full context、简单选择与原文回读，不由更小输入预算签发全链提速或安全。<!-- source-family:SF-2026-ARXIV-2605-00336 -->
+
 ### Repository Retrieval 必须把 Gold Recall、可用 Span 与 No-Gold Abstention 分开
 
 在代码仓库中，命中将被修改的文件不等于提供了足以完成修改的 Context。调用关系可能把必要证据放在 ripple
@@ -700,6 +702,8 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 该方法降低 context/cost，却引入 obligation discovery、schema/type 与 solver complexity。图不完整、obligation 不可信或行动风险高时，应回退更宽 evidence set、deterministic checks 或人工审阅；少量 preserved artifacts 与 synthetic 数据不证明自动发现义务。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00336` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00336v1)，2+1+2=5，具体owner差额深入。必要Source/date/直接反侧见唯一SUP R33；root C15实际owner完整邻接/逐字PRE通过，授单段及本人注。费用、反侧和旧分支近正文，不授普遍性能/安全/完整理论；作者已保存，root C19非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY；未核实现/复现。
 
 - `SF-2026-ARXIV-2604-23815` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23815v1)§2/3.1/4.1–4.4/5必要层；2+1+2=5，selection意图与selected-only execution人口分责具体差额深入。不授生成内在更难/静态意图或history代授权，受限人口、重叠CI/标签过滤与全部费用近正文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
 

@@ -115,6 +115,8 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 负梯度是局部下降方向，不是全局最优导航。学习率过小，训练进展缓慢；过大，更新可能越过有效区域甚至数值发散。实际优化器会加入 momentum、自适应缩放、weight decay 等机制，但核心仍是利用局部导数决定参数如何改变。
 
+观察训练方向时，还要把当前loss的梯度、多个任务梯度的聚合和优化器最终step分别保存。Momentum、自适应缩放与weight decay会过滤方向；混合任务又可能彼此抵消，因此从最终更新的低秩结构反推“特征在哪里形成”，可能漏掉仍在各任务梯度中的信号。一个[受限模块算术诊断](https://arxiv.org/html/2604.25143v1)比较rolling SVD的这些输入，并在干预时区分先投影gradient再更新moments、与优化器先看完整gradient再投影step；这两条路径不是同一因果实验。随机rank-3约束也能达到相近加速，所以高方向耦合只是诊断，不证明那条子空间是学习必经之路。按任务求梯度、存窗口及成对投影增加计算与状态，toy任务/少量seed不提供LLM训练配方；诊断失配时保留原优化器、原始gradient/step与held-out质量，不按一个谱值删除更新方向。<!-- source-family:SF-2026-ARXIV-2604-25143 -->
+
 同一个函数还可以有不同参数坐标，而“按梯度走一步”必须指定坐标中的度量。若一层写成 `W=D W′ E`，其中 `D/E` 是给定的正对角尺度，在 canonical 参数 `W′` 上做普通梯度更新，映回原坐标可得到 `W−ηD²GE²`，`G` 为原坐标梯度；这是一条由尺度决定的预条件分支，不表示原链式法则或普通反向传播算错了。它改变优化路径，不凭空扩大函数族，也不保证更好的泛化。<!-- source-family:SF-2026-ARXIV-2601-10873 -->
 
 [尺度分支的必要边界](https://arxiv.org/html/2601.10873v1)包括正齐次激活允许怎样的 gauge、残差如何锁定相连尺度，以及 bias、卷积和 optimizer state 如何随坐标处理；LayerNorm、softmax 等操作不能继承任意全网络尺度等价。维护尺度与状态增加实现和数值负担，原文也没有足以支持“替代现代 normalization”的完整实验。条件不成立或轨迹变差时，保留普通梯度、既有 normalization 与实际 loss/gradient/step 对照，不由单位一致性给 optimizer 性能签发保证。
@@ -186,6 +188,8 @@ Backpropagation 不是另一种学习目标，而是高效计算这些梯度的�
 这解释了深层表示为什么可以共同调整：早期层不需要人为指定“应该检测什么”，只要它产生的中间特征能通过后续计算降低最终 loss，梯度就会推动它被保留或强化。表示学习由此出现，但“具体学到了什么”仍取决于数据、架构和目标，第 5 章再展开。
 
 深度也会带来困难。很多局部导数连续相乘，可能造成 vanishing gradient 或 exploding gradient；激活保存会占用大量显存；网络越大，反向传播的计算和通信成本越高。Residual connection、normalization、初始化和优化器设计，都是为了让梯度信号在深网络中更可用，而不是改变学习的基本定义。
+
+学习规则也不必总通过完整链式法则分配误差。在一类固定稀疏recurrent spiking网络中，每条可塑连接只维护pre/post事件的eligibility trace；输出WTA误差信号经固定随机反馈进入低维modulatory状态，再门控局部三因子更新，readout另用局部delta规则。它保留受监督反馈，却不计算完整时间展开梯度，也不证明正在下降同一个全局可微loss。[必要机制与有限对照](https://arxiv.org/html/2605.00402v1)支持小型识别任务的可行性，按边trace、模拟时间、反馈/阈值状态和readout连接仍计费，低带宽不等实际硬件能效或大模型可扩展性。任务需要精确credit、反馈失配或效果不稳时，保留Backprop/BPTT与经验证的替代规则，不由局部更新名称推出梯度等价、通用学习机制或生物真实性。<!-- source-family:SF-2026-ARXIV-2605-00402 -->
 
 ## 为什么非线性不可缺少
 
@@ -438,6 +442,8 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-00402` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00402v1)，2+1+2=5，具体gap深入。必要Source/date/反侧见唯一SUP H17/R42；root C26实际owner完整局部/逐字PRE通过授单段及本人注。限制、全费与旧分支近正文，不授完整理论/recipe、普遍性能安全；作者已保存，root C27非writer实际正文/完整局部及本人注POST通过，窄lease释放，不预签DAY；未核实现/复现。
+
 - `SF-2026-ARXIV-2604-22110` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～5/7及A.1/A.2.3；strong-nonseparable fixed-thought条件、2000vs300epochs/L40/Dirichlet边界/value非truth均保留。fresh reader必要Source/date/具体owner/逐字PRE及非writer实际POST通过，root接纳并释放两段+本人注窄lease；作者仅行政同步本注并读回，不授DAY。未核实现或复现。
 
 - `SF-2026-ARXIV-2601-10873` — Daily `2026-01-20`增量；[UC exact-v1](https://arxiv.org/html/2601.10873v1) §2–6、AppC7–9必要边界。2+1+2=5，参数坐标/optimizer metric 差额深入；采用给定尺度的预条件分支，不采 transpose 错误、物理意义或 normalization 替代断言。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读103–125/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
@@ -464,3 +470,5 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - SF-2026-ARXIV-2604-14870 — Daily2026-04-18补Apr17；[curvature probing exact-v1](https://arxiv.org/html/2604.14870v1) §3–7/Eq5–15/Thm2、A2/Lemma5，2+1+2=5。新增样本lossfield非fittedmodel/generalization，局部quadratic/导数界、topD排序限制与三阶段成本近文；不采全域/普遍最优或18000倍总加速。独立reader必要Source/root接纳与date有效，作者actual owner比较，A31逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未复现。
 
 - `SF-2026-ARXIV-2604-20446` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20446v1)§2–5/Eq36–51必要层，2+1+2=5，uniform/triangular路径曲率与无限累计平方步长条件的具体缺口深入。保有限能量反例、GD适用范围与测量全费，不授全局吸引、endpoint最大特征值锁定或SGD通用定理；未核代码/复现。fresh实际owner与邻接/root逐字PRE通过并授两段与本注窄lease，作者已写入并顺读完整邻接；root非writer实际正文/完整前后/本人注actualPOST通过，窄lease释放，本注仅行政同步，不授DAY。
+
+- `SF-2026-ARXIV-2604-25143` — Daily2026-04-30补Apr29自然日；[exact-v1](https://arxiv.org/html/2604.25143v1)必要Source及具体owner/逐字PRE见本日唯一SUP R30-2/3。作者实际完整局部邻接已读，独立reader必要源/PRE通过，root授本单段与本人注窄lease；作者已保存；非writer supp_apr30_review_fresh实际新正文、完整两侧及本人注POST通过，root已接纳并释放指定窄lease。受限命题、反侧、全部费用与旧路线近正文；未核实现或复现实验，不授DAY。

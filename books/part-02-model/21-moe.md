@@ -418,6 +418,8 @@ encoder/decoder、重建误差与专用 kernel 成本时成立。论文的 match
 
 因此扩容收益要按完整训练路线记账：先前训练是否为沉没成本、复制/扩展操作、继续训练预算、最终质量与下游回归分别报告，不能将“只算扩展后的省时”和“从头训练的总预算”放在同一个比例里。[受限 MoE 对照](https://arxiv.org/html/2604.19835v1)支持 utility-copy 这一选择分支，凸 OCO 里的共享最优解/提升假设却不是非凸网络的收敛保证；目标分布改变、复制偏置或 CPT 预算不足时，延长当前阶段、均匀扩展或固定最终 pool 仍是合理替代。<!-- source-family:SF-2026-ARXIV-2604-19835 -->
 
+增长的对象也可以是既有expert内部的适配起点，而不是再加一个expert网络。单一meta-initialization适合多个domain共享适配方向时；异质segment相互牵动时，一条受限分支让各expert分别维护多份初始化，按当前segment的训练loss选择一份做内层适配，再由validation更新，并在训练期以带正则的可学习步长信号提出扩张、从已分配segment中选择参数距离较远的适配结果加入集合。这里的meta-domain划分可因expert不同，不是全局真实领域标签；步长大与参数距离远也只是有条件的增长heuristic，不保证无负迁移。[CICADA的有限证据](https://arxiv.org/html/2505.00415v1)还把适配选择与输出组合分开：其他初始化仍可提供features供attention融合，故选一份更新不等Top1执行或免费稀疏；测试只对固定集合/步长适配新segment，在线streaming增长仍是future。应保存初始化池、segment划分、选择loss、validation、增长时刻及测试适配状态，并另验时间可见性与异常污染；整段适配、test最大F1阈值和PA结果不认证因果在线早报，工业任务亦有基线更优。全部候选评分、内外层更新、增长state、全features融合和校准均付费，增长容量消融不是等总参数因果；支持或费用不合适时保留固定初始化池、独立expert与受控重训，不从该非Transformer组合推token级MoE的吞吐或安全保证。<!-- source-family:SF-2025-ARXIV-2505-00415 -->
+
 ### Expert 数量改变后，超参数也需要架构身份
 
 Dense FFN 或固定 expert 配置中，直接复用一组已经调好的 learning rate、初始化尺度和 width scaling，在架构不变时成本最低，也容易比较实验。当 Dense FFN 被拆成更多、更窄或更宽的 experts 后，总参数、单 token active parameters、router 分配和每个 expert 实际接收的样本量不再同步变化；此时把旧超参数原样搬过去，会把“条件计算机制是否有效”与“参数化是否失配”混在同一次训练里。
@@ -461,6 +463,10 @@ parameter count 解释。训练 recipe 因而应把 activation ratio、routing r
 路由信号也可以来自当前token刚形成的attention history，而不只来自hidden-state投影或外部teacher。一个受限分支把最近attention权重的时间窗口和频域视图变为辅助expert logits，以学习gate与原router logits混合；gate表示可训练权重，不是可靠性已经校准的概率。即使attention与expert参数被冻结，只更新router也会改变expert输出，进而改变后层hidden state与attention行为；“参数未更新”因此不等于“该计算路径的行为没有被干预”。
 
 这条耦合既可能帮助局部推理，也可能损伤检索：在受测模型中，全部层接入与仅深层接入出现不同任务取舍，不能把layer depth当成普遍功能分界，attention sink与收益相关也未证明其必要因果作用。额外视图、gate和权重materialization增加成本，所测实现的active层不能直接沿用FlashAttention；较短错误回答不证明端到端SLO改善。任务回归、窗口失配或内核成本超界时，应保留原hidden-state router、减少接入层位，并以matched任务切片与实际执行开销决定是否启用。 [原文必要机制与反证](https://arxiv.org/html/2609.20974v1)。<!-- source-family:SF-2026-ARXIV-2609-20974 -->
+
+除了复用attention history，也可显式维护每sequence的衰减router state：先积累当前表示，再让预测头读取当前表示与这份历史，为原gate添加下一状态的修正；另一份batch级expert误差EMA只管理可靠度，不等于负载频率。这是用持久状态、额外预测和误差追踪换取时间线索的受限分支，不证明原Transformer的contextual hidden state没有历史。[受控transition对照](https://arxiv.org/html/2605.00604v1)支持历史积累与预测的协作，但固定切换位置给了饱和/位置cue；小型字符模型加入预测只使路由更稳定，并未进一步降低预测loss，统一可靠度时误差加权也没有额外收益。
+
+因此显式router state需要定义初始化、sequence隔离和更新时序，并另验任务质量与真实执行代价，不能把toy里正确expert的软概率当作大型MoE设计的普遍反证。重复独立抽样的覆盖公式不等于确定性Top-k实际会选几个expert，未经实测不能推出激活数、预取或端到端加速；衰减过慢可能滞留旧域，过快又会丢历史。缺少可预测时间结构、真实context已足够或状态/质量费用不合算时，原hidden-state router与固定Top-k继续合理；候选集驻留和权重placement仍留给后面的runtime边界。<!-- source-family:SF-2026-ARXIV-2605-00604 -->
 
 ### Global Balance、局部负载与训练动态分别观测
 
@@ -690,6 +696,8 @@ MoE 的稳定定义是 conditional computation，不是人工预先划分知识�
 前面的标准联合训练与独立模块组合需要不同的初始化条件；以下先沿独立模块组合展开，再比较从同一 dense 模型拆分专家的分支。
 
 这条组合路线也不只有“随机初始化 Router 后做联合微调”一种收尾。如果各 Dense Expert 来自兼容的架构、词表与初始化，且保留带领域标签的校准样本，可以平均非 MLP 参数、保留各自 MLP 为 Expert，再从合并模型的中间表示累积特征统计，以闭式 ridge regression 初始化逐层 Router。这样将 Router 校准从反向传播优化改为一次带标签的前向统计与线性求解，适用于无法集中进行多任务再训练、但能提供相容专家和校准数据的情形。它并非“训练免费”：独立专家训练、校准样本前向、统计矩阵与求解仍有成本；深层 Router 所用特征还来自按领域指定 Expert 的路径，而非最终 Router 的真实路径，形成分布偏差。若专家坐标不兼容、领域标签不足或输入跨域混合，联合训练或微调仍可能更稳健。作者在 115M/3B Llama 系列和披露任务上的结果只说明这条受限分支可行，不证明任意模型组合后都无需校准或保持原专家能力。<!-- source-family:SF-2026-ARXIV-2603-29765 -->
+
+这里还要区分模型内部的expert MLP与多个独立预测器的输出混合。若各encoder已固定、客户端只能调整自己的线性residual readout，server只更新混合权重，那么独立拟合每个readout并不等于优化共同输出；可在历史窗口上周期协调readout与混合贡献，间隔内退回便宜的本地ridge更新。[受限在线混合证据](https://arxiv.org/html/2505.00216v1)允许权重有符号且只约束总和，不是抽样概率，也不因此减少encoder执行。该接口需要可改readout并交换features、预测与反馈，分布式求解还会暴露激活/增加逐步通信，实验实际集中在server计算；只有文本输出的商业API不自动适用，隐藏架构也不提供formal privacy。矩阵可解/可逆与look-back、同步频率共同限定该分支，低频同步可失稳，更多history不单调更好；计算、通信、预训练与调参全费。没有这些权限或净预算失配时，保留固定encoder、独立readout和简单混合，不从条件均衡推任意模型全局收敛、稳定或通用净加速。<!-- source-family:SF-2025-ARXIV-2505-00216 -->
 
 另一条初始化分支不是组合独立训练的领域模型，而是从同一 dense checkpoint 中打破 expert 对称性。简单复制 FFN 可以在初始化时保留原函数，却让各专家起点相同；若保有代表性 activation 校准样本，可以先按输入方向聚类，利用各簇的协方差对第一层线性映射作 whitening / truncated-SVD 近似，再按簇 centroid 初始化 router，并以 dense EMA teacher 的 expert ensemble 输出约束 Top-k 路径。这里输入分区形成不同初始化先验，不是已发现固定的知识领域；第一层矩阵的加权近似也不等于优化了完整非线性 FFN 的输出目标，不能宣称整块函数被精确保留。
 
@@ -960,6 +968,8 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-00604` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00604v1)必要Source由独立reader R4实际完成，显式时间state与受控识别边界差额深入。只采受限协作/状态隔离验收，保固定切换cue、charLM预测loss反退、统一可靠度无额外收益和独立抽样不等Top-k；不采大型MoE无context/MTP错误/激活或延迟收益。root实际owner/逐字PRE通过；作者实际保存/读回，root C3非writer实际完整正文/两侧/本人注POST通过并释放窄位；作者仅行政同步既成事实并读回，不授DAY；未核实现/复现。
+
 - `SF-2026-ARXIV-2604-23996` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23996v1)§3.2–3.5/4.1/4.3/4.5/T2–6必要层，2+2+2=6，具体owner接口深入。softmodality代理→devicebins/MI与withinbin balance，不授modality真值或把异步时延全归MI；root必要Source/actual owner/逐字PRE通过；root非writer实际新增正文、完整前后邻接与本人注POST通过，指定窄lease释放，作者仅同步已发生行政状态。全费/反退/退路近文，未核实现/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-04356` — Daily2026-04-08补Apr07；[REAM exact-v1](https://arxiv.org/html/2604.04356v1) §4–5，2+2+2=6，permutation-aligned artifact合并与逐层校准差额深入。非runtime裁route/无损/稀有任务importance；singleton、calibration人口/MC生成前沿、匹配重校准和回归费用保留。supp_apr08_reader必要Source/日门与真实正文、完整局部POST通过；本注待其实际读回，未核实现/复现。
@@ -1089,3 +1099,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2604-08541` — [exact-v1](https://arxiv.org/html/2604.08541v1) §3–5/Limit；domain-reference expert-frequency提案与small softbias，保hard/mismatch/Top1反退、layer强度搜索和费用；JSD非因果，不授固定语义expert/感知纠错，未核实现/复现。
 
 - `SF-2026-ARXIV-2604-17837` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17837v1) §2–5与A/B/C/Dsetup/E/F/H必要，2+1+2=5。只采用当前linearrouter input正交补对rawlogits的代数性质；Top-1 probe/路径聚类非因果充分或全路径语义唯一，shape/precision/population与SVD/probe费用近文。fresh实际必要Source与root actual owner/A50单段逐字PRE通过，作者按窄lease保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，未核代码/复现或DAY。
+
+- `SF-2025-ARXIV-2505-00216` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00216v1)，2+2+2=6。Ohm§36日期/current、§41受限Source/owner通过；本地HTML超时部分原件，§2–3/4.1–4.3/4.6/5已完整，A证明/C详细配置和B算法尾未采用。只采readout/mixture协调与同步权限/费用，保signed非概率、activation暴露、条件可解及不稳定/筛选反侧；主文/B可见式口径冲突不拼recipe。未看像素、核代码或复现；root实际逐字PRE通过并授指定单段/marker/本人注窄位，作者已真实保存并self-read，Ohm§44非writer完整新增/两侧/本人注POST通过，root实际完整消费并接纳整合、释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00415` — Daily2025-05-03补May2自然日；[exact-v1](https://arxiv.org/html/2505.00415v1)§3–6/AppendixA两算法/D.1–2及D.4必要层，2+1+2=5，expert内部meta-init选择/训练期增长和测试适配分责的具体差额深入。保步长heuristic条件、全features消费、容量/费用混杂、工业反退、test阈值/PA与时间支持，不授防负迁移、在线扩张或生产SLO。未核B全部专家推导/C全部合成式/D.3全图/E类比、像素/实现或复现；Ohm§51必要Source/5分及§52逐字PRE通过，root实际读完整稿/当前邻接并授指定单段/marker/本人注窄位；作者已实际保存/self-read，Ohm§54非writer完整新增/完整两侧/本人注POST通过，root已实际完整消费并接纳整合、释放该窄位；本注仅同步既成事实，不授DAY。

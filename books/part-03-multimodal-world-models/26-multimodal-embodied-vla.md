@@ -39,6 +39,8 @@ demonstration 的 future state 当作 latent goal，再由 target embodiment 的
 
 视频示教的目标也不必全部恢复成同一种三维状态：已知初始 mesh 与 camera 时，可为 human 估计三维姿态，却只用可见 object 的二维轨迹作另一约束，再由物理仿真中的 policy 联合跟踪。这把较难取得的完整 object pose 换成投影目标，不证明单视频唯一恢复了真实几何或接触；投影相近仍可能在深度方向发生不同运动。[有限合成视频模仿对照](https://arxiv.org/html/2604.20841v1)支持这种混合 target 选择，精确放置、抢夺与不可见接触仍会失败，成功子集上的对齐误差也不是完整任务成功率。Scene/camera、human estimator、可见轨迹、接触 proxy 与每段训练 policy 应分别绑定；视频生成、估计、对齐和每motion RL均计费，单 A6000 的250frame约20小时不是零样本或实时控制。遮挡、深度歧义、动力学或预算失配时，保留真实示教、明确三维/接触状态与独立 controller，不由模拟器中可行动作签发真实机器人安全。<!-- source-family:SF-2026-ARXIV-2604-20841 -->
 
+从视频恢复的运动交给controller前，retargeting也不是无条件越多越好：它可能减轻抖动、修正脚滑，却同时改变全局位置、步长和末端相对目标的几何。若已有controller能消费同一motion schema，可在相同参考和场景下比较直接消费与显式retarget，分别验收平滑、目标对齐和真实接触，而不由更流畅的运动签发更高任务成功。[ExoActor的定性反侧](https://arxiv.org/html/2604.27711v1)支持提出这种分验，不证明直接消费普遍更优；把机器人外观转成人类再生成视频也只改变模型条件，不保证场景几何被精确保留。完整视频生成、姿态/手部恢复和转换都计费，离线motion reference不等scene-aware闭环控制。目标漂移、遮挡或执行失配时，保留目标本体示教、显式几何/接触标定与独立controller，不能靠移动真实物体去迎合估计轨迹后再宣称无需适配。<!-- source-family:SF-2026-ARXIV-2604-27711 -->
+
 但“目标到哪里”在多指接触任务中仍可能不够：人手与机器人手的关节、指长和自由度不同，直接映射关节轨迹会保留外形相似性，却丢掉决定抓取稳定性的接触次序。一条更窄的跨本体分支先在物理仿真中为人类示教恢复接触/力，再把“哪块指面在何时接触物体哪个位置”当作可迁移约束，由目标手的 retargeter 提议姿态、residual policy 修复动力学；实机冻结策略依据关节状态与物体位姿反馈发布动作。它将示教意图从特定手型的坐标中解耦，代价是接触恢复、离线优化、目标手适配和仿真到现实误差；接触位置错误或目标手不可达时，形式上满足 retarget objective 也不能保证物理安全。同构手型或简单夹爪任务仍可直接运动学迁移。作者实机只展示了关节状态与物体位姿反馈；在更高风险的精密接触任务中，是否需要增加触觉/力反馈及独立安全否决属于工程验收问题，而非该实验已证明的必要条件。公开证据限作者的手型、仿真和四项真实双手任务，且高迭代 retarget 是离线步骤，不能外推为实时通用 VLA。<!-- source-family:SF-2026-ARXIV-2609-24093 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20894:start -->
@@ -217,6 +219,9 @@ sensor observations
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-04525 -->
 
+高层目标也可以先是一幅编辑后的图像，再转换成低层可消费的几何proposal，而不直接输出动作。[一条受限分支](https://arxiv.org/html/2506.23919v1)按子任务生成目标图，做语义对应、单目深度与刚体配准，随后交给已有grasp与planner；语义反思可要求重生成，但没有把匹配坐标或自产目标认证成真实状态。为减少夹爪遮挡而把上一幅生成目标作为下一轮context，只是把观测困难换成合成误差累积，不能代替执行后的新观察；背景artifact被忽略也不等障碍已消失。图像条件、对象mask/对应、尺度坐标与低层plan须保独立身份，分别检查目标可达、真实物体状态和controller约束。有限模拟任务及无完整trial分母的真机展示不授任意本体迁移，精细插入、遮挡、关节/变形物体和闭环仍可能失败；生成/判断重试、几何恢复、grasp/plan与真实控制全付费。目标不一致、配准不可信或低层不可执行时，回到真实观察、可信几何/短horizon planner或人工控制，而不继续用一连串清晰的未来图批准物理动作。
+<!-- source-family:SF-2025-ARXIV-2506-23919 -->
+
 接触任务还可把 subgoal 压成低层能消费的目标代价，而不让高层直接预测任意三维位姿。一条受限接口让高层在 object-frame keypoints 中选择接触位置，并选择 position/orientation terminal-cost 权重，隐式指定这一步优先平移、旋转还是同时趋近目标；低层已有 contact-model MPC 再按当前物体位姿重规划接触和末端位移。Geometry、goal flow 与 clearance 供高层选意图，contact dynamics 由低层处理；新的差额是这份接口分工，不是发明 MPC，也不把 contact point 或代价权重当成已验证的物理动作。<!-- source-family:SF-2026-ARXIV-2601-10930 -->
 
 [必要接口与反侧](https://arxiv.org/html/2601.10930v1)限于 Franka stick 的推动/重定向：robot-abstract policy 可复用，但不同本体/真实任务仍调低层参数，准确 pose 和离散 keypoint 候选是前提。40 倍高层 RL 决策步改善只约为两倍控制步改善，对照又改变输入坐标和 reward，不能当端到端纯架构归因。意图预测、geometry/pose 恢复与高频 MPC 均付费；跟踪失效、多末端组合爆炸或动力学失配时，保留传统 planner、短 horizon 重新观测与独立 controller/停机，不由局部成功率批准任意 embodiment 迁移或开放物理安全。
@@ -243,6 +248,8 @@ VLM 负责场景和语言 grounding，专用 policy/controller 负责动作。�
 
 高层也可以不输出 waypoint 或 action，而根据观察与历史回归 classical planner 的速度上限、代价权重、horizon 或 obstacle inflation，再由原 planner 生成短动作。这样复用已有规划器，却把参数范围与修订带入控制契约；尤其速度和 inflation 会改变原安全余量，不能从“仍用 classical planner”推导原保障原样继承。[有限导航对照](https://arxiv.org/html/2603.08862v1#S5)中，costmap 与定位失真仍使部分 planner 失败，平均模型推理时延也未覆盖通信和规划 deadline。渲染、历史、标注/训练、参数验证与低层规划均付费；host 应保留受限参数范围、planner revision 和拒绝记录，几何、参数或时序不可信时恢复已验固定参数、重新定位或停机，模型只拥有 tuning proposal，不拥有 safety envelope 的改写权。<!-- source-family:SF-2026-ARXIV-2603-08862 -->
 
+多个任务并存时，还可不为每个执行体逐次生成waypoint，而让语言层提出位置、优先级与类型，再由后端把任务叠成加权空间场，按当前执行体位置读取局部速度候选，并随任务和状态刷新。这样任务语义先进入连续场，再进入controller，与高层直接写动作或只调planner参数是不同接口；局部读场不等于场构造和分发不需要全局状态。[二维多UAV的受限证据](https://arxiv.org/abs/2505.00091v1)只支持这一分责，不提供完整可复算控制recipe或碰撞、稳定保证：边界条件、离散时钟、能力向量如何变为标量权重未闭合，切向旋转不独自证明径向避碰，障碍内部置零也不是安全屏障。原对照同时变语言解析器与场后端，未隔离收益且未给端到端时延；状态汇集、场求解/分发、API与低层执行均计费。场、坐标或刷新时序失配时，回到显式任务分配、轨迹规划和已验独立controller，不能让语义解析正确替物理控制签字。<!-- source-family:SF-2025-ARXIV-2505-00091 -->
+
 对于浮动基座上的视觉操作，proposal 到动作之间还隔着真实末端 pose 的估计：可以由 analytic forward kinematics 加上 learned SE(3) residual 与静足 leg odometry，形成 task-space residual，再让 tracking policy 消费该残差及 IK/planner reference，必要时重规划。训练或校准这一 estimator 要支付独立 MOCAP 数据与本体绑定成本，encoder 上较小的 joint tracking error 也不保证世界坐标中的末端误差更小。[受限 humanoid 对照](https://arxiv.org/html/2602.16705v1)就出现 joint 与 end-effector 指标方向不同；MOCAP oracle 的结果不能挪作 learned pose，使用 oracle 的 replan 消融也不认证自主估计链的全部因果收益。静足、相机视域、可达 workspace、抓取 retarget 与物体未滑脱都是边界，在线目标消失或估计漂移时仍须重新观测、停止或回退传统 state estimation/controller。固定基座且 FK 足够准确时，直接规划和原 joint-tracking 路径仍合理，foundation-model grounding 不替代低层测量或安全验收。<!-- source-family:SF-2026-ARXIV-2602-16705 -->
 
 无需重新训练VLM，不等于无需场景先验。一条导航分支先从离线单目walk video重建geometry/semantic bank，再让当前观察重定位到bank，VLM提出waypoint，由controller执行；目标语义可以不直接出现在原video，但可执行几何仍依赖bank覆盖。单目重建没有天然的metric尺度，需用camera-height等额外先验锚定，不能把相对几何直接当机器人可行走的米制路径。bank revision、尺度来源、当前观察和relocalization状态因此是控制输入，而非只保存一段“相关视频”。<!-- source-family:SF-2026-ARXIV-2512-24212 -->
@@ -260,6 +267,8 @@ VLA 联合建模 vision、language 与 action，减少中间手工接口。常�
 选择 action 表示，也决定了上游感知扩容能否转化为动作收益。离散 codec 把连续动作压入固定长度、固定词表的码本，便于复用语言模型的序列接口、缓存与训练管线；若任务所需的动作差异在这里被压掉，换更强的视觉 encoder 只会改善进入 codec **之前**的表示，不能凭上游指标推定执行成功率也会提高。连续 policy 少了这道离散化瓶颈，却要承担采样步数、动作约束、时延与安全验证成本。因此扩容试验应同时固定 task/示教/评估协议，对照 encoder 升级前后在连续与离散 action head 上的闭环结果、重构误差和码本容量，而不是单测视觉表征质量。
 
 [受限的 LIBERO 对照](https://arxiv.org/html/2604.03191v1)观察到连续 Diffusion Policy 对 encoder 升级较敏感，固定码本的 OAT 增益较弱；放宽码本曾部分恢复敏感度，但更大码本的结果并不单调。这支持把瓶颈位置列为 component-scaling 的诊断项，不证明离散动作普遍较差，也不证明作者的信息量上界在实际策略中已饱和。当前证据未覆盖真机、控制时限和物理安全；在码本重构足够且统一 token 接口更重要时，离散路线仍可成立。
+
+连续动作的生成分数还可以由标量energy的负action梯度构造，使场按结构可积；但能生成示教式动作，不等已恢复真实reward。只有假设expert为相应温度的max-entropy最优policy，零噪声score才对应softQ的action梯度，积分仍留下随state改变的常数；[EnergyFlow的必要边界](https://arxiv.org/html/2605.00623v1)因而只支持同state的相对动作比较，不授跨state价值或即时reward唯一性。减同state参考动作energy能消去offset，却不会自动变成transition-based shaping或保持原最优policy；近似score、有限noise与未支持动作仍可错排。能量梯度、参考采样和训练付费，局部控制成绩不认证安全；条件或闭环回归不足时，保留普通BC/diffusion动作、真实task reward及独立controller，不以低energy取得执行权。<!-- source-family:SF-2026-ARXIV-2605-00623 -->
 
 即使动作 head 不变，感知扩容也要先排除训练配方造成的假瓶颈。一个受限 3D policy 对照保持 DP3 设置，分别替换 PointNet 与较大视觉骨干中的 BatchNorm/LayerNorm，观察到原先几乎无法训练的配置在更换归一化后恢复；这足以挑战“大骨干本来就不适合 policy”的归因，却不能证明所有骨干只换归一化即可。点采样顺序、颜色与坐标扰动、静止帧过滤及预训练监督都可能改变过拟合，应与容量和闭环结果共同记录，而不是把感知预训练分数直接换算成动作成功率。<!-- source-family:SF-2026-ARXIV-2604-15281 -->
 
@@ -404,9 +413,16 @@ Human video 的 transition target还可以用连续posterior而非有限VQ codeb
 较少可训练状态换来样本效率和可回滚性，却可能让 token 成为信息瓶颈、让 anchor 阻碍必要适应，或在 contact-rich phase 产生危险探索。作者证据限于几小时实践和四项真实机器人任务，并依赖上述 human-in-the-loop contract，不支持通用 online-RL 保证；任务需要表征重写时仍需更广 fine-tuning，安全证据不足时回退 frozen policy、离线数据或人工接管。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-23073:end -->
 
+有限交互预算下，策略学习还可交替使用局部梯度更新与参数子空间搜索：从近期梯度取低秩基，在当前policy附近用少量真实rollout建立坐标—回报context，再由预训练表格模型筛选较大候选池。每次只执行少量候选、补回真实回报，最后仍以已实际评估者接纳更新；[受限连续控制对照](https://arxiv.org/html/2604.27667v1#S3)中的低维“global search”不覆盖全部参数空间。基点或子空间改变后，旧坐标和surrogate不再可直接复用；排名相关也不认证每个top candidate或安全。SVD、预训练模型、全部搜索/失败rollout与局部更新都计费，同搜索评估次数不等全链同成本。排序失准、收益难摊销或真实任务不允许试错时，保留原actor–critic、有限随机搜索、离线验证和独立controller，不把更少真实候选评估当机器人执行许可。<!-- source-family:SF-2026-ARXIV-2604-27667 -->
+
+连续动作的actor更新也可不用单点critic梯度，而在同一state采多个候选：另学state-action表示，使其cosine拟合经缩放的critic-value差，再以anchor与候选的相似kernel形成局部加权价值，供actor更新。这里表示不只作auxiliary loss，而成为更新信号的消费者；相似value不是相同动力学或真实动作可替代性。[必要机制与有限消融](https://arxiv.org/html/2605.00787v1)依赖critic排序和候选覆盖，未建立普遍单调改进，也未验证离散token/VLA迁移。候选encoder/critic评分、表示训练、replay和调参均付费，等环境步数不等同计算或墙钟预算。critic噪声、kernel失准或覆盖/费用不合适时，保留原SAC式更新、直接BC与独立controller，不让估值几何越过物理安全验收。<!-- source-family:SF-2026-ARXIV-2605-00787 -->
+
 若连续 action generator 本身没有便宜的边际 likelihood，在线更新还可以显式保留它采样时的隐变量。一条[受限单步分支](https://arxiv.org/html/2604.03540v1)以 expert anchors 与自产 hypotheses 的 attract/repel 目标训练一次前向的 chunk generator，再给输出附条件 Gaussian head；rollout 同时保存固定先验抽出的 z 和实际执行的 action prefix。新旧策略在同一 z 上比较条件 density，固定 prior 在联合 ratio 中抵消，但这不是积分掉 z 后的边际 action density；未执行 suffix 不应获得当前环境反馈的 credit。Stop-gradient target 的数值等于 drift 范数，不证明实际训练梯度是其全导数或零 drift 必恢复真实分布；部署移除探索噪声也是另一个待验 operating point。少 NFE 不等同比例墙钟收益，有限图像任务有反退，真机 45/60 及双臂 55% 更不是安全保证。Expert 数据、多 hypothesis、Gaussian/PPO 更新、reference anchor 与真实交互都付费；条件接口、质量或闭环失配时，保留原多步 policy、直接 BC 与独立 controller/人工接管，不由可算 ratio 批准动作执行。<!-- source-family:SF-2026-ARXIV-2604-03540 -->
 
 若希望在一个新 episode 内调整已有 VLA，而不是增加独立 RL head，另一条分支让学得的 progress sensor 直接成为 LoRA 更新的 reward consumer：每步用进度差 `r_t=p_t-p_{t-1}`，在所给 value-free 配置中以 `A_t=r_t` 进入 clipped policy 更新，而非估计长程价值。[有限 test-time adaptation](https://arxiv.org/html/2601.06748v1#S3)因此改变的是部署期间哪些参数收到何种反馈；sensor 的进度不是环境成功真值，ratio clipping 也不保证保留原 SFT prior 或物理安全。遮挡、阶段错认与非单调进度会奖励错误动作；有限模拟及九项真实任务不支持所有任务增益。进度模型前向、episode 内更新、间隔/步数搜索和策略重置均付费，LoRA 状态少不等控制闭环免费；proxy 或闭环回归时应停止适应，保留静态 policy、独立 controller 与人工接管。<!-- source-family:SF-2026-ARXIV-2601-06748 -->
+
+部署时的适应也可以不更新VLA或另训练RL head：在已有可工作的低层controller之上，[一个受限参数搜索分支](https://arxiv.org/html/2504.20459v1)让语言模型提出少量attenuation参数，以逐维缩放既有速度输出；执行轨迹与任务目标再进入下一轮context，供总结、分析和合成新候选。改变的是controller调制参数，不是直接生成每个控制周期的动作、反向更新模型权重或已识别真实动力学。坐标轴、范围、控制器身份与反馈人口须一起绑定，模型建议仍需独立物理约束/执行验收；检索旧参数和提出新参数也不能混成同一成功率。小量局部真机轨迹、优化函数或模拟改善不保证任意初态安全、单调改进或同预算胜过梯度法，更多历史、模型调用、真实试验/reset和回归均计费。搜索不稳定、参数超界或闭环质量退化时，保留已验证固定controller/旧参数、缩短试验并人工接管，不把自然语言解释当作执行授权。
+<!-- source-family:SF-2025-ARXIV-2504-20459 -->
 
 昂贵的视觉进度信号也可以只负责训练初始化，而不持续进入在线reward。当 reward 取 running maximum 的增量时，一次虚假的高峰会抬高历史上界，使后续真实进步长期得不到增量；一个有限分支在完成 rollout 后，用排除当前点的邻窗median抑制孤立峰，再以平滑进度形成 value warm-up 标签。窗口包含未来 observation，因此它是离线轨迹处理，不是运行时 causal progress sensor；初始化之后停止查询VLM，PPO再用稀疏任务成功与policy self-certainty继续训练。<!-- source-family:SF-2026-ARXIV-2604-00055 -->
 
@@ -423,6 +439,8 @@ self-certainty 的 uniform-to-policy KL 只奖励模型分布变得确定，不�
 人工干预也不必被当作每个state的唯一最优动作。另一条训练分支仅从intervention buffer拟合Gaussian行为policy，以它在当前state的dispersion调节模仿容忍度，再由statewise乘子约束actor偏离；行为更分散时允许更大偏离，critic与真实reward仍负责估计任务回报。这里学到的是人类行为的分布proxy，不是动作正确性或安全概率：policy-only访问的state没有真实human样本，拟合外推和operator SOP会改变该约束的含义，必须保留干预者、状态支持域与reward校正身份。<!-- source-family:SF-2026-ARXIV-2512-24288 -->
 
 容忍度还必须绑定实际量纲与训练版本，不能把均值距离、平方距离、平均标准差和方差写成同一KL边界。SiLRI的有限实验支持将dispersion用于模仿约束，但正文目标与实现式的距离/尺度不同，附录从state-specific KL界推出uniform κ的步骤也不能直接授权；这里只采用可回归的训练分支，不采用统一KL保证、已求得saddle或物理安全结论。额外human intervention、行为拟合、actor–critic/乘子更新和reward校正都有成本，critic在支持不足处也可能给错误探索方向。任务/人群改变、干预噪声过大或约束未校准时，保留直接BC、固定reference约束、保守controller与人工接管，再分别验收无干预成功、扰动回归和真实闭环。
+
+状态相关约束的训练还要分开函数更新与网络参数更新：直接对乘子网络作ascent，并不等于每个state沿违例量更新。另一条分支先消去非负slack，让actor支付截断违例的线性与二次罚项；再固定旧乘子和新policy的违例估计，构造投影后的非负dual目标，用监督回归拟合该函数，而非把一次参数步当精确dual步。[ALaM的必要边界](https://arxiv.org/html/2605.00667v1)中，神经拟合、critic误差与延迟更新仍在，精确凸函数空间的收敛不能搬成非凸SAC全state可行，罚因子上限也不是安全shield。双critic、dual回归、动作采样与真实交互均付费；状态支持、代价校准或闭环回归不足时，保留固定约束、原actor训练与独立controller/停机接管，不以低平均cost批准执行。<!-- source-family:SF-2026-ARXIV-2605-00667 -->
 
 若不同操作 phase 需要不同 RL specialist，控制切换还必须有自己的执行边界：由当前及过去观测的 causal selector 提出 phase，经连续确认的 stabilizer 决定是否换 owner；这里的 dwell 是连续决策次数，不是 wall-clock 保证。换 owner 时，未执行的 action chunk suffix 应作废，由同一当前 observation 重新取得 reference/specialist proposal；replay 只收实际执行的动作与环境反馈，不能把旧 owner 尚未提交的 suffix 当训练事实。
 
@@ -529,6 +547,8 @@ encoder 还是当前 policy 中形成、辅助 world objective 何时参与训�
 未来条件也可以在尚未完成时进入动作求解，而不先生成一张完整 goal 再启动 action。一个离散生成分支把目标图像 tokens 放在动作 tokens 之前，在每种模态内部允许双向读取、模态之间保持单向依赖，并在同一 masked refinement 轮更新两者。于是 action 可以消费当前 partial goal，goal 不反读 action；“共同并行生成”并不意味着没有模态次序或互相验证。统一loss与可见依赖只声明生成接口，预测图像仍不是已经发生的环境事实。<!-- source-family:SF-2026-ARXIV-2603-25406 -->
 
 [MMaDA-VLA 的有限无预训练消融](https://arxiv.org/html/2603.25406v1)比较了同轮partial-goal、完整goal后再动作和无goal分支，支持这条条件消费取舍，不把它独占大规模预训练结果的全部收益。反复refinement还能按value相似度缓存局部求值、周期刷新，但局部相似不证明跨模态旧依赖仍精确，固定instruction也只在当前denoise身份下复用。Goal tokens、codec/量化、重掩与cache选择、全部训练/采样和真实反馈都计费；小物体/夹爪生成失真及实机drawer/cup失败仍存在。预测、cache或控制deadline无法验收时，保留全量刷新、完整goal-first或direct action/短chunk路径，独立controller继续决定提交，不由视觉一致或较少步骤签发安全。
+
+连续去噪也可以先让future与action共同更新，再把尚未完成的future固定为后续动作求解的条件。前提是在训练中使video不反读action；切换后重新计算固定video/text的逐层KV，action仍读取这些条件，却不再要求video支路每步刷新。[MotuBrain的受限接口](https://arxiv.org/html/2604.27792v1)提供了这种joint-prefix/action-only-suffix分支，不使单向mask自动证明提前冻结无损，也不让缓存future成为实际新观测。切换时刻、noise schedule、KV身份和动作质量应与全程joint路径分别验收；其累计加速还混合减步、编译、低精度与DiT近似，不能归给单个分支。联合训练、前缀求值、cache构建及真实控制全费；未来条件不足、cache失配或未知延迟超出既有chunk时，保留全程刷新、经验证direct policy、短chunk与独立controller，重新观察环境，不用历史最大延迟签发下一次deadline保证。<!-- source-family:SF-2026-ARXIV-2604-27792 -->
 
 一项受限 WAM 对照中，强视觉内容扰动几乎不改变 action，而颠倒两个 future slot 的时间顺序显著改变动作和
 闭环成功，尤其在视觉分布偏移下；它说明被测试的 policy 更依赖这两个槽的时序组织，**不是**证明 future
@@ -887,6 +907,10 @@ Behavior Cloning 是最小且可审计的控制目标；当任务窄、演示充
 
 代价是额外 Teacher forward、显存与训练时延，anchor 也可能保留与当前 embodiment 无关的先验。把连续 action 压缩成方向标签会进一步引入表示误差。因此，数据充足的窄域任务仍可采用纯 BC；多源联合训练适合吞吐允许且语义保持比精确同观测对齐更重要的场景。
 
+同一语言goal可以对应一条示教中许多不同进度，静态配对相似并不要求区分它们。一条辅助训练分支在同goal的state-action样本内，以剩余示教步数的折扣归一成soft target，让language到state-action的对比方向学习组内时间结构；反向配对仍负责区分task。为避免直接抄取goal，另设只读视觉、proprioception与自身action副本的表示block，goal block只读指令，再与BC共同塑造backbone。[PRTS的受限对照](https://arxiv.org/html/2604.27472v1#S6.SS3)支持这项辅助目标的局部收益，不把示教剩余步数、embedding相似度或discounted occupancy当作真实最终成功概率；换policy、goal语义或后续action-head适配后都须重新验证。重复token、跨设备negative、kernel、示教与两阶段训练均计费，同forward不等零成本。目标歧义、进度proxy失准或闭环退化时，回退直接BC、明确subtask监督与fresh observation验证，执行和安全权限仍由controller持有。<!-- source-family:SF-2026-ARXIV-2604-27472 -->
+
+任务表示还可以先靠几何重建取得初始化，再让实际交互重排哪些观察应当接近。部分点云到完整隐式表面的预训练能利用模拟中的完整形状监督，却不保证压缩latent保留当前操作需要的变化；另一受限分支继续用RL更新encoder与policy，并先按起终表示筛出相似episode，再以时间规整对齐选择对比正例，让不同进度速度的经历共同塑形。policy消费的是本体状态与encoder latent，不必每步重建整个表面。[INR-DOM的有限对照](https://arxiv.org/html/2505.00500v1)支持这份初始化—配对—动作消费分工，不证明起终相似就是同一动力学、DTW是真实因果对齐或补全恢复了全部遮挡几何；原相似度/优化符号口径未齐，也不宜拼精确recipe。重建holdout与任务测试须分别报人口，实物另加腕部RGB、成功演示、reward分类器及在线适配，不是无真实训练迁移。模拟形状监督、SDF预训练、轨迹搜索/对比、RL与实机采集控制都付费；分割、任务或配对支持失配时，保留普通表示、显式动作/几何监督与可信controller/重观测，不由局部补全误差或t-SNE给动作签发安全。<!-- source-family:SF-2025-ARXIV-2505-00500 -->
+
 表示接近不保证低层轨迹兑现了高层意图。一个行为侧分支可以先把预测轨迹投影为有版本的速度、方向类别，再与高层决策比较；不一致时同时用 expert 轨迹和 expert 类别纠正两层，一致时跳过这项外部监督。这里的 projection 只提供训练样本选择，不能因两层一致就授予正确或安全标签，也不能把“跳过 loss”称作一次新的强化更新。在受限的驾驶接口中，转弯和变道被合并到同一方向类，未知速度类还会被忽略；保留 mapping 阈值、预测轨迹、粗细类别和被筛选人口，才能知道一致性改善究竟覆盖了什么。直接 BC 和连续表示对齐在明确示教与稳定动作 schema 下仍然更简单。
 
 闭环训练还可反向传递监督：先按环境 proxy 修正低层轨迹，再把修正后轨迹的类别作为高层目标。这让高层适应低层可产生的行为，却会把 proxy、投影和低层错误共同带进新标签，不能替代独立 environment verifier 或运行时 safety controller。[有限的双系统对照](https://arxiv.org/html/2603.11219v1)中，加入后一训练阶段降低了模拟器的 at-fault collision，但 open-loop 位移误差与类别一致性仍有反退；重建环境、配对预测、筛选、两层更新及 online rollout 均付费。高层在 edge 未达到 10Hz、实际靠异步 feature 缓存也说明训练对齐不等于实时协同：部署仍须另验 feature 年龄、controller 期限与真实闭环结果。projection、proxy 或时序不可核时，保留原示教路径、短动作与独立低层检查，不由内部 F1 批准物理行动。<!-- source-family:SF-2026-ARXIV-2603-11219 -->
@@ -959,6 +983,9 @@ deployment owner 持有生效 revision，teleoperation/intervention service 持�
 - task distribution 与人类干预。
 
 domain randomization 改善部分 robustness，却不能覆盖未建模物理；real-world fine-tuning 提高适配，又可能降低原有 breadth。可行路线通常组合 simulation breadth、real calibration、online observation correction 和 conservative safety envelope。
+
+奖励标注与真实执行也可能看到不同的几何证据。[一条受限操作分支](https://arxiv.org/html/2504.20520v1)先由人声明对象在多个投影中的相对关系，让VLM分别判断动作前提和完成条件，再以这些二元标签训练模拟reward；真实环境难以取得相同多视输入时，另由单视RGB-D预测可行性。这里依次交接的是人工关系、VLM标签、learned reward和动作建议，不是同一份物理真值，也不因有depth就消除遮挡与标定误差。应将scene/mesh、camera与示教修正、标注者/关系模板、reward及real predictor版本分开，分别验标签与真实outcome；模拟回放吻合、部分投影通过和成功早停都不批准真实接触安全。资产恢复、人工关系/标定、全部VLM调用、reward/策略训练、重标与真实回归均付费；证据缺失、单视失配或物理条件变化时，保留真实示教、显式几何检查、已验reward/controller与停止接管，不让受限关系标签替代独立safety envelope。
+<!-- source-family:SF-2025-ARXIV-2504-20520 -->
 
 扩大模拟分布还需要把训练内拟合与留出泛化分开，而不是按训练成功率选择场景数量。[一项受限生成场景对照](https://arxiv.org/html/2603.18532v1)从任务描述构造对象与空间关系，生成可交互环境并过滤部分无效配置，再以固定 batch 和 mini-batch 在不同数量场景上更新同一预训练 VLA；场景变多使每个场景获得的样本变少，训练成功降低，却改善了受测留出集合的成功。这提供的是给定任务、采样和预算下的 breadth—拟合取舍，不是所有场景越多越好，也不把自动 QA 批准为真实接触或安全真值。实机只比较未适配模型与完整场景集适配模型，同时改变 RL、生成步数和参数更新，不能把全部实机提升归因于多样性；少量拾放任务之外的关节、工具和长流程仍未验证，部分任务完成时间也退步。场景与对象生成、失败重试和人工修正、训练、随机化、标定、真实试验及 controller 都付费，资产库复用的分钟数不等从零生成或端到端成本。应同时冻结环境资产、训练采样方案、留出人口与控制配置，分别验训练内适配、模拟留出和真实任务；生成分布、接触或 tracking 支持失配时，保留人工冻结场景、真实校准与保守 controller，不用高训练成功或更广模拟库代替物理闭环。<!-- source-family:SF-2026-ARXIV-2603-18532 -->
 
@@ -1061,6 +1088,8 @@ Action chunk 通过一次生成多步动作摊薄 VLA 推理成本，在 free-sp
 反应式力反馈之外，接触状态也可以先成为预测表示的训练目标，而不只在动作头末端追加一个传感器通道。一个受限分支把相机与光学触觉图编码到共同视频 latent，先训练未来多视角与触觉变化，再让动作 expert 消费这份条件；动作训练还同时预测由无接触参考图到当前触觉图的光流均值与散度构成的 deformation proxy。这个辅助目标与动作、proprioception 一起去噪，提供接触相关监督，却不是标定物理力或执行器的力命令；参考帧、传感器、时间与目标坐标须随训练和部署绑定。<!-- source-family:SF-2026-ARXIV-2603-23481 -->
 
 预测触觉与 reactive correction 可以共存，不能把局部成功归结为一种普遍必要架构。原实现说明动作阶段冻结视频 backbone，因而不能由辅助 loss 自授其内部梯度已重新平衡；动作坐标的正文与训练说明也未闭合，不照抄为控制配方。有限任务中的少量与连续试验、不同基线预算和定性未来画面不认证 calibrated dynamics 或易碎物体安全，采集与执行频率也不等于完整感知决策 deadline。参考帧/flow 制备、传感器对齐、双阶段训练、条件读取与动作去噪均计费；接触预测、标定、坐标或刷新预算失配时，保留真实新触觉、原视觉 action chunk、reactive loop、已验证低层 controller 与停机/人类接管，由独立安全层决定提交。
+
+未来接触也可以被明确声明为低层跟踪目标，而不只作为辅助预测：高层联合提出末端位姿、夹爪宽度和期望接触面积/方向/中心，低层结合真实触觉与全身状态，尽量同时跟踪运动和接触目标。这给接口增加了“希望怎样接触”，却不能把desired target当作已观测接触或标定力真值。[受限层级控制对照](https://arxiv.org/html/2604.27224v1#S3)把触觉输入、目标预测与低层消费分开比较，部分任务增益接近零，有限真实rollout也不证明任意易碎对象无损。目标/传感器坐标、归一规则、时间与controller版本须绑定；示教、仿真训练、传感器和多频控制都付费，内部更新频率不是完整动作deadline。接触或目标失准、可达性不足时保留新观测、原位置跟踪与经验证的低层控制/停机接管，不让高层触觉提案自行批准物理effect。<!-- source-family:SF-2026-ARXIV-2604-27224 -->
 
 接触反馈能够修正夹持力，但仍需要一个接触前的初始提案；过小会要求随后补偿，过大则可能在补偿前损伤对象。一个受限分支用当前腕部 RGB、夹爪几何与材质生成描述，检索同 embodiment 的少量真实夹持经验，再让 VLM 据图像、描述与所测 force 提议 scalar 初始值，低层 force/slip controller 继续拥有执行与修正权。[Exp-Force 的有限对照](https://arxiv.org/html/2603.08668v1)中的经验标签来自特定垂直 lift、重复试验与量化，不是连续全局 minimum 或 fragility-safe 上界；单 RGB 不能识别不透明瓶的内部质量，语义邻近也不证明物理等价。规则定义的 Appropriate 增加仍伴随欠力上升，已可推断而未重做的试验与多数重试不能当全独立样本；启用 slip correction 后的有限成功不让初始提案自授安全。采集探测与 teleop、描述/embedding、检索与 VLM 推断、低层反馈和独立闭环回归均计费，大模型 overhead 也未获得实时保证。对象、夹爪或标定失配时，保留经验证的保守力界、力控制器、新触觉观测和人类接管，不由较低离线误差批准物理 effect。<!-- source-family:SF-2026-ARXIV-2603-08668 -->
 
@@ -1314,6 +1343,8 @@ chained terminal observation and controller state
 test 与真实组合可靠性分开。VLM readiness judge 仍只是传感器，不是物理真值；接触、位置和安全条件应尽量由
 环境或独立 controller evidence 确认。局部 Skill 测试继续适合快速回归，却不能替代 chained-state、恢复与停止测试。
 
+技能的边界还应区分训练切分与运行结束：可以先按gripper事件把示教分成atomic片段，再让语言层从给定library组合技能，运行时用目标pose匹配提议结束，并为下一skill预测或检索起始pose、经场景costmap和planner连接。这里分别交接训练样本归属、完成代理与空间handoff，不因一次开闭或末端到位就证明物体任务完成。[DeCo的有限对照](https://arxiv.org/html/2505.00527v1)提供这条替代分支；其full/half周期措辞未齐，不宜照录精确切分状态机，组合新任务也不等学会library之外的新技能。原atomic能力与新组合成功须分验，少量真实组合有收益仍伴atomic反退，更多切分信息也并非每个数据量都更好；pose/costmap/RRT依赖几何支持，不能自行签无碰撞或接触安全。示教切分/训练、VLM规划、全部感知/桥接与真实闭环都付费；边界、完成代理或下一初态不可信时，保原单技能、显式前后置条件、重观测和可信planner/controller或人工，不用合法技能序列代替readiness验收。<!-- source-family:SF-2025-ARXIV-2505-00527 -->
+
 若已有原子 VLA 在各自示教初态工作良好，组合失败却来自前一 skill 的终态偏离下一 skill 的输入分布，可以先冻结它们，不立即重训整条链：检索下一 skill 示教的起始 joint pose，以当前关节与相机观测生成受限 controller-template 过渡，释放或安全放置物体、恢复姿态，再恢复下一原子 VLA。它改变的是 terminal→next-initial bridge，不是证明前一 postcondition 已足够，也不替代独立 readiness 与 safety gate；原子 skill 自身的精度失败不能由姿态桥接自动修复。初态本来对齐时，直接 sequencing 仍是更简单的分支。<!-- source-family:SF-2026-ARXIV-2602-09430 -->
 
 [Sci-VLA v1 的受限组合证据](https://arxiv.org/html/2602.09430v1)使用固定平均示教时长打断 skill，而非通用完成检测；每序列仅 20 次试验，且剔除了代码生成与网络失败，不能当全部请求端到端可靠性。桥接增加示教检索、代码生成、网络延迟及 controller 验收成本，受限模板也不构成 formal safety。目标姿态不可达、观测过期、生成代码不可信或独立安全检查失败时，应停止、回退已验证 controller 或交给人；可安全采下游 rollout 的场景才另考虑后述 residual 训练，不能把领域任务成功升级为任意 skill chaining 保证。<!-- source-family:SF-2026-ARXIV-2602-09430 -->
@@ -1550,6 +1581,10 @@ VLA 的复用或 token skipping 只有在 gate 确认 observation 与 action sta
 
 动作级检测还应关注 action-conditioned visual corridor：环境变化是否落在当前动作可能影响的区域、时序是否一致、传感器 revision 是否新鲜。检测器只提供 risk evidence，不能替代低层 controller 的 veto；遮挡、分布外几何或检测失败时，应降速、刷新或请求人工接管。
 
+共享空间中的历史行为还可以只改变监控的保守程度，而不替代当前感知：按接近方向记录越界与经过事件，在已有动态guard上为高历史风险方向提前扩大触发区，低风险或未见方向不因此缩小原保护。这个接口将习惯统计用作更早暂停的hint，不把频率当校准碰撞概率，也不把居民惯例当当前意图。[OmniRobotHome的受限回放对照](https://arxiv.org/html/2604.28197v1)只支持所测布局/几何下的局部取舍；人体中心与TCP的近似碰撞、定时采样和真实四肢/扫掠体安全不同，模拟穿透事件也不是实机伤害发生率。同步标定、状态刷新、history维护、遮挡检查与控制回退都计费；新居民、路线变化、观测过期或保护状态冲突时忽略旧习惯并恢复原guard、减速/停机与人工接管，不由低历史风险、更多camera或局部回报批准物理提交。<!-- source-family:SF-2026-ARXIV-2604-28197 -->
+
+检测出分布变化之后，还要独立回答是否知道怎样修正动作。可以冻结原controller，让已知shift家族的局部expert只提出residual，并为未识别或ID状态保留不修正路径；但ID/OOD可分不代表不同OOD家族可分，人工给出的家族路由也不能冒充自主识别。[局部专家的受限负侧](https://arxiv.org/html/2604.27411v1)中，相同结构的弱preference监督不稳，较高训练偏好准确率仍可伴闭环回报下降，因此专家准入应绑定路由资格、配对监督和真实控制结果，而非只看检测AUC或训练分数。检测与专家训练、shift rollout和双侧回归均计费；有限重复seed且ID差异未显著，不认证行为等价或未知环境安全。路由含糊、修正反退或无法承担试错时，保留原controller、停止/人工接管和显式已知模式，不让冻结base权重替整条闭环签发无遗忘保证。<!-- source-family:SF-2026-ARXIV-2604-27411 -->
+
 完整 policy 逐步重算在接触状态复杂或动作不可逆时仍是可靠基线；动作片段高度重复后，还可在历史检索与小模型草稿之间选择。先从过去运动窗口估计曲率与累计位移，用经示教分布校准的代理提议本步走哪条路径，再从同任务历史 observation–action 记录取候选，或由 drafter 续写。这里历史轨迹与当前观测只是 proposal 的来源：窗口较直或视觉特征相近，不等于下一段动作已被环境认证。库的 task、encoder、action schema、轨迹位置与归一化参数共同构成消费身份；任务失配、突变或接触阶段不能沿用旧窗口的路由判断。<!-- source-family:SF-2026-ARXIV-2603-17573 -->
 
 进一步跳过 target 验证，或允许 position/rotation 组在容差内接受，就把严格生成参照改成了动作质量与成本的近似取舍，不再继承[经典投机解码](../part-05-inference-system/48-speculative-decoding.md)的分布保证。Gripper 与参考一致也不能批准实际接触安全。[受限 AR-VLA 对照](https://arxiv.org/html/2603.17573v1)的加速伴随若干模拟任务与实机成功率退步，且“接受长度”包含跳过验证的候选；历史库、视觉编码、草稿训练、检索通信、阈值校准与现场示教都付费。质量、身份或 control deadline 无法验收时，回退 target 重算、短 horizon 与原 controller；动作仍逐步经过独立安全约束，不能等整段执行后才用任务成功更新代理，更不能把重生成当作已经撤回物理 effect。
@@ -1724,6 +1759,8 @@ VLA 在等待大模型推理时仍可能继续执行已提交动作，延迟因�
 “始终避开”“直到某事件前不得执行”这类约束跨越多个控制周期，不能只在每次 prompt 中重新解释。模型可以把语言映射为可组合的 event-trace automaton，再由独立 controller 检查状态转移、执行阻断与反例修正。这样把语义理解和 enforcement 分开；代价是表达力受所选自动机语言限制，无法可靠编译的约束必须保持人工或更保守的安全策略。
 <!-- source-family: arxiv:2608.27797v1; semantic-body-binding: language-constraint-event-trace-automata -->
 
+已给定的形式约束还可以进入轨迹生成器，而不只交给运行时checker：将STL的operator、时间区间和谓词几何组织为图，保留Until等有序子项的角色，再以图表示约束state/action轨迹的flow proposal。这里学习的是约束条件到候选的映射，生成的状态不自动符合真实动力学，图网络可分也不证明全部逻辑语义可辨识或可满足。[TeLoGraF的受限对照](https://arxiv.org/html/2505.00562v1)支持这条分支，却包含有限谓词/场景支持、训练与验证差额及由目标轨迹反推时间窗的部分设置；重复已知and/or子结构不等任意新规则外推。按robustness从大量候选择优须保完整采样分母和费用，较高score不替独立动力学、碰撞与执行检查。图/schema、时间单位、谓词坐标、flow版本、生成/筛选预算和controller应分别绑定；训练、全部候选/求解与真实回放均计费。约束不可可靠表达、无可行候选或环境失配时，保原形式planner/checker、短horizon重观测和可信低层控制或停止，不由逻辑condition批准动作安全。<!-- source-family:SF-2025-ARXIV-2505-00562 -->
+
 跨周期规则已经编译成可检查状态，也不等于只看下一状态就够：本步没有进入禁区，仍可能让机器人再也来不及在指定时间到达目标。已知静态地图、确定动力学和有限动作集合下，一条受限分支对每个候选动作接上辅助时域policy，滚出剩余轨迹，与已执行history一起检查约束；再只在有可满足后续的动作中重新归一主policy的概率。这改变的是允许采样的support，不改基础模型参数，也不把辅助policy或地图自动认证为真实世界；一般的平均robustness阈值不能替代这种逐动作硬支持条件。<!-- source-family:SF-2026-ARXIV-2603-17969 -->
 
 [有限导航对照与条件证明](https://arxiv.org/html/2603.17969v1)要求动力学无失配及可满足的后续，训练DQN或标记fallback本身不证明这些前提；空可行集合、原分布零质量或错误地图仍须明确处理。约束成功与寻找目标成功必须分验，较强时序限制在受测模拟中仍降低主任务完成率。辅助训练、逐动作余时域rollout和实际控制反馈都付费，长horizon可能失去实时性；条件未证、观测失配或deadline无法满足时，应停止高层提交、采用已验低层约束/急停或人工接管。单步safety filter、较短规划与原policy继续是条件分支，不能用模拟100%替代物理安全验收。
@@ -1828,6 +1865,24 @@ Latent controller 的 CVAE/ACT 分支若在训练预算、随机种子或 decode
 [Cybo-Waiter 的有限实机对照](https://arxiv.org/html/2603.10675v1)支持这条监控接口，但关闭整个 supervisor 的组合消融不识别连续窗口、几何或恢复各自的唯一收益；同一错误几何连续通过也不成为真实接触或安全证据。JSON 结构可验证不等于目标语义已闭合，示例目的地与 support 引用、窗口长度和 unknown 规则仍需任务 owner 明确；VLM 辅助不能取代低层约束与真实环境结果。多对象分割、深度与诊断、重观测/重规划、skill/MPC 求值和训练均付费，十次任务成功不授 deadline、near-miss 或全任务安全。对象身份、时序、接触或恢复预算失配时，暂停推进并保留显式 controller/人工接管与可核验的原 skill，不让连续 proxy 帧自行批准 physical commit。<!-- source-family:SF-2026-ARXIV-2603-10675 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00667` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00667v1)§III–VI/slack消元、dual target、理论假设/结论与SAC必要消融，2+2+2=6。仅函数目标回归/augmented罚项分工，保拟合/critic/支持域与全费，不采凸精确空间到非凸SAC保证、L2到全state可行或ρ cap安全。may05_source_tail必要Source/date/owner/PRE，root C23实际核完整局部并授此单段/本人注；已保存并自读完整局部，root C25实际正文/完整局部/本人注POST通过，窄lease释放，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2605-00787` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00787v1)，2+1+2=5，具体owner差额深入。reader R28实际必要Source/date/直接反侧；root C13实际owner完整局部邻接/逐字PRE通过，授本单段及本人注。采用限制和全部费用近正文，不授普遍理论/性能/安全；作者已保存，root C15非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-00623` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00623v1)§3–5/Eq6–16/Algorithm1及必要反侧，2+2+2=6。仅scalar-energy保守score/条件softQ梯度/同state比较，保offset/finite-noise与全部费，不采即时reward恢复、Eq16 transition/PBRS或普遍OOD保证。may05_source_tail实际Source/date/owner/PRE，root实际核指定单段并授窄位；正文及本人注已保存/完整邻接自读，root已实际正文/完整邻接/本人注POST通过、窄lease释放，未核实现/复现，不预授DAY。
+
+- `SF-2026-ARXIV-2604-28197` — Daily2026-05-02补May1；v1§3/4/A1/A4/B1–7必要层，2+2+2=6，history只扩guard差额深入。保sim回放/event分母、ρ非概率、base/max封顶与phase中断约束、遮挡/同步/全费，不授真实碰撞率/通用安全/低风险缩保护；未核artifact/复现。R75/R76非writer必要Source/actual owner/逐字PRE通过，root仅授本单段+本人注窄lease，作者已实际保存，R77非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；本注仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27224` — May02补May1，v1III–V/T5–6必要层，2+2+2=6，desired tactile与辅助预测/低层消费差额深入；保P2/P3持平、真实输出频率/果物定性和全费，不采通用无损或安全。未核实现/复现；reader R72必要Source/owner/逐字PRE通过，root窄写本人段与note，reader R74实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
+
+- `SF-2026-ARXIV-2604-27411` — Daily2026-05-02补May1；v1§3–5/附A，2+2+2=6，检测/家族路由/残差监督与闭环反侧深入；保manual routes、ID非等价及gear反退，不授未知分类不可能或实机安全；未核artifact/复现。R67非writer实际必要Source/owner/逐字PRE通过，root仅授本单段+本人注窄lease，作者已实际保存，R69非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；本注仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27792` — Daily2026-05-02补May1；v1§2–4/T1–8，2+2+2=6，连续joint-prefix后partialfuture冻结/KV与action-only差额深入。保冻结近似、累计stack非孤立因果、retry分母/多维反退与延迟估计，未核artifact/复现。R64非writer必要Source/实际owner/逐字PRE通过，root仅授本单段+本人注窄lease，作者已实际保存并读回，R68非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；本注仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27711` — Daily2026-05-02补May1；v1§2–4，2+1+2=5，retarget平滑/目标几何保真分验具体差额深入。保定性case/支撑台补偿、open-loop/离线全费，不授pipeline普适优胜/scene-aware已实现或物理安全；未核artifact/复现。R61非writer必要Source/actual owner/逐字PRE通过，root仅授本单段+本人注窄lease，作者已实际保存，R62非writer实际正文/完整邻接/本人注POST通过，root接纳并释放窄lease；本注仅行政同步并读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-27472` — Daily2026-05-02补May1；v1§2–4/6及B，2+2+2=6，shared-goal多positive时间soft-target与role mask差额深入。保matched ablation/反退、singletrace与定性恢复边界，occupancy不等ever-hit、不授Theorem1全域校准或物理安全；未核artifact/复现。R50非writer实际Source/owner/逐字PRE通过，root仅授此单段+本人注窄lease，作者已真实保存并读回，R51非writer实际正文/完整邻接/本人注actualPOST通过，root接纳并释放窄lease；本注仅行政同步，不授DAY。
 
 - `SF-2026-ARXIV-2604-22229` — Daily2026-04-28补Apr27；2+1+2=5，v1§3～6/AppA/C必要；nearestcandidate重新分配模仿责任，singlelatenttest非bestofK、共享θ连带改变其他候选，C.1 E[min]跳步不采globalnoncollapse保证，K调参与固定K反退近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
 
@@ -2564,3 +2619,19 @@ MolmoAct2、MPAIL2、DreamZero 与 Xiaomi-Robotics-1 分别提供 action reasone
 - `SF-2026-ARXIV-2604-20348` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20348v1)A5必要机制/评价与直接反侧，2+1+2=5，A7具体owner差额深入。有限命题/失败退路与全费近文，不授全部主张/安全或生产SLO；fresh必要Source独核、root实际插点/逐字PRE通过并授两段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-20841` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20841v1)A5必要机制/评价及直接反侧，2+2+2=6，A8作者actual具体owner接口差额深入。有限采用命题、失败退路与全费近正文，不授全主张/采样正确性或真实安全；非作者必要Source有效复用，root实际现局部/逐字PRE通过并授单段与本注窄lease，作者已保存并顺读完整邻接；root非writer实际新正文/完整前后/本人注POST通过，窄lease释放，仅行政同步；未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-20459` — Daily2025-05-01补Apr30；[SAS-Prompt exact-v1](https://arxiv.org/html/2504.20459v1) III–VI/TablesI–II由root实际必要Source核验，2+2+2=6，controller调制/反馈搜索差额深入；Newton§28有效层复用。保8维attenuation非权重RL/逐周期动作、retrieval与synthesis/模拟与24seed真机人口分账、Rastrigin反退/不同预算及安全限制，全费/旧controller回退近文。Godel实际owner比较/逐字PRE经root核当前完整邻接与末注并授指定单段/marker/本人注窄位，作者已保存并self-read；root§8非writer实际完整新段/两侧/本人注及前他注POST通过，接纳并释放指定窄位，本注仅同步既成事实，不授DAY。未核代码/复现。
+
+- `SF-2025-ARXIV-2505-00091` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/abs/2505.00091v1)，2+1+2=5。Ohm§36日期/current、§37受限Source/评分通过；因任务场到局部速度接口缺口深入受影响III-B/C/Execution，不采用不闭合PDE/能力标量化/旋转recipe或无碰撞保证。保二维20模拟UAV、解析器/后端共同变化、无时延数据与全费/退路；未看轨迹像素、核代码或复现。Ohm§38逐字PRE通过，root已授指定单段/marker/本人注窄位，作者已实际保存并self-read，Ohm§39非writer完整新增/两侧/本人注POST通过，root实际消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20520` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20520v1)III/IV/V/TablesI–II/VI与current必要域，2+2+2=6，sim多视投影标签与real单视consumer差额深入。保mesh/camera/示教及reward真值资格、有限最佳checkpoint/组合对照、Eq2未闭/全费用与controller退路，不授物理辨识/通用安全/生产保证；未核图像像素/实现/复现。Newton§68必要Source/具体owner/逐字PRE通过，root实际完整当前两侧与本人注后授指定单段窄位；作者已保存并顺读完整新增/两侧/本人注，Newton§76一次非writer实际完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2604-27667` — May02补May1；v1 III–V/Alg1–2/TI–II，2+1+2=5，变动子空间/context与真实接纳差额深入。保OneShot预算/各自90%阈值、早期排序不稳/非全空间、全部rollout费用与无真机边界，未核代码/复现。root C19实际必要Source/actual Ch26 owner/逐字PRE通过；root已授本指定单段与本人注窄lease，作者按原逐字PRE保存并读回完整新增/两侧/本人注，root C20非writer实际完整新增/两侧/本人注POST通过并释放指定窄lease，作者仅行政同步既成事实并读回，不授DAY。
+
+- `SF-2025-ARXIV-2505-00500` — Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00500v1)III–VII/表I–II必要域，2+2+2=6，重建初始化后按episode/DTW配对及RL再塑表示的具体差额。保模拟形状监督/有限动作与task人口、真实示教/RGB/reward适配及全费；不采SDF/InfoNCE未闭recipe、遮挡真几何或无适配迁移。未看像素/视频、核代码或复现；Ohm§71日期/current与§75必要Source/6分/具体owner/逐字PRE通过，root已授PRTS完整段后/行为兑现段前指定一自然段与本人注窄位；作者已实际保存，已完整self-read；Ohm§79一次非writer实际完整新增/两侧/本人注POST通过，root实际完整消费接纳并释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00527` — Noether，Daily2025-05-03补May2；[exact-v1 partial原件](https://arxiv.org/html/2505.00527v1)§3–7/A–C/Table1–7必要，2+2+2=6。Ohm§71日证/current、§78实际必要Source/评分/唯一Ch26通过；仅训练切分/运行完成代理/空间handoff三接口具体差额深入。保full/half文字冲突、goalpose非物体完成、library范围、原skill反退和全部费用/独立controller退路；不采闭合解析recipe或无碰撞保证。未得完整D/E尾部、未看像素/视频、核实现或复现；root实际读本§52逐字稿/当前完整邻接与本人注后直接PRE通过并授指定单段/本人注窄位；作者已实际保存，已完整self-read，Ohm§97一次非writer实际完整新增/两侧/本人注POST通过，root已实际完整消费接纳并释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2506-23919` — Daily2025-07-02补Jul1；[World4Omni exact-v1](https://arxiv.org/html/2506.23919v1)§3.1–3.4/4.1–4.7/5/Tables1–2必要Source，2+2+2=6，编辑目标→几何proposal→低层planner/controller接口差额深入。Newton§18/26实际Source/分数/唯一Ch26 gap通过，作者当前完整两侧及拟稿已读；不回填Goal-VLA后版。保自产context非真实新观察、background一致未评、跨baseline输入/工具/预训不配、四task各50trial与重复35%非独立证据、真机缺trial分母/闭环及精细抓取失败、完整费用；不授action-conditioned动力学正确、任意本体/真实安全或全SLO。未看图片/视频/核API实现/复现，版本化与验收退路是本项目推断。Newton§32逐字PRE通过，root实际完整稿/当前两侧及本人拟注后授本单段/marker/本人注精确位；Godel按稿保存，Newton§34实际非writer完整新增/两侧/本人注POST通过，root已实际完整读回接纳并释放该精确位。本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00562` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00562v1)§3–6/Impact/A.1–3必要，2+2+2=6。Ohm71日证/current、88受限Source通过；规格tree→trajectory consumer具体差额深入，保1-WL不授任意GCN完备、solver式未齐、1024择优/split不明、Dubins/Franka反退及全费。未看像素/B-C全扩展、核代码或复现；root已实际读Ohm109稿/当前完整邻接与本人注并授指定单段/本人注；作者已实际保存并完整self-read，Ohm114实际完整新增/两侧/本人注非writerPOST通过，root已实际消费接纳并释放该指定窄位；非日级DAY。

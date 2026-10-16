@@ -456,6 +456,8 @@ query，而不是只保存模型生成的数字。重执行不一致时应 suppr
 
 后续将这类搜索用于 multi-agent algorithm 时，还需要在 raw fitness 与可解释机制之间增加两道边界：先在不同 game/task distribution 上做 component ablation，确认收益不是 evaluator loophole 或单一数据分布；再由人把复杂候选蒸馏为较小、可审查的算法，并用未参与搜索和蒸馏的 final holdout 验证。若 test evidence 已反复进入 search 或 distillation，它就不再是独立终局证据。单次 search trajectory 也不能证明搜索稳定地发现同一机制。这个演进保留 AlphaEvolve 的 evaluator-driven search，同时拒绝把高 fitness artifact 直接升级为一般原理。
 
+把候选程序用于变化环境，还应把历史上更好与未来可部署拆开：固定reference提供本轮不劣锚，current champion只提供进一步改进锚；分别以回放gain的下界扣除replay-to-deployment偏移margin后决定晋级，最终部署再从合格集合选择，而非直接发布最高历史均值。[必要机制与条件](https://arxiv.org/html/2605.00369v1)把假设明确分成自适应比较下仍有效的confidence、未来偏移上界及候选支持；重复用同一窗口、普通blockwise t或历史quantile并不自动得到这些保证，训练proposal代理的集中也不是实际GRPO或可部署证明。候选/比较对象、窗口、multiple-testing预算、shift估计与程序版本共同保存，生成、replay、调参、校准和训练均计费。偏移、支持或统计资格不可核时保留原reference、独立holdout与人工验收，不由可解释代码或较低模拟成本签发未来安全。<!-- source-family:SF-2026-ARXIV-2605-00369 -->
+
 ### 搜索分支需要共享环境约束，而不是共享所有思考
 
 Tree search 隔离 branches，有利于保持候选多样性，也使失败可以局部淘汰；旧设计因此是合理的。
@@ -1280,6 +1282,8 @@ grace window 与缺失 outcome 的合成终态，却能区分“一个 child 完
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。执行者可以提出下一步或完成，但只有携带 versioned evidence 的独立 admission path 能提交终态。下一章研究多个 Agent 之间的职责和通信。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-00369` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00369v1)，2+2+2=6，具体owner差额深入。必要Source/date/直接反侧见唯一SUP R36；root C15实际owner完整邻接/逐字PRE通过，授单段及本人注。费用、反侧和旧分支近正文，不授普遍性能/安全/完整理论；作者已保存，root C19非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY；未核实现/复现。
 
 - `SF-2026-ARXIV-2604-26102` — [SWE-Edit exact-v1](https://arxiv.org/html/2604.26102v1) §3.1/§4.2与Table1；Daily 2026-04-30。apr29_close必要source→actual-owner窄采用通过；拆分探索读取污染与edit-format失败，出处/typed proposal为工程推断，非原文完整实现。Editor-alone成本负例、额外调用和漏检/过期边界保留；未复现实验，root已实际读取正文及前后衔接，非作者写后通过。
 
